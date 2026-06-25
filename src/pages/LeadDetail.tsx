@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { type Lead } from '@/types';
 import { useStatusColors } from '@/hooks/useStatusColors';
+import { supabase } from '@/db/supabase';
 import { toast } from 'sonner';
 import StatusBadge from '@/components/StatusBadge';
 import VoiceRecorder from '@/components/VoiceRecorder';
@@ -120,71 +121,21 @@ export default function LeadDetail() {
         currentLocation: lead.currentLocation || undefined,
         remarks: lead.remarks || undefined,
       };
-      const res = await fetch('https://app-chfyozakqsqp-api-VaOwP8E7dJqa.gateway.appmedo.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: `You are a real estate CRM AI scoring assistant. Analyze the following lead data and score it as A, B, or C based on buying intent, budget clarity, urgency, and source quality.
-
-Scoring criteria:
-- A (Hot/Ready): Clear budget, urgent timeline, high-quality source, specific project interest, ready to view/buy
-- B (Warm/Considering): Moderate budget range, some urgency, considering options, needs follow-up
-- C (Cold/Inquiring): Vague budget, no urgency, just browsing, low-quality source
-
-Lead data:
-${JSON.stringify(leadData, null, 2)}
-
-Respond ONLY in this exact JSON format (no markdown, no extra text):
-{"score":"A|B|C","reasoning":"brief reason in Myanmar language"}` }],
-            },
-          ],
-        }),
+      const { data, error } = await supabase.functions.invoke('lead-score', {
+        body: { lead: leadData },
       });
-      if (!res.ok) throw new Error('AI service unavailable');
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let fullText = '';
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          for (const line of chunk.split('\n')) {
-            const trimmed = line.trim();
-            if (!trimmed.startsWith('data:')) continue;
-            const dataStr = trimmed.slice(5).trim();
-            if (!dataStr || dataStr === '[DONE]') continue;
-            try {
-              const parsed = JSON.parse(dataStr);
-              const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-              if (text) fullText += text;
-            } catch {
-              // skip
-            }
-          }
-        }
+      if (error) {
+        const errorMsg = await error?.context?.text();
+        throw new Error(errorMsg || error.message || 'Edge function error');
       }
-      const jsonMatch = fullText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('Could not parse AI response');
-      const result = JSON.parse(jsonMatch[0]);
-      const score = String(result.score || 'C').trim().toUpperCase();
-      const reasoning = String(result.reasoning || '');
-      const levelMap: Record<string, string> = {
-        'A': 'Level A (Hot/Ready)',
-        'B': 'Level B (Warm/Considering)',
-        'C': 'Level C (Cold/Inquiring)',
-      };
-      const newLevel = levelMap[score] || levelMap['C'];
+      if (!data || !data.score) throw new Error('Invalid response from AI');
       // Update Firestore
       const { updateDoc, doc } = await import('firebase/firestore');
       const { db } = await import('@/lib/firebase');
-      await updateDoc(doc(db, 'leads', lead.id), { leadLevel: newLevel });
-      setLead((prev) => (prev ? { ...prev, leadLevel: newLevel } : prev));
-      setAiScoreReason(reasoning);
-      toast.success(`AI Re-score: ${score} — ${reasoning}`);
+      await updateDoc(doc(db, 'leads', lead.id), { leadLevel: data.level });
+      setLead((prev) => (prev ? { ...prev, leadLevel: data.level } : prev));
+      setAiScoreReason(data.reasoning || '');
+      toast.success(`AI Re-score: ${data.score} — ${data.reasoning}`);
     } catch (err: any) {
       toast.error('AI စကိုးလုပ်ရာတွင် အမှားဖြစ်သွားပါသည်: ' + (err.message || ''));
     } finally {

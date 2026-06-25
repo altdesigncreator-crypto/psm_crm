@@ -5,9 +5,12 @@ import {
   where,
   orderBy,
   onSnapshot,
+  deleteDoc,
+  doc,
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Select,
@@ -16,7 +19,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Mic, User, Clock, Volume2, Filter } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Mic, User, Clock, Volume2, Filter, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface VoiceNote {
   id: string;
@@ -25,6 +39,7 @@ interface VoiceNote {
   duration: number;
   timestamp: Timestamp;
   department?: string;
+  userId?: string;
 }
 
 interface VoiceNotesListProps {
@@ -33,9 +48,12 @@ interface VoiceNotesListProps {
 }
 
 export default function VoiceNotesList({ parentId, parentType }: VoiceNotesListProps) {
+  const { user } = useAuth();
   const [notes, setNotes] = useState<VoiceNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [deptFilter, setDeptFilter] = useState('all');
+  const [deleteTarget, setDeleteTarget] = useState<VoiceNote | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     let constraints: ReturnType<typeof query>;
@@ -66,6 +84,7 @@ export default function VoiceNotesList({ parentId, parentType }: VoiceNotesListP
             duration: (docData.duration as number) || 0,
             timestamp: docData.timestamp as Timestamp,
             department: (docData.department as string) || undefined,
+            userId: (docData.userId as string) || undefined,
           } as VoiceNote;
         });
         setNotes(data);
@@ -95,6 +114,20 @@ export default function VoiceNotesList({ parentId, parentType }: VoiceNotesListP
       });
     } catch {
       return '';
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await deleteDoc(doc(db, 'audio_notes', deleteTarget.id));
+      toast.success('အသံမှတ်တမ်း ဖျက်ပြီးပါပြီ');
+    } catch {
+      toast.error('ဖျက်ရာတွင် အမှားဖြစ်သွားပါသည်');
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
     }
   };
 
@@ -161,9 +194,19 @@ export default function VoiceNotesList({ parentId, parentType }: VoiceNotesListP
                 <p className="text-sm font-semibold text-foreground truncate">{note.agentName}</p>
                 <p className="text-xs text-muted-foreground">{formatDate(note.timestamp)}</p>
               </div>
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted text-xs font-medium text-muted-foreground shrink-0">
-                <Clock className="w-3 h-3" />
-                <span className="tabular-nums">{formatDuration(note.duration)}</span>
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted text-xs font-medium text-muted-foreground">
+                  <Clock className="w-3 h-3" />
+                  <span className="tabular-nums">{formatDuration(note.duration)}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDeleteTarget(note)}
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+                  title="ဖျက်ရန်"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
             </div>
 
@@ -176,6 +219,33 @@ export default function VoiceNotesList({ parentId, parentType }: VoiceNotesListP
           </div>
         ))}
       </div>
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle>အသံမှတ်တမ်း ဖျက်ရန် သေချာပါသလား?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget && (
+                <>
+                  <span className="font-medium text-foreground">{deleteTarget.agentName}</span> ရဲ့
+                  အသံမှတ်တမ်းကို ဖျက်လိုက်မည်ဖြစ်ပါသည်။ ပြန်လည် ပြန်ရရှိနိုင်မည် မဟုတ်ပါ။
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteTarget(null)}>မဖျက်တော့ပါ</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? 'ဖျက်နေသည်...' : 'ဖျက်ရန်'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -226,6 +226,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         // silently ignore write errors
       }
     }
+    setEventNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
     setFollowUpNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
   }, [eventNotifications]);
 
@@ -242,6 +243,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
         // silently ignore batch errors
       }
     }
+    setEventNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
     setFollowUpNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
   }, [eventNotifications]);
 

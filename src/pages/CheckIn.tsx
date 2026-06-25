@@ -519,7 +519,7 @@ export default function CheckIn() {
 
             <Button
               onClick={handleSubmit}
-              disabled={submitting || !description.trim() || !photoFile || success}
+              disabled={submitting || !description.trim() || !photoFile || success || (gpsStatus !== 'ok' && lat == null)}
               className="h-14 w-full gradient-primary hover:gradient-primary-hover text-white font-medium transition-all duration-300 hover:shadow-card-hover text-base active:scale-[0.98]"
             >
               {submitting ? (
