@@ -29,7 +29,7 @@ import {
   SheetTrigger,
   SheetClose,
 } from '@/components/ui/sheet';
-import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, ChevronRight, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Mic, Upload, Loader2, Play, ExternalLink, Download } from 'lucide-react';
+import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, ChevronRight, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Mic, Upload, Loader2, Play, ExternalLink, Download, FileSpreadsheet, FileCode } from 'lucide-react';
 import { STATUSES, type Lead } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -40,7 +40,13 @@ import StatusBadge from '@/components/StatusBadge';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 
 
-import { exportAsCSV } from '@/lib/exportUtils';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { exportAsCSV, exportAsExcel, exportAsPDF, exportAsHTML } from '@/lib/exportUtils';
 import { toast } from 'sonner';
 
 export default function Leads() {
@@ -65,6 +71,7 @@ export default function Leads() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [projectFilter, setProjectFilter] = useState('all');
   const [deptFilter, setDeptFilter] = useState('all');
+  const [agentFilter, setAgentFilter] = useState('all');
 
   const userDept = getDepartment(role);
   const isAdminUser = isAdmin(role);
@@ -91,6 +98,10 @@ export default function Leads() {
     setLoading(leadsLoading);
   }, [visibleLeads, leadsLoading]);
 
+  const uniqueAgents = useMemo(() => {
+    return Array.from(new Set(leads.map((l) => l.assignedAgent).filter((a): a is string => !!a))).sort();
+  }, [leads]);
+
   const filteredLeads = useMemo(() => {
     return leads.filter((lead) => {
       const matchesSearch =
@@ -101,9 +112,10 @@ export default function Leads() {
       const matchesStatus = statusFilter === 'all' || lead.status === statusFilter;
       const matchesProject = projectFilter === 'all' || lead.preferredProject === projectFilter || false;
       const matchesDept = deptFilter === 'all' || (lead.department || 'house') === deptFilter;
-      return matchesSearch && matchesStatus && matchesProject && matchesDept;
+      const matchesAgent = agentFilter === 'all' || lead.assignedAgent === agentFilter;
+      return matchesSearch && matchesStatus && matchesProject && matchesDept && matchesAgent;
     });
-  }, [leads, searchQuery, statusFilter, projectFilter, deptFilter]);
+  }, [leads, searchQuery, statusFilter, projectFilter, deptFilter, agentFilter]);
 
 
 
@@ -237,22 +249,84 @@ export default function Leads() {
             {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
             {importing ? 'တင်နေသည်...' : 'Import'}
           </Button>
-          <Button
-            disabled={filteredLeads.length === 0}
-            className="h-12 gradient-primary hover:gradient-primary-hover text-white font-medium transition-all duration-300 hover:shadow-card-hover shrink-0 gap-2 active:scale-[0.98]"
-            onClick={() => {
-              toast.promise(
-                new Promise<void>((resolve) => {
-                  exportAsCSV(filteredLeads);
-                  resolve();
-                }),
-                { loading: 'CSV ဖိုင် ပြင်ဆင်နေသည်...', success: 'CSV ထုတ်ယူခြင်း ပြီးပါပြီ', error: 'ထုတ်ယူရာတွင် အမှားဖြစ်သွားပါသည်' }
-              );
-            }}
-          >
-            <Download className="w-4 h-4" />
-            CSV ထုတ်ယူရန်
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                disabled={filteredLeads.length === 0}
+                className="h-12 gradient-primary hover:gradient-primary-hover text-white font-medium transition-all duration-300 hover:shadow-card-hover shrink-0 gap-2 active:scale-[0.98]"
+              >
+                <Download className="w-4 h-4" />
+                ထုတ်ယူရန်
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              {agentFilter !== 'all' && (
+                <div className="px-2 py-1.5 text-xs text-muted-foreground border-b border-border mb-1">
+                  {agentFilter} · {filteredLeads.length} lead{filteredLeads.length > 1 ? 's' : ''}
+                </div>
+              )}
+              <DropdownMenuItem
+                onClick={() => {
+                  toast.promise(
+                    new Promise<void>((resolve) => {
+                      exportAsExcel(filteredLeads);
+                      resolve();
+                    }),
+                    { loading: 'Excel ဖိုင် ပြင်ဆင်နေသည်...', success: 'Excel ထုတ်ယူခြင်း ပြီးပါပြီ', error: 'ထုတ်ယူရာတွင် အမှားဖြစ်သွားပါသည်' }
+                  );
+                }}
+                className="gap-2 cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-success" />
+                Excel
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  toast.promise(
+                    new Promise<void>((resolve) => {
+                      exportAsPDF(filteredLeads);
+                      resolve();
+                    }),
+                    { loading: 'PDF ဖိုင် ပြင်ဆင်နေသည်...', success: 'PDF ထုတ်ယူခြင်း ပြီးပါပြီ', error: 'ထုတ်ယူရာတွင် အမှားဖြစ်သွားပါသည်' }
+                  );
+                }}
+                className="gap-2 cursor-pointer"
+              >
+                <FileText className="w-4 h-4 text-destructive" />
+                PDF
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  toast.promise(
+                    new Promise<void>((resolve) => {
+                      exportAsHTML(filteredLeads);
+                      resolve();
+                    }),
+                    { loading: 'HTML ဖိုင် ပြင်ဆင်နေသည်...', success: 'HTML ထုတ်ယူခြင်း ပြီးပါပြီ', error: 'ထုတ်ယူရာတွင် အမှားဖြစ်သွားပါသည်' }
+                  );
+                }}
+                className="gap-2 cursor-pointer"
+              >
+                <FileCode className="w-4 h-4 text-info" />
+                HTML
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  toast.promise(
+                    new Promise<void>((resolve) => {
+                      exportAsCSV(filteredLeads);
+                      resolve();
+                    }),
+                    { loading: 'CSV ဖိုင် ပြင်ဆင်နေသည်...', success: 'CSV ထုတ်ယူခြင်း ပြီးပါပြီ', error: 'ထုတ်ယူရာတွင် အမှားဖြစ်သွားပါသည်' }
+                  );
+                }}
+                className="gap-2 cursor-pointer"
+              >
+                <FileText className="w-4 h-4 text-primary" />
+                CSV
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
       </div>
     </div>
 
@@ -292,9 +366,9 @@ export default function Leads() {
                   >
                     <SlidersHorizontal className="w-4 h-4" />
                     <span className="hidden sm:inline">စီစစ်ရန်</span>
-                    {(statusFilter !== 'all' || projectFilter !== 'all' || deptFilter !== 'all') && (
+                    {(statusFilter !== 'all' || projectFilter !== 'all' || deptFilter !== 'all' || agentFilter !== 'all') && (
                       <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
-                        {[statusFilter, projectFilter, deptFilter].filter((f) => f !== 'all').length}
+                        {[statusFilter, projectFilter, deptFilter, agentFilter].filter((f) => f !== 'all').length}
                       </span>
                     )}
                   </button>
@@ -352,6 +426,21 @@ export default function Leads() {
                         </SelectContent>
                       </Select>
                     </div>
+                    {/* Agent filter */}
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-foreground">ဝန်ထမ်း</label>
+                      <Select value={agentFilter} onValueChange={setAgentFilter}>
+                        <SelectTrigger className="h-12 w-full">
+                          <SelectValue placeholder="ဝန်ထမ်း ရွေးချယ်ပါ" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">ဝန်ထမ်းအားလုံး</SelectItem>
+                          {uniqueAgents.map((a) => (
+                            <SelectItem key={a} value={a}>{a}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     {/* Active filter chips */}
                     <div className="flex flex-wrap gap-2 pt-2">
                       {statusFilter !== 'all' && (
@@ -370,6 +459,12 @@ export default function Leads() {
                         <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
                           {deptFilter === 'house' ? 'အိမ်ရာ' : deptFilter === 'condo' ? 'ကွန်ဒို' : 'ပရောဂျက်'}
                           <button type="button" onClick={() => setDeptFilter('all')}><X className="w-3 h-3" /></button>
+                        </span>
+                      )}
+                      {agentFilter !== 'all' && (
+                        <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
+                          {agentFilter}
+                          <button type="button" onClick={() => setAgentFilter('all')}><X className="w-3 h-3" /></button>
                         </span>
                       )}
                     </div>
@@ -424,6 +519,18 @@ export default function Leads() {
                   <SelectItem value="project">ပရောဂျက်</SelectItem>
                 </SelectContent>
               </Select>
+              <Select value={agentFilter} onValueChange={setAgentFilter}>
+                <SelectTrigger className="w-[180px] h-11">
+                  <UserIcon className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
+                  <SelectValue placeholder="ဝန်ထမ်း" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">ဝန်ထမ်းအားလုံး</SelectItem>
+                  {uniqueAgents.map((a) => (
+                    <SelectItem key={a} value={a}>{a}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Mobile active filter chips */}
@@ -455,6 +562,16 @@ export default function Leads() {
                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
                 >
                   {deptFilter === 'house' ? 'အိမ်ရာ' : deptFilter === 'condo' ? 'ကွန်ဒို' : 'ပရောဂျက်'}
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+              {agentFilter !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => setAgentFilter('all')}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
+                >
+                  {agentFilter}
                   <X className="w-3 h-3" />
                 </button>
               )}

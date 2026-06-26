@@ -7,11 +7,21 @@ const EXPORT_HEADERS = [
   'ဝယ်သူအမည်',
   'ဖုန်းနံပါတ်',
   'အီးမေးလ်',
+  'လက်ရှိနေရာ',
   'Project',
   'ဘတ်ဂျက်',
   'အခြေအနေ',
+  'အဆင့်',
+  'စိတ်ဝင်စားမှု',
+  'အိမ်ရာအမျိုးအစား',
+  'ရည်ရွယ်ချက်',
+  'အရေးကြီးမှု',
+  'အရင်းအမြစ်',
   'တာဝန်ခံဝန်ထမ်း',
+  'Show Person',
   'ဆက်သွယ်ရမည့်ရက်',
+  'ဌာန',
+  'မှတ်ချက်',
 ];
 
 function getLeadRow(l: Lead): string[] {
@@ -19,11 +29,21 @@ function getLeadRow(l: Lead): string[] {
     l.name,
     l.phone,
     l.email || '',
+    l.currentLocation || '',
     l.preferredProject || '',
     l.budgetRange || '',
     l.status,
+    l.leadLevel || '',
+    l.interestType || '',
+    l.propertyType || '',
+    l.purpose || '',
+    l.urgency || '',
+    l.leadSource || '',
     l.assignedAgent || '',
+    l.showPerson || '',
     l.nextFollowUpDate || '',
+    l.department || '',
+    l.remarks || '',
   ];
 }
 
@@ -41,24 +61,39 @@ function triggerDownload(blob: Blob, filename: string) {
   }, 200);
 }
 
+function getExportFileName(base: string, count: number, ext: string): string {
+  const date = new Date().toISOString().split('T')[0];
+  return `PSM_${base}_${count}records_${date}.${ext}`;
+}
+
 export function exportAsExcel(leads: Lead[]) {
   if (leads.length === 0) return;
   const data = leads.map((l) => ({
     'ဝယ်သူအမည်': l.name,
     'ဖုန်းနံပါတ်': l.phone,
     'အီးမေးလ်': l.email || '',
+    'လက်ရှိနေရာ': l.currentLocation || '',
     'Project': l.preferredProject || '',
     'ဘတ်ဂျက်': l.budgetRange || '',
     'အခြေအနေ': l.status,
+    'အဆင့်': l.leadLevel || '',
+    'စိတ်ဝင်စားမှု': l.interestType || '',
+    'အိမ်ရာအမျိုးအစား': l.propertyType || '',
+    'ရည်ရွယ်ချက်': l.purpose || '',
+    'အရေးကြီးမှု': l.urgency || '',
+    'အရင်းအမြစ်': l.leadSource || '',
     'တာဝန်ခံဝန်ထမ်း': l.assignedAgent || '',
+    'Show Person': l.showPerson || '',
     'ဆက်သွယ်ရမည့်ရက်': l.nextFollowUpDate || '',
+    'ဌာန': l.department || '',
+    'မှတ်ချက်': l.remarks || '',
   }));
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Leads');
   const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  triggerDownload(blob, 'PSM_Leads_Export.xlsx');
+  triggerDownload(blob, getExportFileName('Leads', leads.length, 'xlsx'));
 }
 
 export function exportAsPDF(leads: Lead[]) {
@@ -113,18 +148,13 @@ export function exportAsPDF(leads: Lead[]) {
   });
 
   const blob = doc.output('blob');
-  triggerDownload(blob, 'PSM_Leads_Report.pdf');
+  triggerDownload(blob, getExportFileName('Leads', leads.length, 'pdf'));
 }
 
 export function exportAsCSV(leads: Lead[]) {
   if (leads.length === 0) return;
-  const headers = ['Name', 'Phone', 'Project', 'Status'];
-  const rows = leads.map((l) => [
-    l.name,
-    l.phone,
-    l.preferredProject || '',
-    l.status,
-  ]);
+  const headers = ['ဝယ်သူအမည်', 'ဖုန်းနံပါတ်', 'အီးမေးလ်', 'လက်ရှိနေရာ', 'Project', 'ဘတ်ဂျက်', 'အခြေအနေ', 'အဆင့်', 'စိတ်ဝင်စားမှု', 'အိမ်ရာအမျိုးအစား', 'ရည်ရွယ်ချက်', 'အရေးကြီးမှု', 'အရင်းအမြစ်', 'တာဝန်ခံဝန်ထမ်း', 'Show Person', 'ဆက်သွယ်ရမည့်ရက်', 'ဌာန', 'မှတ်ချက်'];
+  const rows = leads.map((l) => getLeadRow(l));
   const csvContent = [headers, ...rows]
     .map((row) =>
       row.map((cell) => {
@@ -137,7 +167,7 @@ export function exportAsCSV(leads: Lead[]) {
     )
     .join('\n');
   const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-  triggerDownload(blob, `PSM_Leads_${new Date().toISOString().split('T')[0]}.csv`);
+  triggerDownload(blob, getExportFileName('Leads', leads.length, 'csv'));
 }
 
 export function exportAsHTML(leads: Lead[]) {
@@ -191,7 +221,7 @@ tbody tr:last-child td { border-bottom: none; }
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'PSM_Leads_Export.html';
+  link.download = getExportFileName('Leads', leads.length, 'html');
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
