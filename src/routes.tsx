@@ -15,6 +15,7 @@ import VoiceNotes from './pages/VoiceNotes';
 import Settings from './pages/Settings';
 import FileCloud from './pages/FileCloud';
 import LeadMap from './pages/LeadMap';
+import PipelineBoard from './pages/PipelineBoard';
 import AdminAnalytics from './pages/AdminAnalytics';
 import CheckInMap from './pages/CheckInMap';
 import type { ReactNode } from 'react';
@@ -115,6 +116,11 @@ export const routes: RouteConfig[] = [
     name: 'Lead Map',
     path: '/lead-map',
     element: <LeadMap />,
+  },
+  {
+    name: 'Pipeline',
+    path: '/pipeline',
+    element: <PipelineBoard />,
   },
   {
     name: 'Analytics',

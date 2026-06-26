@@ -41,6 +41,7 @@ import {
   Globe,
   BarChart3 as AnalyticsIcon,
   Thermometer,
+  Kanban,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -60,6 +61,7 @@ const sidebarNavItems = [
   { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
   { name: 'Add Lead', path: '/add-lead', icon: UserPlus },
   { name: 'Leads', path: '/leads', icon: Users },
+  { name: 'Pipeline', path: '/pipeline', icon: Kanban },
   { name: 'Check-In', path: '/check-in', icon: Footprints },
   { name: 'Gallery', path: '/check-in-gallery', icon: Image },
   { name: 'Check-In Map', path: '/check-in-map', icon: Thermometer },
