@@ -42,11 +42,15 @@ import {
   BarChart3 as AnalyticsIcon,
   Thermometer,
   Kanban,
+  Briefcase,
+  UserCheck,
+  TrendingUp,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 /* ── Bottom Tab Config ─────────────────────────────────────────────────── */
 const tabItems = [
@@ -55,21 +59,6 @@ const tabItems = [
   { name: 'Add', path: '/add-lead', icon: Plus, isFab: true },
   { name: 'Check-In', path: '/check-in', icon: MapPin },
   { name: 'Gallery', path: '/check-in-gallery', icon: Image },
-];
-
-const sidebarNavItems = [
-  { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-  { name: 'Add Lead', path: '/add-lead', icon: UserPlus },
-  { name: 'Leads', path: '/leads', icon: Users },
-  { name: 'Pipeline', path: '/pipeline', icon: Kanban },
-  { name: 'Check-In', path: '/check-in', icon: Footprints },
-  { name: 'Gallery', path: '/check-in-gallery', icon: Image },
-  { name: 'Check-In Map', path: '/check-in-map', icon: Thermometer },
-  { name: 'Lead Map', path: '/lead-map', icon: Globe },
-  { name: 'Analytics', path: '/analytics', icon: AnalyticsIcon },
-  { name: 'Voice Notes', path: '/voice-notes', icon: Mic },
-  { name: 'Notifications', path: '/notifications', icon: Bell },
-  { name: 'File Cloud', path: '/file-cloud', icon: Cloud },
 ];
 
 function formatNotifTime(ts?: { toDate?: () => Date }) {
@@ -116,9 +105,30 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [pendingCount, setPendingCount] = useState(0);
   const [fabOpen, setFabOpen] = useState(false);
 
+  /* ── Dynamic Permission Navigation Arrays ────────────────────────────── */
+  const coreOperationsItems = [
+    { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+    { name: 'Add Lead', path: '/add-lead', icon: UserPlus },
+    { name: 'Leads', path: '/leads', icon: Users },
+    { name: 'Pipeline', path: '/pipeline', icon: Kanban },
+    { name: 'Check-In', path: '/check-in', icon: Footprints },
+    { name: 'Gallery', path: '/check-in-gallery', icon: Image },
+  ];
+
+  // Dynamic filter for General Tools (hides Check-In map from sales role context)
+  const generalToolsItems = [
+    ...(role !== 'sale' ? [{ name: 'Check-In Map', path: '/check-in-map', icon: Thermometer }] : []),
+    { name: 'Voice Notes', path: '/voice-notes', icon: Mic },
+    { name: 'Notifications', path: '/notifications', icon: Bell },
+    { name: 'File Cloud', path: '/file-cloud', icon: Cloud },
+  ];
+
   const handleLogout = async () => {
-    await logout();
-    navigate('/login');
+    try {
+      await logout();
+    } catch (error) {
+      console.error("Logout click action failed:", error);
+    }
   };
 
   const handleOpenNotifs = () => {
@@ -156,7 +166,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // Request push notification permission once on login
   useEffect(() => {
     if (!user?.uid) return;
-    // Delay to avoid blocking initial render
     const timer = setTimeout(() => {
       requestNotificationPermission().catch(() => {});
     }, 5000);
@@ -262,126 +271,181 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const sidebarContent = (
     <div className="flex flex-col h-full">
       {/* Brand Header */}
-      <div className="flex items-center gap-3 px-5 py-5 border-b border-white/10">
+      <div className="flex items-center gap-3 px-5 py-5 border-b border-white/10 shrink-0">
         <div className="flex flex-col">
           <span className="text-white font-bold text-lg leading-tight tracking-tight">PSM</span>
           <span className="text-[#D4AF37] text-[10px] leading-tight tracking-wide font-medium">Properties</span>
         </div>
       </div>
 
-      {/* Desktop Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-1">
-        {sidebarNavItems.map((item) => {
-          const isActive = location.pathname === item.path;
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.path}
-              to={item.path}
-              onClick={() => setMobileOpen(false)}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 min-h-12 ${
-                isActive
-                  ? 'bg-accent text-accent-foreground shadow-sm'
-                  : 'text-white/70 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <div className="relative">
-                <Icon className="w-5 h-5" strokeWidth={2} />
-                {item.path === '/notifications' && unreadCount > 0 && (
-                  <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-sidebar-background">
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </span>
-                )}
-              </div>
-              <span>{item.name}</span>
-            </Link>
-          );
-        })}
-        <div className="my-3 border-t border-white/10" />
-        <p className="px-4 text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-2">System</p>
-        <Link
-          to="/settings"
-          onClick={() => setMobileOpen(false)}
-          className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 min-h-12 ${
-            location.pathname === '/settings'
-              ? 'bg-accent text-accent-foreground shadow-sm'
-              : 'text-white/70 hover:bg-white/10 hover:text-white'
-          }`}
-        >
-          <SettingsIcon className="w-5 h-5" strokeWidth={2} />
-          <span>အကောင့်ဆက်တင်များ</span>
-        </Link>
-        {isAdmin(role) && (
-          <>
-            <div className="my-3 border-t border-white/10" />
-            <p className="px-4 text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-2">Admin</p>
-            <Link
-              to="/kpi-board"
-              onClick={() => setMobileOpen(false)}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 min-h-12 ${
-                location.pathname === '/kpi-board'
-                  ? 'bg-accent text-accent-foreground shadow-sm'
-                  : 'text-white/70 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <BarChart3 className="w-5 h-5" strokeWidth={2} />
-              <span>KPI Board</span>
-            </Link>
-            <Link
-              to="/user-management"
-              onClick={() => setMobileOpen(false)}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 min-h-12 ${
-                location.pathname === '/user-management'
-                  ? 'bg-accent text-accent-foreground shadow-sm'
-                  : 'text-white/70 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <Shield className="w-5 h-5" strokeWidth={2} />
-              <span>ဝန်ထမ်းများ</span>
-            </Link>
-            <Link
-              to="/audit-log"
-              onClick={() => setMobileOpen(false)}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 min-h-12 ${
-                location.pathname === '/audit-log'
-                  ? 'bg-accent text-accent-foreground shadow-sm'
-                  : 'text-white/70 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <ScrollText className="w-5 h-5" strokeWidth={2} />
-              <span>Audit Log</span>
-            </Link>
-            <Link
-              to="/analytics"
-              onClick={() => setMobileOpen(false)}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 min-h-12 ${
-                location.pathname === '/analytics'
-                  ? 'bg-accent text-accent-foreground shadow-sm'
-                  : 'text-white/70 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <AnalyticsIcon className="w-5 h-5" strokeWidth={2} />
-              <span>Analytics</span>
-            </Link>
-            <Link
-              to="/lead-map"
-              onClick={() => setMobileOpen(false)}
-              className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 min-h-12 ${
-                location.pathname === '/lead-map'
-                  ? 'bg-accent text-accent-foreground shadow-sm'
-                  : 'text-white/70 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              <Globe className="w-5 h-5" strokeWidth={2} />
-              <span>Lead Map</span>
-            </Link>
-          </>
-        )}
-      </nav>
+      {/* Nav Content Containers */}
+      <ScrollArea className="flex-1 px-3 py-4">
+        <div className="space-y-6 pb-4">
+          
+          {/* CATEGORY 1: Core Operations */}
+          <div>
+            <p className="px-4 text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-2">Core Operations</p>
+            <div className="space-y-1">
+              {coreOperationsItems.map((item) => {
+                const isActive = location.pathname === item.path;
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    onClick={() => setMobileOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 min-h-11 ${
+                      isActive
+                        ? 'bg-accent text-accent-foreground shadow-sm'
+                        : 'text-white/70 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <Icon className="w-[18px] h-[18px]" strokeWidth={2} />
+                    <span>{item.name}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
 
-      {/* Footer */}
-      <div className="px-3 py-4 border-t border-white/10 space-y-3">
-        {/* Pending Sync Queue Card List */}
+          {/* CATEGORY 2: Staff Administration */}
+          <div>
+            <p className="px-4 text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-2">Staff Administration</p>
+            <div className="space-y-1">
+              <Link
+                to="/kpi-board"
+                onClick={() => setMobileOpen(false)}
+                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 min-h-11 ${
+                  location.pathname === '/kpi-board' ? 'bg-accent text-accent-foreground shadow-sm' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                <BarChart3 className="w-[18px] h-[18px]" strokeWidth={2} />
+                <span>KPI Board</span>
+              </Link>
+              
+              <Link
+                to="/user-management"
+                onClick={() => setMobileOpen(false)}
+                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 min-h-11 ${
+                  location.pathname === '/user-management' ? 'bg-accent text-accent-foreground shadow-sm' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                {role === 'sale' ? (
+                  <>
+                    <TrendingUp className="w-[18px] h-[18px]" strokeWidth={2} />
+                    <span>KPI Analysis</span>
+                  </>
+                ) : (
+                  <>
+                    <Briefcase className="w-[18px] h-[18px]" strokeWidth={2} />
+                    <span>ဝန်ထမ်းများ စီမံရန်</span>
+                  </>
+                )}
+              </Link>
+            </div>
+          </div>
+
+          {/* CATEGORY 3: Security & Controls */}
+          <div>
+            <p className="px-4 text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-2">Security & Controls</p>
+            <div className="space-y-1">
+              {/* 🔒 Role Guarded Elements: Hidden from sales role context */}
+              {role !== 'sale' && (
+                <>
+                  <Link
+                    to="/role-management"
+                    onClick={() => setMobileOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 min-h-11 ${
+                      location.pathname === '/role-management' ? 'bg-accent text-accent-foreground shadow-sm' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <Shield className="w-[18px] h-[18px]" strokeWidth={2} />
+                    <span>ရာထူးနှင့် လုပ်ပိုင်ခွင့်များ</span>
+                  </Link>
+
+                  <Link
+                    to="/audit-log"
+                    onClick={() => setMobileOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 min-h-11 ${
+                      location.pathname === '/audit-log' ? 'bg-accent text-accent-foreground shadow-sm' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <ScrollText className="w-[18px] h-[18px]" strokeWidth={2} />
+                    <span>Audit Log</span>
+                  </Link>
+                  
+                  <Link
+                    to="/analytics"
+                    onClick={() => setMobileOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 min-h-11 ${
+                      location.pathname === '/analytics' ? 'bg-accent text-accent-foreground shadow-sm' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <AnalyticsIcon className="w-[18px] h-[18px]" strokeWidth={2} />
+                    <span>Analytics</span>
+                  </Link>
+                  
+                  <Link
+                    to="/lead-map"
+                    onClick={() => setMobileOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 min-h-11 ${
+                      location.pathname === '/lead-map' ? 'bg-accent text-accent-foreground shadow-sm' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <Globe className="w-[18px] h-[18px]" strokeWidth={2} />
+                    <span>Lead Map</span>
+                  </Link>
+                </>
+              )}
+
+              {/* General Allowed Shared Utilities */}
+              {generalToolsItems.map((item) => {
+                const isActive = location.pathname === item.path;
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    onClick={() => setMobileOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 min-h-11 ${
+                      isActive
+                        ? 'bg-accent text-accent-foreground shadow-sm'
+                        : 'text-white/70 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <div className="relative">
+                      <Icon className="w-[18px] h-[18px]" strokeWidth={2} />
+                      {item.path === '/notifications' && unreadCount > 0 && (
+                        <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-sidebar-background">
+                          {unreadCount > 9 ? '9+' : unreadCount}
+                        </span>
+                      )}
+                    </div>
+                    <span>{item.name}</span>
+                  </Link>
+                );
+              })}
+
+              <Link
+                to="/settings"
+                onClick={() => setMobileOpen(false)}
+                className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 min-h-11 ${
+                  location.pathname === '/settings'
+                    ? 'bg-accent text-accent-foreground shadow-sm'
+                    : 'text-white/70 hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                <SettingsIcon className="w-[18px] h-[18px]" strokeWidth={2} />
+                <span>အကောင့်ဆက်တင်များ</span>
+              </Link>
+            </div>
+          </div>
+
+        </div>
+      </ScrollArea>
+
+      {/* Footer System Controls */}
+      <div className="px-3 py-4 border-t border-white/10 space-y-3 shrink-0 bg-gradient-to-t from-black/10 to-transparent">
         {pendingCount > 0 && (
           <div className="space-y-2">
             <p className="px-1 text-[10px] font-semibold text-white/40 uppercase tracking-wider">
@@ -390,7 +454,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <SyncQueuePanel />
           </div>
         )}
-        <div className="px-4 py-2">
+        <div className="px-4 py-1">
           <p className="text-white/50 text-[10px] font-medium">Signed in as</p>
           <p className="text-white/90 text-sm font-medium truncate">{user?.email}</p>
           {role && (
@@ -401,7 +465,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
         <Button
           variant="ghost"
-          className="w-full justify-start gap-3 text-white/70 hover:text-white hover:bg-white/10 border border-white/15 h-11"
+          className="w-full justify-start gap-3 text-white/70 hover:text-white hover:bg-white/10 border border-white/15 h-11 rounded-xl"
           onClick={handleLogout}
         >
           <LogOut className="w-[18px] h-[18px]" strokeWidth={2} />
@@ -510,7 +574,41 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         {/* Page Content */}
         <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto pb-24 lg:pb-6">
-          {children}
+          {location.pathname === '/user-management' && role === 'sale' ? (
+            /* 🚀 SAFETY FILTER OVERRIDE FOR SALES TEAM */
+            <div className="space-y-6 max-w-4xl mx-auto animate-fade-in-up">
+              <div>
+                <h1 className="text-xl md:text-2xl font-semibold tracking-tight text-foreground">KPI Analysis</h1>
+                <p className="text-sm text-muted-foreground mt-0.5">Your personal performance metric review</p>
+              </div>
+
+              <Card className="shadow-sm border border-border/60 bg-card rounded-xl overflow-hidden">
+                <CardHeader className="border-b border-border/40 bg-muted/10">
+                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-primary" /> Performance Summary
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-6 flex flex-col items-center text-center">
+                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-4">
+                    <LayoutDashboard className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-base font-semibold text-foreground">လုပ်ဆောင်ချက် အချက်အလက်များ</h3>
+                  <p className="text-sm text-muted-foreground max-w-md mt-1 mb-6">
+                    အသေးစိတ်စွမ်းဆောင်ရည် KPI graphs များနှင့် analytics အချက်အလက်များကို ကြည့်ရှုရန် Dashboard စာမျက်နှာသို့ သွားရောက်ပါ။
+                  </p>
+                  <Button 
+                    onClick={() => navigate('/dashboard')} 
+                    className="gradient-primary hover:gradient-primary-hover text-white px-5 rounded-xl h-11 font-medium transition-all duration-200"
+                  >
+                    Go to Dashboard
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          ) : (
+            /* Default rendering pipeline for authenticated routing items */
+            children
+          )}
         </main>
       </div>
 

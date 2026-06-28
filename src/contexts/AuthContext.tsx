@@ -1,12 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signOut,
-  type User,
-} from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import {
   isOnline,
   isNetworkError,
@@ -19,42 +13,35 @@ import {
 import { normalizeRole, getDepartment } from '@/lib/roleUtils';
 import { invalidateStaleCache, clearAllCache } from '@/lib/offlineDataCache';
 
-interface OfflineUser {
+// Define a structural interface representing your Firestore database entry
+interface CustomFirestoreUser {
   uid: string;
   email: string;
   role: string;
-  displayName?: string;
-  isOffline: true;
+  name: string;
+  department: string;
+  status: string;
+  permissions?: string[];
+  isOffline?: boolean;
 }
 
 interface AuthContextType {
-  user: User | null;
+  user: CustomFirestoreUser | null;
   role: string | null;
   loading: boolean;
   isOffline: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<CustomFirestoreUser>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-function buildOfflineUser(cached: { uid: string; email: string; role: string; displayName?: string }): OfflineUser {
-  return {
-    uid: cached.uid,
-    email: cached.email,
-    role: cached.role,
-    displayName: cached.displayName,
-    isOffline: true,
-  };
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<CustomFirestoreUser | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isOfflineState, setIsOfflineState] = useState(!isOnline());
 
-  // Network status listener
   useEffect(() => {
     const handleOnline = () => setIsOfflineState(false);
     const handleOffline = () => setIsOfflineState(true);
@@ -67,70 +54,87 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Auth state listener — reads role from custom claims first, Firestore as fallback
+  // Initialize session from localStorage on application bootstrap
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
-        try {
-          // 1. Try custom claims first (most secure, included in ID token)
-          const idTokenResult = await currentUser.getIdTokenResult(true);
-          const claimRole = idTokenResult.claims.role as string | undefined;
-
-          if (claimRole) {
-            const normalized = normalizeRole(claimRole);
-            setRole(normalized);
-            if (normalized) {
-              cacheUserProfile(currentUser.uid, currentUser.email || '', normalized, currentUser.displayName || undefined);
-              invalidateStaleCache(normalized, getDepartment(normalized));
-            }
-          } else {
-            // 2. Fallback to Firestore users/{uid} document
-            const snap = await getDoc(doc(db, 'users', currentUser.uid));
-            const roleValue = snap.exists() ? normalizeRole(snap.data().role as string) : null;
-            setRole(roleValue);
-            if (roleValue) {
-              cacheUserProfile(currentUser.uid, currentUser.email || '', roleValue, currentUser.displayName || undefined);
-              invalidateStaleCache(roleValue, getDepartment(roleValue));
-            }
-          }
-        } catch {
-          // If both claims and Firestore fail, try cached role
-          const cached = getCachedUserProfile();
-          if (cached && cached.uid === currentUser.uid) {
-            const normalized = normalizeRole(cached.role);
-            setRole(normalized);
-            if (normalized) {
-              invalidateStaleCache(normalized, getDepartment(normalized));
-            }
-          } else {
-            setRole(null);
-          }
+    const savedSession = localStorage.getItem('psm_staff_session');
+    if (savedSession) {
+      try {
+        const parsedUser = JSON.parse(savedSession) as CustomFirestoreUser;
+        setUser(parsedUser);
+        const normalized = normalizeRole(parsedUser.role);
+        setRole(normalized);
+        
+        if (normalized) {
+          invalidateStaleCache(normalized, getDepartment(normalized));
         }
-      } else {
-        setUser(null);
-        setRole(null);
+      } catch (e) {
+        console.error("Error parsing restoration session:", e);
       }
-      setLoading(false);
-    });
-    return () => unsubscribe();
+    }
+    setLoading(false);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      // Online success — cache credentials and profile
+      // Query the direct Firestore users collection by fields
+      const q = query(
+        collection(db, 'users'),
+        where('email', '==', email),
+        where('password', '==', password)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      
+      if (querySnapshot.empty) {
+        throw new Error('အီးမေးလ် သို့မဟုတ် စကားဝှက် မှားယွင်းနေပါသည်။');
+      }
+
+      const userDoc = querySnapshot.docs[0];
+      const data = userDoc.data();
+
+      if (data.status !== 'Active') {
+        throw new Error('သင်၏ အကောင့်မှာ ပိတ်သိမ်းခံထားရပါသည်။ Admin အား ဆက်သွယ်ပါ။');
+      }
+
+      const verifiedUser: CustomFirestoreUser = {
+        uid: data.uid || userDoc.id,
+        email: data.email,
+        role: data.role,
+        name: data.name || 'Agent',
+        department: data.department || 'General',
+        permissions: data.permissions || [],
+      };
+
+      // Handle offline caching configurations
       cacheCredentials(email, password);
+      const normalized = normalizeRole(verifiedUser.role);
+      if (normalized) {
+        cacheUserProfile(verifiedUser.uid, verifiedUser.email, normalized, verifiedUser.name);
+      }
+
+      setUser(verifiedUser);
+      setRole(normalized);
+      return verifiedUser;
+
     } catch (err: any) {
-      if (isNetworkError(err)) {
-        // Fallback to offline authentication
+      // Fallback behavior if connection is severed
+      if (isNetworkError(err) || !navigator.onLine) {
         const offlineUser = attemptOfflineLogin(email, password);
         if (offlineUser) {
-          const built = buildOfflineUser(offlineUser);
-          setUser(built as unknown as User);
-          setRole(offlineUser.role);
+          const built: CustomFirestoreUser = {
+            uid: offlineUser.uid,
+            email: offlineUser.email,
+            role: offlineUser.role,
+            name: offlineUser.displayName || 'Offline Agent',
+            department: 'General',
+            status: 'Active',
+            permissions: [],
+            isOffline: true
+          };
+          setUser(built);
+          setRole(normalizeRole(offlineUser.role));
           setIsOfflineState(true);
-          return;
+          return built;
         }
       }
       throw err;
@@ -138,11 +142,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    try {
-      await signOut(auth);
-    } catch {
-      // Even if Firebase signOut fails (offline), clear local state
-    }
+    localStorage.removeItem('psm_staff_session');
     setUser(null);
     setRole(null);
     clearCachedCredentials();
@@ -159,15 +159,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) {
-    // During React Fast Refresh (HMR), context can be briefly undefined
-    // while the provider is being remounted. Return safe defaults instead
-    // of throwing to prevent the app from crashing during development.
     return {
       user: null,
       role: null,
       loading: true,
       isOffline: false,
-      login: async () => {},
+      login: async () => { throw new Error('Auth Context not mounted'); },
       logout: async () => {},
     };
   }

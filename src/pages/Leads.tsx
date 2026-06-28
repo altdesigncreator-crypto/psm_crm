@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
-import { collection, addDoc, Timestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, onSnapshot, query } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
@@ -29,16 +29,14 @@ import {
   SheetTrigger,
   SheetClose,
 } from '@/components/ui/sheet';
-import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, ChevronRight, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Mic, Upload, Loader2, Play, ExternalLink, Download, FileSpreadsheet, FileCode } from 'lucide-react';
+import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Mic, Upload, Loader2, Download, FileSpreadsheet, FileCode } from 'lucide-react';
 import { STATUSES, type Lead } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { getDepartment, isAdmin, filterVisibleLeads } from '@/lib/roleUtils';
-import { useOfflineCollection } from '@/hooks/useOfflineCollection';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import StatusBadge from '@/components/StatusBadge';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
-
 
 import {
   DropdownMenu,
@@ -53,7 +51,8 @@ export default function Leads() {
   const navigate = useNavigate();
   const { user, role } = useAuth();
   const { colors: statusColors } = useStatusColors();
-  const [leads, setLeads] = useState<Lead[]>([]);
+  
+  const [rawLeads, setRawLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [mapOpen, setMapOpen] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
@@ -75,49 +74,83 @@ export default function Leads() {
 
   const userDept = getDepartment(role);
   const isAdminUser = isAdmin(role);
-  const deptOptions = ['house', 'condo', 'project'];
 
-  // Role-filtered leads with IndexedDB offline fallback
-  const [visibleLeads, leadsLoading] = useOfflineCollection<Lead>(
-    'leads',
-    role,
-    userDept,
-    user?.email,
-    (raw) => {
-      const visible = filterVisibleLeads(raw, role, user?.email);
-      return visible.sort((a, b) => {
-        const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
-        const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
-        return bTime - aTime;
-      });
-    }
-  );
-
+  // ✅ DIRECT SNAPSHOT LISTENER
   useEffect(() => {
-    setLeads(visibleLeads);
-    setLoading(leadsLoading);
-  }, [visibleLeads, leadsLoading]);
+    const q = query(collection(db, 'leads'));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setRawLeads(data);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Firestore snapshot error:", error);
+        toast.error("ဒေတာအသစ်များရယူရန် အဆင်မပြေဖြစ်နေပါသည်");
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  // ✅ SAFE ROLE PROTECTION AND SORTING
+  const visibleLeads = useMemo(() => {
+    if (!rawLeads || rawLeads.length === 0) return [];
+    
+    // Pass data raw if auth state hasn't resolved roles yet so page isn't blank
+    const visible = role ? filterVisibleLeads(rawLeads, role, user?.email) : rawLeads;
+    
+    return [...visible].sort((a, b) => {
+      const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds * 1000 || 0);
+      const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds * 1000 || 0);
+      return bTime - aTime;
+    });
+  }, [rawLeads, role, user?.email]);
+
+  // ✅ DATA NORMALIZATION (Fallbacks for structural parameters)
+  const leads: Lead[] = useMemo(() => {
+    return visibleLeads.map((l: any) => ({
+      ...l,
+      name: l.name || 'Unknown',
+      status: l.status || 'New',
+      preferredProject: l.preferredProject || '',
+      department: l.department || 'house',
+      assignedAgent: l.assignedAgent || '',
+      latitude: l.latitude ?? l.leadLat ?? null,
+      longitude: l.longitude ?? l.leadLng ?? null,
+    }));
+  }, [visibleLeads]);
 
   const uniqueAgents = useMemo(() => {
-    return Array.from(new Set(leads.map((l) => l.assignedAgent).filter((a): a is string => !!a))).sort();
+    return Array.from(new Set(leads.map((l) => l.assignedAgent).filter(Boolean))).sort();
   }, [leads]);
 
+  // ✅ ROBUST CONDITIONAL FILTER MATRIX
   const filteredLeads = useMemo(() => {
     return leads.filter((lead) => {
+      const name = lead.name?.toLowerCase() || '';
+      const agent = lead.assignedAgent?.toLowerCase() || '';
+      const q = searchQuery.toLowerCase();
+
       const matchesSearch =
         !searchQuery ||
-        lead.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        lead.phone.includes(searchQuery) ||
-        (lead.assignedAgent && lead.assignedAgent.toLowerCase().includes(searchQuery.toLowerCase()));
+        name.includes(q) ||
+        lead.phone?.includes(searchQuery) ||
+        agent.includes(q);
+        
       const matchesStatus = statusFilter === 'all' || lead.status === statusFilter;
-      const matchesProject = projectFilter === 'all' || lead.preferredProject === projectFilter || false;
-      const matchesDept = deptFilter === 'all' || (lead.department || 'house') === deptFilter;
+      const matchesProject = projectFilter === 'all' || lead.preferredProject === projectFilter;
+      const matchesDept = deptFilter === 'all' || lead.department === deptFilter;
       const matchesAgent = agentFilter === 'all' || lead.assignedAgent === agentFilter;
+      
       return matchesSearch && matchesStatus && matchesProject && matchesDept && matchesAgent;
     });
   }, [leads, searchQuery, statusFilter, projectFilter, deptFilter, agentFilter]);
-
-
 
   const openMap = (lead: Lead) => {
     setSelectedLead(lead);
@@ -210,7 +243,7 @@ export default function Leads() {
           assignedAgent: agentIdx >= 0 ? String(row[agentIdx]).trim() || null : null,
           ownerId: user.uid,
           department: getDepartment(role),
-          createdAt: Timestamp.now(),
+          createdAt: serverTimestamp(),
           latitude: null,
           longitude: null,
         });
@@ -405,7 +438,7 @@ export default function Leads() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">Project အားလုံး</SelectItem>
-                          {Array.from(new Set(leads.map((l) => l.preferredProject).filter((p): p is string => !!p))).sort().map((p) => (
+                          {Array.from(new Set(leads.map((l) => l.preferredProject).filter(Boolean))).sort().map((p) => (
                             <SelectItem key={p} value={p}>{p}</SelectItem>
                           ))}
                         </SelectContent>
@@ -502,7 +535,7 @@ export default function Leads() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Project အားလုံး</SelectItem>
-                  {Array.from(new Set(leads.map((l) => l.preferredProject).filter((p): p is string => !!p))).sort().map((p) => (
+                  {Array.from(new Set(leads.map((l) => l.preferredProject).filter(Boolean))).sort().map((p) => (
                     <SelectItem key={p} value={p}>{p}</SelectItem>
                   ))}
                 </SelectContent>
@@ -624,29 +657,29 @@ export default function Leads() {
                     </TableHeader>
                     <TableBody>
                       {filteredLeads.map((lead) => (
-                        <TableRow key={lead.id} className="transition-colors duration-300 hover:bg-muted/50">
+                        <TableRow key={lead.id} className="transition-colors duration-300 hover:bg-muted/50" onClick={() => navigate(`/lead/${lead.id}`)}>
                           <TableCell className="whitespace-nowrap text-sm font-medium">{lead.name}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{lead.phone}</TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">{lead.phone || '—'}</TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{lead.preferredProject || '—'}</TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{lead.budgetRange || '—'}</TableCell>
                           <TableCell className="whitespace-nowrap"><LeadLevelBadge level={lead.leadLevel} /></TableCell>
-                          <TableCell className="whitespace-nowrap"><StatusBadge status={lead.status} color={statusColors[lead.status] || '#8FA3BF'} /></TableCell>
+                          <TableCell className="whitespace-nowrap"><StatusBadge status={lead.status} color={statusColors?.[lead.status] || '#8FA3BF'} /></TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{lead.assignedAgent || '—'}</TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{lead.showPerson || '—'}</TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{lead.nextFollowUpDate || '—'}</TableCell>
-                          <TableCell className="whitespace-nowrap">
+                          <TableCell className="whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                             {lead.voiceNoteURL ? (
                               <audio controls className="h-8 w-32 md:w-40"><source src={lead.voiceNoteURL} type="audio/webm" /></audio>
                             ) : (<span className="text-xs text-muted-foreground">—</span>)}
                           </TableCell>
-                          <TableCell className="whitespace-nowrap">
+                          <TableCell className="whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                             {lead.latitude && lead.longitude ? (
                               <button onClick={() => openMap(lead)} className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 font-medium transition-colors">
                                 <MapPin className="w-3.5 h-3.5" /> မြေပုံကြည့်ရန်
                               </button>
                             ) : (<span className="text-xs text-muted-foreground">—</span>)}
                           </TableCell>
-                          <TableCell className="whitespace-nowrap">
+                          <TableCell className="whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                             <Button variant="ghost" size="sm" className="h-8 px-2 text-primary hover:bg-primary/5 gap-1" onClick={() => navigate(`/lead/${lead.id}`)}>
                               <Eye className="w-3.5 h-3.5" />
                               <span className="text-xs font-medium">အသေးစိတ်</span>
@@ -672,12 +705,12 @@ export default function Leads() {
                       >
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-semibold text-foreground truncate">{lead.name}</span>
-                          <StatusBadge status={lead.status} color={statusColors[lead.status] || '#8FA3BF'} />
+                          <StatusBadge status={lead.status} color={statusColors?.[lead.status] || '#8FA3BF'} />
                         </div>
                         <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
                           <span className="flex items-center gap-1">
                             <Phone className="w-3 h-3" />
-                            {lead.phone}
+                            {lead.phone || '—'}
                           </span>
                           {lead.preferredProject && (
                             <span className="flex items-center gap-1">
@@ -702,9 +735,11 @@ export default function Leads() {
                           </div>
                         )}
                         {lead.voiceNoteURL && (
-                          <audio controls className="h-8 w-full max-w-[240px] mt-1">
-                            <source src={lead.voiceNoteURL} type="audio/webm" />
-                          </audio>
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <audio controls className="h-8 w-full max-w-[240px] mt-1">
+                              <source src={lead.voiceNoteURL} type="audio/webm" />
+                            </audio>
+                          </div>
                         )}
                         {lead.latitude && lead.longitude && (
                           <button
@@ -745,12 +780,12 @@ export default function Leads() {
       <Dialog open={mapOpen} onOpenChange={setMapOpen}>
         <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-lg p-0 overflow-hidden">
           <DialogHeader className="px-6 pt-6 pb-2">
-            <DialogTitle className="text-base font-semibold">Lead တည်နေရာ</DialogTitle>
+            <DialogTitle className="text-base font-semibold">Lead တည်နေရာ — {selectedLead?.name}</DialogTitle>
           </DialogHeader>
           {selectedLead?.latitude && selectedLead?.longitude && (
             <div className="px-6 pb-6">
               <p className="text-sm text-muted-foreground mb-3">
-                {selectedLead.name} — Lat: {selectedLead.latitude.toFixed(5)}, Lng: {selectedLead.longitude.toFixed(5)}
+                Lat: {Number(selectedLead.latitude).toFixed(5)}, Lng: {Number(selectedLead.longitude).toFixed(5)}
               </p>
               <div className="w-full aspect-video rounded-lg overflow-hidden border border-border">
                 <iframe
@@ -761,7 +796,7 @@ export default function Leads() {
                   loading="lazy"
                   allowFullScreen
                   referrerPolicy="no-referrer-when-downgrade"
-                  src={`https://www.google.com/maps/embed/v1/place?key=AIzaSyB_LJOYJL-84SMuxNB7LtRGhxEQLjswvy0&q=${selectedLead.latitude},${selectedLead.longitude}&zoom=15`}
+                  src={`http://googleusercontent.com/maps.google.com/maps?q=${selectedLead.latitude},${selectedLead.longitude}&zoom=15&output=embed`}
                 />
               </div>
             </div>
@@ -777,7 +812,7 @@ export default function Leads() {
               {/* Header */}
               <div className="px-6 pt-5 pb-3 border-b border-border">
                 <p className="text-base font-semibold text-foreground truncate">{actionSheetLead.name}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">{actionSheetLead.phone}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{actionSheetLead.phone || 'ဖုန်းနံပါတ်မရှိပါ'}</p>
               </div>
               {/* Actions */}
               <div className="px-2 py-2 space-y-1">

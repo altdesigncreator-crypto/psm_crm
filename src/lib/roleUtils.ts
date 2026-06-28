@@ -121,6 +121,13 @@ export function normalizeRole(role: string | null | undefined): string | null {
   return legacyMap[lower] || lower;
 }
 
+/** Check if the role is a salesperson from any department */
+export function isSaleRole(role: string | null | undefined): boolean {
+  if (!role) return false;
+  const normalized = normalizeRole(role) || '';
+  return normalized === 'sale' || normalized.endsWith('_sale');
+}
+
 /**
  * True cross-department Admin/Chairman only.
  * NOTE: condo_admin and house_admin are intentionally EXCLUDED here —
@@ -178,17 +185,6 @@ export function sameDepartment(role1: string, role2: string): boolean {
 
 /**
  * Centralized data-visibility check for an individual lead/record.
- *
- * Hierarchy (confirmed):
- *  - Chairman / Admin (admin, house_admin_manager)  -> sees everything
- *  - Manager-level (project_manager, condo_manager, condo_admin, house_admin)
- *      -> sees everything WITHIN their own department only
- *  - Sale / Supervisor levels
- *      -> sees ONLY their own records (peer-to-peer is blocked)
- *
- * @param viewerRole   normalized role string of the person viewing
- * @param viewerEmail  email of the person viewing (used for own-record check)
- * @param record       the lead's ownership info: who it's assigned to + which department it belongs to
  */
 export function canViewLead(
   viewerRole: string | null | undefined,
@@ -214,8 +210,6 @@ export function canViewLead(
 
 /**
  * Filters a list of leads down to what `viewerRole`/`viewerEmail` is allowed to see.
- * Use this everywhere leads are read from Firestore (Dashboard, Leads list, KPI board, etc.)
- * so the visibility rule lives in exactly one place.
  */
 export function filterVisibleLeads<T extends { assignedAgent?: string | null; department?: string | null }>(
   leads: T[],
@@ -227,13 +221,22 @@ export function filterVisibleLeads<T extends { assignedAgent?: string | null; de
 
 export function canAccessPage(role: string | null | undefined, page: string): boolean {
   if (!role) return false;
-  const lower = normalizeRole(role) || '';
+  
+  // Strict Security Rule: Sales staff from ANY department are instantly blocked from configuration hubs
+  if (isSaleRole(role)) {
+    if (page.startsWith('user-management') || page.startsWith('role-management')) {
+      return false;
+    }
+  }
+
   const publicPages = ['dashboard', 'add-lead', 'leads', 'lead', 'check-in', 'check-in-gallery', 'notifications', 'agent'];
   if (publicPages.some((p) => page.startsWith(p))) return true;
-  const adminPages = ['user-management', 'audit-log'];
+
+  // Hubs accessible exclusively by top admins
+  const adminPages = ['user-management', 'role-management', 'audit-log'];
   if (adminPages.some((p) => page.startsWith(p))) return isAdmin(role);
+  
   if (page.startsWith('kpi')) return isManagement(role);
-  // Agent Detail page is a management-only drill-down view of a single Sale's data.
   if (page.startsWith('agent')) return isManagement(role);
   return false;
 }

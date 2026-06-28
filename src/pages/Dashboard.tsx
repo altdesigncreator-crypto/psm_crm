@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Timestamp } from 'firebase/firestore';
+import { collection, onSnapshot, query, Timestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   Chart as ChartJS,
@@ -37,8 +38,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { STATUSES, type Lead } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
-import { getDepartment, isAdmin, filterVisibleLeads } from '@/lib/roleUtils';
-import { useOfflineCollection } from '@/hooks/useOfflineCollection';
+import { filterVisibleLeads } from '@/lib/roleUtils';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import StatusColorDialog from '@/components/StatusColorDialog';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
@@ -113,27 +113,38 @@ function filterLeadsByDate(leads: Lead[], filter: DateFilter): Lead[] {
 
 export default function Dashboard() {
   const { user, role } = useAuth();
-  const userDept = getDepartment(role);
-  const isAdminUser = isAdmin(role);
-
-  const [leads, setLeads] = useState<Lead[]>([]);
+  const [rawLeads, setRawLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const { colors: statusColors, saveColors } = useStatusColors();
 
-  // Role-filtered leads with IndexedDB offline fallback
-  const [visibleLeads, leadsLoading] = useOfflineCollection<Lead>(
-    'leads',
-    role,
-    userDept,
-    user?.email,
-    (raw) => filterVisibleLeads(raw, role, user?.email)
-  );
-
+  // ✅ REAL-TIME SNAPSHOT SYNC WITH FIREBASE (Replaces potentially blocking offline hooks)
   useEffect(() => {
-    setLeads(visibleLeads);
-    setLoading(leadsLoading);
-  }, [visibleLeads, leadsLoading]);
+    const q = query(collection(db, 'leads'));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setRawLeads(data);
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Dashboard database listener error:", error);
+        toast.error("ဒေတာအသစ်များ ရယူရန် အဆင်မပြေဖြစ်နေပါသည်");
+        setLoading(false);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  // ✅ DEFENSIBLY FILTER LEADS BASED ON ROLE MATRIX ACCESS
+  const leads: Lead[] = useMemo(() => {
+    if (!rawLeads || rawLeads.length === 0) return [];
+    return role ? filterVisibleLeads(rawLeads, role, user?.email) : rawLeads;
+  }, [rawLeads, role, user?.email]);
 
   const filteredLeads = useMemo(() => filterLeadsByDate(leads, dateFilter), [leads, dateFilter]);
 
@@ -141,7 +152,7 @@ export default function Dashboard() {
   const followUpCount = filteredLeads.filter(
     (l) => l.status === 'Contacted' || l.status === 'Follow Up'
   ).length;
-  const wonLeads = filteredLeads.filter((l) => l.status === 'Success');
+  const wonLeads = filteredLeads.filter((l) => l.status === 'Success' || l.status === 'Won');
   const wonCount = wonLeads.length;
   const levelACount = filteredLeads.filter((l) => l.leadLevel === 'Level A (Hot/Ready)').length;
 
@@ -183,7 +194,7 @@ export default function Dashboard() {
       {
         label: 'Leads',
         data: statusCounts,
-        backgroundColor: STATUSES.map((s) => statusColors[s]),
+        backgroundColor: STATUSES.map((s) => statusColors[s] || '#0463CA'),
         borderRadius: 6,
         borderSkipped: false,
       },
@@ -261,7 +272,6 @@ export default function Dashboard() {
     },
   };
 
-  // Agent Performance Leaderboard
   const agentPerformance = useMemo(() => {
     const agents: Record<string, number> = {};
     for (const l of wonLeads) {
@@ -275,7 +285,6 @@ export default function Dashboard() {
     return sorted.map(([name, count]) => ({ name, count, pct: Math.round((count / max) * 100) }));
   }, [wonLeads]);
 
-  // Activity Feed
   const activityFeed = useMemo(() => {
     return [...filteredLeads]
       .sort((a, b) => {
@@ -302,12 +311,12 @@ export default function Dashboard() {
           <h1 className="text-xl md:text-2xl font-semibold text-foreground">Dashboard</h1>
           <p className="text-sm text-muted-foreground mt-1">Executive overview of sales performance</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
           {(Object.keys(FILTER_LABELS) as DateFilter[]).map((key) => (
             <button
               key={key}
               onClick={() => setDateFilter(key)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 whitespace-nowrap ${
                 dateFilter === key
                   ? 'bg-primary text-primary-foreground shadow-sm'
                   : 'bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary/40'
@@ -320,7 +329,7 @@ export default function Dashboard() {
             <DropdownMenuTrigger asChild>
               <Button
                 disabled={filteredLeads.length === 0}
-                className="h-11 gradient-primary hover:gradient-primary-hover text-white text-sm font-medium gap-2"
+                className="h-9 gradient-primary hover:gradient-primary-hover text-white text-sm font-medium gap-2 px-3"
               >
                 <Download className="w-4 h-4" />
                 ထုတ်ယူရန်
@@ -340,7 +349,7 @@ export default function Dashboard() {
                     { loading: 'Excel ဖိုင် ပြင်ဆင်နေသည်...', success: 'Excel ထုတ်ယူခြင်း ပြီးပါပြီ', error: 'ထုတ်ယူရာတွင် အမှားဖြစ်သွားပါသည်' }
                   );
                 }}
-                className="gap-3 rounded-lg px-3 py-3.5 text-sm cursor-pointer transition-colors hover:!bg-primary/10 hover:!text-primary focus:!bg-primary/10 focus:!text-primary min-h-[52px]"
+                className="gap-3 rounded-lg px-3 py-3.5 text-sm cursor-pointer transition-colors"
               >
                 <FileSpreadsheet className="w-5 h-5 shrink-0" />
                 <span>Excel ဖိုင်ဖြင့် ထုတ်ရန်</span>
@@ -355,7 +364,7 @@ export default function Dashboard() {
                     { loading: 'PDF ဖိုင် ပြင်ဆင်နေသည်...', success: 'PDF ထုတ်ယူခြင်း ပြီးပါပြီ', error: 'ထုတ်ယူရာတွင် အမှားဖြစ်သွားပါသည်' }
                   );
                 }}
-                className="gap-3 rounded-lg px-3 py-3.5 text-sm cursor-pointer transition-colors hover:!bg-primary/10 hover:!text-primary focus:!bg-primary/10 focus:!text-primary min-h-[52px]"
+                className="gap-3 rounded-lg px-3 py-3.5 text-sm cursor-pointer transition-colors"
               >
                 <FilePdf className="w-5 h-5 shrink-0" />
                 <span>PDF ဖိုင်ဖြင့် ထုတ်ရန်</span>
@@ -370,7 +379,7 @@ export default function Dashboard() {
                     { loading: 'HTML ဖိုင် ပြင်ဆင်နေသည်...', success: 'HTML ထုတ်ယူခြင်း ပြီးပါပြီ', error: 'ထုတ်ယူရာတွင် အမှားဖြစ်သွားပါသည်' }
                   );
                 }}
-                className="gap-3 rounded-lg px-3 py-3.5 text-sm cursor-pointer transition-colors hover:!bg-primary/10 hover:!text-primary focus:!bg-primary/10 focus:!text-primary min-h-[52px]"
+                className="gap-3 rounded-lg px-3 py-3.5 text-sm cursor-pointer transition-colors"
               >
                 <FileTextIcon className="w-5 h-5 shrink-0" />
                 <span>HTML ဖိုင်ဖြင့် ထုတ်ရန်</span>
@@ -380,7 +389,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* KPI Cards — mobile: horizontal scroll, desktop: grid */}
+      {/* KPI Cards */}
       <div className="flex md:grid md:grid-cols-2 lg:grid-cols-5 gap-3 overflow-x-auto md:overflow-visible pb-2 md:pb-0 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
         <Card className="shadow-card hover:shadow-card-hover transition-shadow duration-300 rounded-xl border-0 min-w-[160px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-4">
@@ -403,8 +412,8 @@ export default function Dashboard() {
                 <p className="text-xs font-medium text-muted-foreground">Follow Up</p>
                 <p className="text-xl md:text-2xl font-bold text-foreground mt-0.5">{followUpCount}</p>
               </div>
-              <div className="w-9 h-9 rounded-lg bg-warning/10 flex items-center justify-center shrink-0">
-                <PhoneCall className="w-4 h-4 text-warning" />
+              <div className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0">
+                <PhoneCall className="w-4 h-4 text-amber-500" />
               </div>
             </div>
           </CardContent>
@@ -431,8 +440,8 @@ export default function Dashboard() {
                 <p className="text-xs font-medium text-muted-foreground">ရောင်းချပြီး</p>
                 <p className="text-xl md:text-2xl font-bold text-foreground mt-0.5">{wonCount}</p>
               </div>
-              <div className="w-9 h-9 rounded-lg bg-success/10 flex items-center justify-center shrink-0">
-                <CheckCircle2 className="w-4 h-4 text-success" />
+              <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
               </div>
             </div>
           </CardContent>
@@ -457,7 +466,7 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Charts — Mobile: horizontal scroll with snap; Desktop: grid */}
+      {/* Charts */}
       <div className="flex md:grid md:grid-cols-2 gap-4 md:gap-6 overflow-x-auto md:overflow-visible pb-2 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
         <Card className="shadow-card rounded-xl border-0 min-w-[92vw] md:min-w-0 snap-start flex-shrink-0 md:flex-shrink">
           <CardContent className="p-5 md:p-6">
@@ -523,7 +532,7 @@ export default function Dashboard() {
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="text-xs font-semibold text-primary">{agent.count} အောင်မြင်</span>
-                        <ArrowUpRight className="w-3.5 h-3.5 text-success" />
+                        <ArrowUpRight className="w-3.5 h-3.5 text-emerald-500" />
                       </div>
                     </div>
                     <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
@@ -574,7 +583,7 @@ export default function Dashboard() {
                         <p className="text-sm font-medium text-foreground leading-snug">
                           {lead.assignedAgent || 'အမည်မသိ'} ၊ <span className="text-primary">{lead.name}</span> အတွက် Lead အသစ်ထည့်ခဲ့သည်
                         </p>
-                        <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                        <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1 flex-wrap">
                           <Calendar className="w-3 h-3" />
                           {timeStr}
                           <ChevronRight className="w-3 h-3 mx-0.5" />

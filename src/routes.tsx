@@ -1,3 +1,7 @@
+import React from 'react';
+import type { ReactNode } from 'react';
+import { ProtectedRoute } from './components/ProtectedRoutes'; // Adjust this import location based on your project structure
+
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
@@ -18,14 +22,14 @@ import LeadMap from './pages/LeadMap';
 import PipelineBoard from './pages/PipelineBoard';
 import AdminAnalytics from './pages/AdminAnalytics';
 import CheckInMap from './pages/CheckInMap';
-import type { ReactNode } from 'react';
+import RoleManagement from './pages/RoleManagement';
 
 export interface RouteConfig {
   name: string;
   path: string;
   element: ReactNode;
   visible?: boolean;
-  /** Accessible without login. Routes without this flag require authentication. Has no effect when RouteGuard is not in use. */
+  /** Accessible without login. Routes without this flag require authentication. */
   public?: boolean;
 }
 
@@ -33,103 +37,192 @@ export const routes: RouteConfig[] = [
   {
     name: 'Login',
     path: '/login',
-    element: <Login />,
+    element: (
+      <ProtectedRoute isPublic>
+        <Login />
+      </ProtectedRoute>
+    ),
     public: true,
   },
   {
     name: 'Register',
     path: '/register',
-    element: <Register />,
+    element: (
+      <ProtectedRoute isPublic>
+        <Register />
+      </ProtectedRoute>
+    ),
     public: true,
   },
   {
     name: 'Dashboard',
     path: '/dashboard',
-    element: <Dashboard />,
+    element: (
+      <ProtectedRoute>
+        <Dashboard />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Add Lead',
     path: '/add-lead',
-    element: <AddLead />,
+    element: (
+      <ProtectedRoute>
+        <AddLead />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Leads',
     path: '/leads',
-    element: <Leads />,
+    element: (
+      <ProtectedRoute>
+        <Leads />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Lead Detail',
     path: '/lead/:id',
-    element: <LeadDetail />,
+    element: (
+      <ProtectedRoute>
+        <LeadDetail />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Notifications',
     path: '/notifications',
-    element: <Notifications />,
+    element: (
+      <ProtectedRoute>
+        <Notifications />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Check-In',
     path: '/check-in',
-    element: <CheckIn />,
+    element: (
+      <ProtectedRoute>
+        <CheckIn />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Check-In Gallery',
     path: '/check-in-gallery',
-    element: <CheckInGallery />,
+    element: (
+      <ProtectedRoute>
+        <CheckInGallery />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'User Management',
     path: '/user-management',
-    element: <UserManagement />,
+    element: (
+      <ProtectedRoute>
+        <UserManagement />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'KPI Board',
     path: '/kpi-board',
-    element: <KPIBoard />,
+    element: (
+      <ProtectedRoute>
+        <KPIBoard />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Agent Detail',
     path: '/agent/:email',
-    element: <AgentDetail />,
+    element: (
+      <ProtectedRoute>
+        <AgentDetail />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Audit Log',
     path: '/audit-log',
-    element: <AuditLog />,
+    element: (
+      <ProtectedRoute>
+        <AuditLog />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Voice Notes',
     path: '/voice-notes',
-    element: <VoiceNotes />,
+    element: (
+      <ProtectedRoute>
+        <VoiceNotes />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Settings',
     path: '/settings',
-    element: <Settings />,
+    element: (
+      <ProtectedRoute>
+        <Settings />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'File Cloud',
     path: '/file-cloud',
-    element: <FileCloud />,
+    element: (
+      <ProtectedRoute>
+        <FileCloud />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Lead Map',
     path: '/lead-map',
-    element: <LeadMap />,
+    element: (
+      <ProtectedRoute>
+        <LeadMap />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Pipeline',
     path: '/pipeline',
-    element: <PipelineBoard />,
+    element: (
+      <ProtectedRoute>
+        <PipelineBoard />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Analytics',
     path: '/analytics',
-    element: <AdminAnalytics />,
+    element: (
+      <ProtectedRoute>
+        <AdminAnalytics />
+      </ProtectedRoute>
+    ),
   },
   {
     name: 'Check-In Map',
     path: '/check-in-map',
-    element: <CheckInMap />,
+    element: (
+      <ProtectedRoute>
+        <CheckInMap />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    name: 'Role Management',
+    path: '/role-management',
+    element: (
+      <ProtectedRoute>
+        <RoleManagement />
+      </ProtectedRoute>
+    ),
   },
 ];

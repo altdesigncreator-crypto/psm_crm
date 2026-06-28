@@ -17,7 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ScrollText, Shield, ArrowRightLeft, UserPlus, Trash2 } from 'lucide-react';
+import { ScrollText, ShieldAlert, ArrowRightLeft, UserPlus, Trash2 } from 'lucide-react';
 import { isAdmin, isManagerLevel, getDepartment } from '@/lib/roleUtils';
 import type { AuditLog as AuditLogEntry } from '@/types';
 
@@ -94,10 +94,14 @@ export default function AuditLog() {
   }
   if (!isAdminUser && !isManager) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[50vh] text-muted-foreground">
-        <Shield className="w-10 h-10 mb-3 opacity-40" />
-        <p className="text-sm font-medium">ဤစာမျက်နှာကို ဝင်ရောက်ခွင့်မရှိပါ</p>
-        <p className="text-xs mt-1">Admin သို့မဟုတ် Manager အခွင့်အာဏာသာ လိုအပ်ပါသည်</p>
+      <div className="flex flex-col items-center justify-center h-[60dvh] text-center px-4 animate-fade-in">
+        <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center text-destructive mb-4">
+          <ShieldAlert className="w-8 h-8" />
+        </div>
+        <h2 className="text-lg font-semibold text-foreground">ဝင်ရောက်ခွင့်မရှိပါ</h2>
+        <p className="text-sm text-muted-foreground max-w-sm mt-1">
+          လူကြီးမင်းသည် စီမံခန့်ခွဲမှုစာမျက်နှာအား ဝင်ရောက်ကြည့်ရှုရန် ခွင့်ပြုချက်မရှိပါ။
+        </p>
       </div>
     );
   }

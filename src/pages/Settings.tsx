@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { getRoleDisplayName, getDepartmentDisplayName } from '@/lib/roleUtils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,6 +28,7 @@ import {
   Info,
   HeartHandshake,
   Globe,
+  Save,
 } from 'lucide-react';
 import { flushStorageQueue } from '@/lib/offlineStorageQueue';
 import { getPendingCounts } from '@/lib/backgroundSync';
@@ -34,9 +36,20 @@ import { useTranslation } from '@/contexts/TranslationContext';
 import { toast } from 'sonner';
 
 export default function Settings() {
-  const { user, role } = useAuth();
-  const { lang, setLang, t } = useTranslation();
   const navigate = useNavigate();
+  const { lang, setLang, t } = useTranslation();
+
+  // Load custom profile context from local session storage instead of old useAuth()
+  const [session, setSession] = useState(() => {
+    const raw = localStorage.getItem('psm_staff_session');
+    return raw ? JSON.parse(raw) : null;
+  });
+
+  // Profile editable form fields states
+  const [name, setName] = useState(session?.name || '');
+  const [phoneNumber, setPhoneNumber] = useState(session?.phone || '');
+  const [address, setAddress] = useState(session?.address || '');
+  const [isUpdating, setIsUpdating] = useState(false);
 
   const [darkMode, setDarkMode] = useState(
     document.documentElement.classList.contains('dark')
@@ -62,10 +75,43 @@ export default function Settings() {
     localStorage.setItem('theme', next ? 'dark' : 'light');
   };
 
+  // Submit profile alterations directly into your Firestore document
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!session?.uid) {
+      toast.error('အသုံးပြုသူ တွေ့ရှိခြင်းမရှိပါ။');
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      const userDocRef = doc(db, 'users', session.uid);
+      
+      // Update data document target
+      const updatedFields = {
+        name: name.trim(),
+        phone: phoneNumber.trim(),
+        address: address.trim(),
+      };
+
+      await updateDoc(userDocRef, updatedFields);
+
+      // Mutate local storage application state token context
+      const newSessionState = { ...session, ...updatedFields };
+      localStorage.setItem('psm_staff_session', JSON.stringify(newSessionState));
+      setSession(newSessionState);
+
+      toast.success('Profile အချက်အလက်များ ပြင်ဆင်ပြီးပါပြီ။');
+    } catch (err: any) {
+      toast.error('အချက်အလက်ပြင်ဆင်မှု မအောင်မြင်ပါ- ' + (err?.message || 'Error'));
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   const handleSyncNow = async () => {
     setSyncing(true);
     try {
-      const { flushStorageQueue } = await import('@/lib/offlineStorageQueue');
       await flushStorageQueue();
       const counts = await getPendingCounts();
       const total = Object.values(counts).reduce((a, b) => a + b, 0);
@@ -127,7 +173,7 @@ export default function Settings() {
             </div>
             <div>
               <p className="text-sm font-semibold text-foreground">Profile အချက်အလက်များ</p>
-              <p className="text-xs text-muted-foreground">{user?.email || '—'}</p>
+              <p className="text-xs text-muted-foreground">{session?.email || '—'}</p>
             </div>
           </div>
           <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${openSection === 'profile' ? 'rotate-180' : ''}`} />
@@ -144,39 +190,83 @@ export default function Settings() {
             Profile အချက်အလက်များ
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-5">
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
               <User className="w-7 h-7 text-primary" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-base font-semibold text-foreground truncate">{user?.email || '—'}</p>
+              <p className="text-base font-semibold text-foreground truncate">{session?.name || '—'}</p>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <span className="text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
-                  {getRoleDisplayName(role)}
+                  {getRoleDisplayName(session?.role)}
                 </span>
                 <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted text-muted-foreground border border-border">
-                  {getDepartmentDisplayName(role)}
+                  {getDepartmentDisplayName(session?.role)}
                 </span>
               </div>
             </div>
           </div>
           <Separator />
-          <div className="space-y-1">
+
+          {/* Form for Sale Stuff to manage editable variables inside their Firestore Profile */}
+          <form onSubmit={handleUpdateProfile} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="staff-name" className="text-sm font-medium">အမည်</Label>
+              <Input
+                id="staff-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="သင့်အမည်ထည့်ပါ"
+                required
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="staff-phone" className="text-sm font-medium">ဖုန်းနံပါတ်</Label>
+                <Input
+                  id="staff-phone"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  placeholder="၀၉xxxxxxxxx"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="staff-address" className="text-sm font-medium">လိပ်စာ</Label>
+                <Input
+                  id="staff-address"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  placeholder="မြို့နယ် / တိုင်းဒေသကြီး"
+                />
+              </div>
+            </div>
+
+            <Button type="submit" disabled={isUpdating} className="w-full sm:w-auto h-10 gradient-primary text-white gap-2 mt-2">
+              {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              အချက်အလက်များသိမ်းဆည်းရန်
+            </Button>
+          </form>
+
+          <Separator />
+          
+          {/* Read-Only System Security Identifiers Layer */}
+          <div className="space-y-1 bg-muted/30 rounded-xl p-2">
             {[
-              { icon: Mail, label: 'အီးမေးလ်', value: user?.email || '—' },
-              { icon: Shield, label: 'အခွင့်အဆင့်', value: getRoleDisplayName(role) },
-              { icon: Building2, label: 'ဌာန', value: getDepartmentDisplayName(role) },
-              { icon: Smartphone, label: 'User ID', value: user?.uid || '—' },
+              { icon: Mail, label: 'အီးမေးလ် (ပြုပြင်၍မရပါ)', value: session?.email || '—' },
+              { icon: Shield, label: 'အခွင့်အဆင့်', value: getRoleDisplayName(session?.role) },
+              { icon: Building2, label: 'ဌာန', value: getDepartmentDisplayName(session?.role) },
+              { icon: Smartphone, label: 'User Document ID', value: session?.uid || '—' },
             ].map((item, idx) => (
               <div
                 key={idx}
-                className="flex items-start gap-3 p-2.5 rounded-lg min-h-[48px] active:bg-muted/30 transition-colors"
+                className="flex items-start gap-3 p-2.5 rounded-lg min-h-[48px]"
               >
                 <item.icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
                 <div className="min-w-0">
                   <p className="text-xs text-muted-foreground">{item.label}</p>
-                  <p className="text-sm font-medium text-foreground break-words">{item.value}</p>
+                  <p className="text-sm font-medium text-foreground/70 break-words">{item.value}</p>
                 </div>
               </div>
             ))}
@@ -313,7 +403,6 @@ export default function Settings() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {/* File Cloud Link */}
           <Link
             to="/file-cloud"
             className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]"
@@ -330,7 +419,6 @@ export default function Settings() {
             <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
           </Link>
 
-          {/* Sync Now */}
           <button
             type="button"
             onClick={handleSyncNow}
@@ -348,7 +436,6 @@ export default function Settings() {
             </div>
           </button>
 
-          {/* Clear Cache */}
           <button
             type="button"
             onClick={handleClearCache}
