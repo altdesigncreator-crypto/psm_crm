@@ -6,8 +6,11 @@ import { registerServiceWorker } from "./lib/serviceWorker";
 import { initBackgroundSyncListener } from "./lib/backgroundSync";
 import "./index.css";
 
+// Read variable safely without TS inline keyword type assertion
+const sentryDsn = import.meta.env['VITE_SENTRY_DSN'];
+
 Sentry.init({
-  dsn: import.meta.env['VITE_SENTRY_DSN'] as string | undefined,
+  dsn: typeof sentryDsn === 'string' ? sentryDsn : undefined,
   environment: import.meta.env.MODE,
 });
 
