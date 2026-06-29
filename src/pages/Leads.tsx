@@ -51,7 +51,6 @@ export default function Leads() {
   const navigate = useNavigate();
   const { user, role } = useAuth();
   const { colors: statusColors } = useStatusColors();
-  
   const [rawLeads, setRawLeads] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [mapOpen, setMapOpen] = useState(false);
@@ -71,11 +70,6 @@ export default function Leads() {
   const [projectFilter, setProjectFilter] = useState('all');
   const [deptFilter, setDeptFilter] = useState('all');
   const [agentFilter, setAgentFilter] = useState('all');
-
-  const userDept = getDepartment(role);
-  const isAdminUser = isAdmin(role);
-
-  // ✅ DIRECT SNAPSHOT LISTENER
   useEffect(() => {
     const q = query(collection(db, 'leads'));
     const unsubscribe = onSnapshot(
