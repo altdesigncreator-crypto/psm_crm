@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Download, X } from 'lucide-react';
+import { Download, X, Share, SquarePlus } from 'lucide-react';
 
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -8,14 +8,35 @@ interface BeforeInstallPromptEvent extends Event {
 
 const DISMISS_KEY = 'pwa-install-dismissed';
 
+function isIOSDevice() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  // iPadOS 13+ reports as "MacIntel" but exposes multi-touch, unlike a real Mac.
+  return /iphone|ipad|ipod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function isSafariBrowser() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  return /safari/i.test(ua) && !/crios|fxios|edgios|chrome|android/i.test(ua);
+}
+
+/** Chrome/Android fires `beforeinstallprompt` and can trigger the native
+ * install dialog directly. iOS Safari never fires that event — there is no
+ * programmatic install API — so home-screen installation there is always a
+ * manual "Share → Add to Home Screen" action we can only walk the user
+ * through with instructions. */
 export default function PWAInstallPrompt() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [visible, setVisible] = useState(false);
+  const [iosVisible, setIosVisible] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
     // Hide if already installed (standalone) or previously dismissed within 24h
-    if (window.matchMedia('(display-mode: standalone)').matches) {
+    const standalone = window.matchMedia('(display-mode: standalone)').matches
+      || (window.navigator as any).standalone === true; // iOS-specific flag
+    if (standalone) {
       setIsStandalone(true);
       return;
     }
@@ -23,6 +44,11 @@ export default function PWAInstallPrompt() {
     if (dismissedAt) {
       const hoursSince = (Date.now() - parseInt(dismissedAt, 10)) / 3600000;
       if (hoursSince < 24) return;
+    }
+
+    if (isIOSDevice() && isSafariBrowser()) {
+      setIosVisible(true);
+      return;
     }
 
     const handleBeforeInstall = (e: Event) => {
@@ -48,10 +74,38 @@ export default function PWAInstallPrompt() {
 
   const handleDismiss = () => {
     setVisible(false);
+    setIosVisible(false);
     sessionStorage.setItem(DISMISS_KEY, Date.now().toString());
   };
 
-  if (isStandalone || !visible) return null;
+  if (isStandalone || (!visible && !iosVisible)) return null;
+
+  if (iosVisible) {
+    return (
+      <div className="fixed bottom-16 left-0 right-0 z-[55] px-4 animate-fade-in-up">
+        <div className="max-w-md mx-auto bg-card border border-border rounded-2xl shadow-elevated p-4 flex items-center gap-3">
+          <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+            <Share className="w-5 h-5 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-foreground leading-snug">Install PSM Sale CRM</p>
+            <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1 flex-wrap">
+              Tap <Share className="w-3.5 h-3.5 inline text-primary" /> Share, then
+              <SquarePlus className="w-3.5 h-3.5 inline text-primary" /> "Add to Home Screen"
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleDismiss}
+            className="w-10 h-10 rounded-full flex items-center justify-center text-muted-foreground hover:bg-muted transition-colors shrink-0"
+            aria-label="Dismiss"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed bottom-16 left-0 right-0 z-[55] px-4 animate-fade-in-up">

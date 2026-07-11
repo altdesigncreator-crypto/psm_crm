@@ -1,5 +1,6 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface GuardProps {
   children: React.ReactNode;
@@ -7,17 +8,15 @@ interface GuardProps {
 }
 
 export function ProtectedRoute({ children, isPublic = false }: GuardProps) {
-  // Read custom session target matching your settings layout strategy
-  const sessionRaw = localStorage.getItem('psm_staff_session');
-  const isAuthenticated = !!sessionRaw;
+  const { user, loading } = useAuth();
 
-  if (!isAuthenticated && !isPublic) {
-    // Force bounce to sign-in page if session metadata context isn't set up
+  if (loading) return null;
+
+  if (!user && !isPublic) {
     return <Navigate to="/login" replace />;
   }
 
-  if (isAuthenticated && isPublic) {
-    // Send active sessions away from auth gates straight to terminal workspace
+  if (user && isPublic) {
     return <Navigate to="/dashboard" replace />;
   }
 

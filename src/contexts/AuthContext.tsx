@@ -1,156 +1,118 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import {
-  isOnline,
-  isNetworkError,
-  cacheCredentials,
-  cacheUserProfile,
-  attemptOfflineLogin,
-  getCachedUserProfile,
-  clearCachedCredentials,
-} from '@/lib/offlineAuth';
-import { normalizeRole, getDepartment } from '@/lib/roleUtils';
-import { invalidateStaleCache, clearAllCache } from '@/lib/offlineDataCache';
+import { supabase } from '@/db/supabase';
+import type { RoleTier, Department } from '@/lib/permissions';
 
-// Define a structural interface representing your Firestore database entry
-interface CustomFirestoreUser {
-  uid: string;
+export interface StaffUser {
+  id: string;
   email: string;
-  role: string;
   name: string;
-  department: string;
-  status: string;
-  permissions?: string[];
-  isOffline?: boolean;
+  role: RoleTier;
+  department: Department | null;
+  status: 'active' | 'inactive';
 }
 
 interface AuthContextType {
-  user: CustomFirestoreUser | null;
-  role: string | null;
+  user: StaffUser | null;
+  role: RoleTier | null;
+  department: Department | null;
   loading: boolean;
-  isOffline: boolean;
-  login: (email: string, password: string) => Promise<CustomFirestoreUser>;
+  login: (email: string, password: string) => Promise<StaffUser>;
   logout: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+async function loadProfile(userId: string): Promise<StaffUser> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id, email, name, role, department_code, status')
+    .eq('id', userId)
+    .single();
+
+  if (error || !data) {
+    throw new Error('Could not load your staff profile. Contact your administrator.');
+  }
+  if (data.status !== 'active') {
+    throw new Error('Your account has been deactivated. Contact your administrator.');
+  }
+
+  return {
+    id: data.id,
+    email: data.email,
+    name: data.name,
+    role: data.role as RoleTier,
+    department: (data.department_code as Department) ?? null,
+    status: data.status as 'active' | 'inactive',
+  };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<CustomFirestoreUser | null>(null);
-  const [role, setRole] = useState<string | null>(null);
+  const [user, setUser] = useState<StaffUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isOfflineState, setIsOfflineState] = useState(!isOnline());
 
-  useEffect(() => {
-    const handleOnline = () => setIsOfflineState(false);
-    const handleOffline = () => setIsOfflineState(true);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    setIsOfflineState(!navigator.onLine);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
-
-  // Initialize session from localStorage on application bootstrap
-  useEffect(() => {
-    const savedSession = localStorage.getItem('psm_staff_session');
-    if (savedSession) {
-      try {
-        const parsedUser = JSON.parse(savedSession) as CustomFirestoreUser;
-        setUser(parsedUser);
-        const normalized = normalizeRole(parsedUser.role);
-        setRole(normalized);
-        
-        if (normalized) {
-          invalidateStaleCache(normalized, getDepartment(normalized));
-        }
-      } catch (e) {
-        console.error("Error parsing restoration session:", e);
-      }
+  const hydrate = useCallback(async (sessionUserId: string | null) => {
+    if (!sessionUserId) {
+      setUser(null);
+      return;
     }
-    setLoading(false);
+    try {
+      const profile = await loadProfile(sessionUserId);
+      setUser(profile);
+    } catch {
+      setUser(null);
+      await supabase.auth.signOut();
+    }
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    supabase.auth.getSession().then(({ data }) => {
+      hydrate(data.session?.user.id ?? null).finally(() => {
+        if (active) setLoading(false);
+      });
+    });
+
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      hydrate(session?.user.id ?? null);
+    });
+
+    return () => {
+      active = false;
+      subscription.subscription.unsubscribe();
+    };
+  }, [hydrate]);
 
   const login = useCallback(async (email: string, password: string) => {
-    try {
-      // Query the direct Firestore users collection by fields
-      const q = query(
-        collection(db, 'users'),
-        where('email', '==', email),
-        where('password', '==', password)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      
-      if (querySnapshot.empty) {
-        throw new Error('အီးမေးလ် သို့မဟုတ် စကားဝှက် မှားယွင်းနေပါသည်။');
-      }
-
-      const userDoc = querySnapshot.docs[0];
-      const data = userDoc.data();
-
-      if (data.status !== 'Active') {
-        throw new Error('သင်၏ အကောင့်မှာ ပိတ်သိမ်းခံထားရပါသည်။ Admin အား ဆက်သွယ်ပါ။');
-      }
-
-      const verifiedUser: CustomFirestoreUser = {
-        uid: data.uid || userDoc.id,
-        email: data.email,
-        role: data.role,
-        name: data.name || 'Agent',
-        department: data.department || 'General',
-        permissions: data.permissions || [],
-      };
-
-      // Handle offline caching configurations
-      cacheCredentials(email, password);
-      const normalized = normalizeRole(verifiedUser.role);
-      if (normalized) {
-        cacheUserProfile(verifiedUser.uid, verifiedUser.email, normalized, verifiedUser.name);
-      }
-
-      setUser(verifiedUser);
-      setRole(normalized);
-      return verifiedUser;
-
-    } catch (err: any) {
-      // Fallback behavior if connection is severed
-      if (isNetworkError(err) || !navigator.onLine) {
-        const offlineUser = attemptOfflineLogin(email, password);
-        if (offlineUser) {
-          const built: CustomFirestoreUser = {
-            uid: offlineUser.uid,
-            email: offlineUser.email,
-            role: offlineUser.role,
-            name: offlineUser.displayName || 'Offline Agent',
-            department: 'General',
-            status: 'Active',
-            permissions: [],
-            isOffline: true
-          };
-          setUser(built);
-          setRole(normalizeRole(offlineUser.role));
-          setIsOfflineState(true);
-          return built;
-        }
-      }
-      throw err;
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error || !data.user) {
+      throw new Error(error?.message === 'Invalid login credentials'
+        ? 'Incorrect email or password.'
+        : error?.message || 'Unable to sign in.');
     }
+    const profile = await loadProfile(data.user.id);
+    setUser(profile);
+    await supabase.from('audit_logs').insert({ action: 'login', performed_by: profile.id });
+    return profile;
   }, []);
 
   const logout = useCallback(async () => {
-    localStorage.removeItem('psm_staff_session');
+    if (user) {
+      await supabase.from('audit_logs').insert({ action: 'logout', performed_by: user.id });
+    }
+    await supabase.auth.signOut();
     setUser(null);
-    setRole(null);
-    clearCachedCredentials();
-    clearAllCache();
-  }, []);
+  }, [user]);
+
+  const refreshProfile = useCallback(async () => {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.user.id) await hydrate(data.session.user.id);
+  }, [hydrate]);
 
   return (
-    <AuthContext.Provider value={{ user, role, loading, isOffline: isOfflineState, login, logout }}>
+    <AuthContext.Provider
+      value={{ user, role: user?.role ?? null, department: user?.department ?? null, loading, login, logout, refreshProfile }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -162,11 +124,12 @@ export function useAuth() {
     return {
       user: null,
       role: null,
+      department: null,
       loading: true,
-      isOffline: false,
       login: async () => { throw new Error('Auth Context not mounted'); },
       logout: async () => {},
-    };
+      refreshProfile: async () => {},
+    } as AuthContextType;
   }
   return context;
 }

@@ -1,12 +1,13 @@
 import React from 'react';
 import type { ReactNode } from 'react';
-import { ProtectedRoute } from './components/ProtectedRoutes'; // Adjust this import location based on your project structure
+import { ProtectedRoute } from './components/ProtectedRoutes';
+import type { RouteKey } from '@/lib/permissions';
 
 import Login from './pages/Login';
-import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import AddLead from './pages/AddLead';
 import Leads from './pages/Leads';
+import FollowUps from './pages/FollowUps';
 import LeadDetail from './pages/LeadDetail';
 import Notifications from './pages/Notifications';
 import CheckIn from './pages/CheckIn';
@@ -14,11 +15,7 @@ import CheckInGallery from './pages/CheckInGallery';
 import UserManagement from './pages/UserManagement';
 import KPIBoard from './pages/KPIBoard';
 import AgentDetail from './pages/AgentDetail';
-import AuditLog from './pages/AuditLog';
-import VoiceNotes from './pages/VoiceNotes';
 import Settings from './pages/Settings';
-import FileCloud from './pages/FileCloud';
-import LeadMap from './pages/LeadMap';
 import PipelineBoard from './pages/PipelineBoard';
 import AdminAnalytics from './pages/AdminAnalytics';
 import CheckInMap from './pages/CheckInMap';
@@ -31,6 +28,8 @@ export interface RouteConfig {
   visible?: boolean;
   /** Accessible without login. Routes without this flag require authentication. */
   public?: boolean;
+  /** Key used by RouteGuard + the sidebar nav to check role-based access (see src/lib/permissions.ts). */
+  routeKey?: RouteKey;
 }
 
 export const routes: RouteConfig[] = [
@@ -45,18 +44,9 @@ export const routes: RouteConfig[] = [
     public: true,
   },
   {
-    name: 'Register',
-    path: '/register',
-    element: (
-      <ProtectedRoute isPublic>
-        <Register />
-      </ProtectedRoute>
-    ),
-    public: true,
-  },
-  {
     name: 'Dashboard',
     path: '/dashboard',
+    routeKey: 'dashboard',
     element: (
       <ProtectedRoute>
         <Dashboard />
@@ -66,6 +56,7 @@ export const routes: RouteConfig[] = [
   {
     name: 'Add Lead',
     path: '/add-lead',
+    routeKey: 'add-lead',
     element: (
       <ProtectedRoute>
         <AddLead />
@@ -75,6 +66,7 @@ export const routes: RouteConfig[] = [
   {
     name: 'Leads',
     path: '/leads',
+    routeKey: 'leads',
     element: (
       <ProtectedRoute>
         <Leads />
@@ -82,8 +74,19 @@ export const routes: RouteConfig[] = [
     ),
   },
   {
+    name: 'Follow-ups',
+    path: '/follow-ups',
+    routeKey: 'follow-ups',
+    element: (
+      <ProtectedRoute>
+        <FollowUps />
+      </ProtectedRoute>
+    ),
+  },
+  {
     name: 'Lead Detail',
     path: '/lead/:id',
+    routeKey: 'lead-detail',
     element: (
       <ProtectedRoute>
         <LeadDetail />
@@ -93,6 +96,7 @@ export const routes: RouteConfig[] = [
   {
     name: 'Notifications',
     path: '/notifications',
+    routeKey: 'notifications',
     element: (
       <ProtectedRoute>
         <Notifications />
@@ -102,6 +106,7 @@ export const routes: RouteConfig[] = [
   {
     name: 'Check-In',
     path: '/check-in',
+    routeKey: 'check-in',
     element: (
       <ProtectedRoute>
         <CheckIn />
@@ -111,6 +116,7 @@ export const routes: RouteConfig[] = [
   {
     name: 'Check-In Gallery',
     path: '/check-in-gallery',
+    routeKey: 'check-in-gallery',
     element: (
       <ProtectedRoute>
         <CheckInGallery />
@@ -118,8 +124,19 @@ export const routes: RouteConfig[] = [
     ),
   },
   {
+    name: 'Check-In Map',
+    path: '/check-in-map',
+    routeKey: 'check-in-map',
+    element: (
+      <ProtectedRoute>
+        <CheckInMap />
+      </ProtectedRoute>
+    ),
+  },
+  {
     name: 'User Management',
     path: '/user-management',
+    routeKey: 'user-management',
     element: (
       <ProtectedRoute>
         <UserManagement />
@@ -127,8 +144,19 @@ export const routes: RouteConfig[] = [
     ),
   },
   {
+    name: 'Role Reference',
+    path: '/role-management',
+    routeKey: 'role-management',
+    element: (
+      <ProtectedRoute>
+        <RoleManagement />
+      </ProtectedRoute>
+    ),
+  },
+  {
     name: 'KPI Board',
     path: '/kpi-board',
+    routeKey: 'kpi-board',
     element: (
       <ProtectedRoute>
         <KPIBoard />
@@ -137,7 +165,8 @@ export const routes: RouteConfig[] = [
   },
   {
     name: 'Agent Detail',
-    path: '/agent/:email',
+    path: '/agent/:id',
+    routeKey: 'agent-detail',
     element: (
       <ProtectedRoute>
         <AgentDetail />
@@ -145,26 +174,9 @@ export const routes: RouteConfig[] = [
     ),
   },
   {
-    name: 'Audit Log',
-    path: '/audit-log',
-    element: (
-      <ProtectedRoute>
-        <AuditLog />
-      </ProtectedRoute>
-    ),
-  },
-  {
-    name: 'Voice Notes',
-    path: '/voice-notes',
-    element: (
-      <ProtectedRoute>
-        <VoiceNotes />
-      </ProtectedRoute>
-    ),
-  },
-  {
     name: 'Settings',
     path: '/settings',
+    routeKey: 'settings',
     element: (
       <ProtectedRoute>
         <Settings />
@@ -172,26 +184,9 @@ export const routes: RouteConfig[] = [
     ),
   },
   {
-    name: 'File Cloud',
-    path: '/file-cloud',
-    element: (
-      <ProtectedRoute>
-        <FileCloud />
-      </ProtectedRoute>
-    ),
-  },
-  {
-    name: 'Lead Map',
-    path: '/lead-map',
-    element: (
-      <ProtectedRoute>
-        <LeadMap />
-      </ProtectedRoute>
-    ),
-  },
-  {
     name: 'Pipeline',
     path: '/pipeline',
+    routeKey: 'pipeline',
     element: (
       <ProtectedRoute>
         <PipelineBoard />
@@ -201,27 +196,10 @@ export const routes: RouteConfig[] = [
   {
     name: 'Analytics',
     path: '/analytics',
+    routeKey: 'analytics',
     element: (
       <ProtectedRoute>
         <AdminAnalytics />
-      </ProtectedRoute>
-    ),
-  },
-  {
-    name: 'Check-In Map',
-    path: '/check-in-map',
-    element: (
-      <ProtectedRoute>
-        <CheckInMap />
-      </ProtectedRoute>
-    ),
-  },
-  {
-    name: 'Role Management',
-    path: '/role-management',
-    element: (
-      <ProtectedRoute>
-        <RoleManagement />
       </ProtectedRoute>
     ),
   },

@@ -1,517 +1,326 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
-import { getRoleDisplayName, getDepartmentDisplayName } from '@/lib/roleUtils';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '@/db/supabase';
+import { useAuth } from '@/contexts/AuthContext';
+import { getRoleLabel, getDepartmentLabel, isExec } from '@/lib/permissions';
+import { useDepartments } from '@/hooks/useDepartments';
+import {
+  isPlatformAuthenticatorAvailable, isBiometricEnabledFor, registerBiometric, disableBiometric,
+} from '@/lib/biometricAuth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import {
-  ArrowLeft,
-  User,
-  Mail,
-  Shield,
-  Building2,
-  Smartphone,
-  Moon,
-  Bell,
-  Cloud,
-  RefreshCw,
-  Trash2,
-  Loader2,
-  ChevronDown,
-  ChevronRight,
-  Phone,
-  MapPin,
-  Info,
-  HeartHandshake,
-  Globe,
-  Save,
+  ArrowLeft, User, Mail, Shield, Building2, Moon, Bell, Info, ChevronDown, Phone, MapPin,
+  HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern,
 } from 'lucide-react';
-import { flushStorageQueue } from '@/lib/offlineStorageQueue';
-import { getPendingCounts } from '@/lib/backgroundSync';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { toast } from 'sonner';
 
 export default function Settings() {
   const navigate = useNavigate();
   const { lang, setLang, t } = useTranslation();
+  const { user, role, department, refreshProfile } = useAuth();
+  const { departments, createDepartment } = useDepartments();
 
-  // Load custom profile context from local session storage instead of old useAuth()
-  const [session, setSession] = useState(() => {
-    const raw = localStorage.getItem('psm_staff_session');
-    return raw ? JSON.parse(raw) : null;
-  });
-
-  // Profile editable form fields states
-  const [name, setName] = useState(session?.name || '');
-  const [phoneNumber, setPhoneNumber] = useState(session?.phone || '');
-  const [address, setAddress] = useState(session?.address || '');
+  const [name, setName] = useState(user?.name || '');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
-
-  const [darkMode, setDarkMode] = useState(
-    document.documentElement.classList.contains('dark')
-  );
+  const [darkMode, setDarkMode] = useState(document.documentElement.classList.contains('dark'));
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [clearing, setClearing] = useState(false);
+  const [openSection, setOpenSection] = useState<'profile' | 'preferences' | 'system' | null>('profile');
 
-  // Mobile accordion state
-  const [openSection, setOpenSection] = useState<'profile' | 'preferences' | 'tools' | null>('profile');
-  const toggleSection = (section: 'profile' | 'preferences' | 'tools') => {
-    setOpenSection((prev) => (prev === section ? null : section));
-  };
+  const [biometricSupported, setBiometricSupported] = useState(false);
+  const [biometricEnabled, setBiometricEnabled] = useState(user ? isBiometricEnabledFor(user.id) : false);
+  const [biometricBusy, setBiometricBusy] = useState(false);
+
+  useEffect(() => {
+    isPlatformAuthenticatorAvailable().then(setBiometricSupported);
+  }, []);
+
+  const [attendanceSettings, setAttendanceSettings] = useState<Record<string, { window_start: string; window_end: string }>>({});
+  const [savingAttendance, setSavingAttendance] = useState(false);
+
+  const [newDeptCode, setNewDeptCode] = useState('');
+  const [newDeptName, setNewDeptName] = useState('');
+  const [savingDept, setSavingDept] = useState(false);
+
+  useEffect(() => {
+    if (!isExec(role)) return;
+    (async () => {
+      const { data } = await supabase.from('attendance_settings').select('*');
+      const map: Record<string, { window_start: string; window_end: string }> = {};
+      (data || []).forEach((row: any) => { map[row.department_code] = { window_start: row.window_start, window_end: row.window_end }; });
+      setAttendanceSettings(map);
+    })();
+  }, [role]);
+
+  const toggleSection = (section: 'profile' | 'preferences' | 'system') => setOpenSection((prev) => (prev === section ? null : section));
 
   const handleToggleDarkMode = () => {
     const next = !darkMode;
     setDarkMode(next);
-    if (next) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    document.documentElement.classList.toggle('dark', next);
     localStorage.setItem('theme', next ? 'dark' : 'light');
   };
 
-  // Submit profile alterations directly into your Firestore document
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!session?.uid) {
-      toast.error('အသုံးပြုသူ တွေ့ရှိခြင်းမရှိပါ။');
+    if (!user?.id) return;
+    setIsUpdating(true);
+    const { error } = await supabase.from('profiles').update({ name: name.trim(), phone: phoneNumber.trim() || null }).eq('id', user.id);
+    setIsUpdating(false);
+    if (error) { toast.error('Could not update profile.'); return; }
+    await refreshProfile();
+    toast.success('Profile updated.');
+  };
+
+  const handleSaveAttendance = async (deptCode: string) => {
+    const settings = attendanceSettings[deptCode];
+    if (!settings) return;
+    setSavingAttendance(true);
+    const { error } = await supabase.from('attendance_settings').update({
+      window_start: settings.window_start, window_end: settings.window_end, updated_by: user?.id,
+    }).eq('department_code', deptCode);
+    setSavingAttendance(false);
+    if (error) { toast.error('Could not save attendance window.'); return; }
+    toast.success(`${getDepartmentLabel(deptCode)} check-in window updated.`);
+  };
+
+  const handleToggleBiometric = async () => {
+    if (!user) return;
+    if (biometricEnabled) {
+      disableBiometric(user.id);
+      setBiometricEnabled(false);
+      toast.success('Face ID / Fingerprint unlock disabled on this device.');
       return;
     }
-
-    setIsUpdating(true);
+    setBiometricBusy(true);
     try {
-      const userDocRef = doc(db, 'users', session.uid);
-      
-      // Update data document target
-      const updatedFields = {
-        name: name.trim(),
-        phone: phoneNumber.trim(),
-        address: address.trim(),
-      };
-
-      await updateDoc(userDocRef, updatedFields);
-
-      // Mutate local storage application state token context
-      const newSessionState = { ...session, ...updatedFields };
-      localStorage.setItem('psm_staff_session', JSON.stringify(newSessionState));
-      setSession(newSessionState);
-
-      toast.success('Profile အချက်အလက်များ ပြင်ဆင်ပြီးပါပြီ။');
+      await registerBiometric(user.id, user.email, user.name);
+      setBiometricEnabled(true);
+      toast.success('Face ID / Fingerprint unlock enabled on this device.');
     } catch (err: any) {
-      toast.error('အချက်အလက်ပြင်ဆင်မှု မအောင်မြင်ပါ- ' + (err?.message || 'Error'));
+      toast.error(err?.message || 'Could not set up biometric unlock.');
     } finally {
-      setIsUpdating(false);
+      setBiometricBusy(false);
     }
   };
 
-  const handleSyncNow = async () => {
-    setSyncing(true);
-    try {
-      await flushStorageQueue();
-      const counts = await getPendingCounts();
-      const total = Object.values(counts).reduce((a, b) => a + b, 0);
-      if (total === 0) {
-        toast.success('Sync ပြီးပါပြီ — ကြိုတင်သိမ်းဆည်းထားသော ဒေတာမရှိပါ');
-      } else {
-        toast.info(`Sync လုပ်နေပါသည် — ${total} ခု ကျန်ရှိပါသည်`);
-      }
-    } catch {
-      toast.error('Sync လုပ်ရာတွင် အမှားဖြစ်သွားပါသည်');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const handleClearCache = async () => {
-    if (!window.confirm('Cache နှင့် local data အားလုံးကို ရှင်းလင်းမှာသေချာပါသလား?')) return;
-    setClearing(true);
-    try {
-      localStorage.clear();
-      const dbs = await window.indexedDB.databases?.();
-      if (dbs) {
-        for (const db of dbs) {
-          if (db.name) window.indexedDB.deleteDatabase(db.name);
-        }
-      }
-      toast.success('Cache ရှင်းလင်းပြီးပါပြီ — Page ပြန်လည်တည်ဆောက်ပါမည်');
-      setTimeout(() => window.location.reload(), 1200);
-    } catch {
-      toast.error('Cache ရှင်းလင်းရာတွင် အမှားဖြစ်သွားပါသည်');
-    } finally {
-      setClearing(false);
-    }
+  const handleAddDepartment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newDeptCode.trim() || !newDeptName.trim()) { toast.error('Enter both a code and a name.'); return; }
+    setSavingDept(true);
+    const error = await createDepartment(newDeptCode, newDeptName);
+    setSavingDept(false);
+    if (error) { toast.error(error.message || 'Could not add department — code may already exist.'); return; }
+    toast.success(`${newDeptName.trim()} department added.`);
+    setNewDeptCode('');
+    setNewDeptName('');
   };
 
   return (
     <div className="max-w-2xl mx-auto animate-fade-in-up space-y-5">
-      {/* Header */}
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 active:bg-muted/50" onClick={() => navigate('/dashboard')}>
-          <ArrowLeft className="w-5 h-5" />
-        </Button>
+        <Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 active:bg-muted/50" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-5 h-5" /></Button>
         <div className="min-w-0 flex-1">
-          <h1 className="text-xl md:text-2xl font-bold text-foreground">အကောင့်ဆက်တင်များ</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Profile နှင့် System Preferences</p>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">Settings</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">Profile and system preferences</p>
         </div>
       </div>
 
-      {/* Profile Info — Mobile Accordion Header */}
       <div className="md:hidden">
-        <button
-          type="button"
-          onClick={() => toggleSection('profile')}
-          className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-all text-left"
-        >
+        <button type="button" onClick={() => toggleSection('profile')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-all text-left">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-              <User className="w-4 h-4 text-primary" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground">Profile အချက်အလက်များ</p>
-              <p className="text-xs text-muted-foreground">{session?.email || '—'}</p>
-            </div>
+            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center"><User className="w-4 h-4 text-primary" /></div>
+            <div><p className="text-sm font-semibold text-foreground">Profile</p><p className="text-xs text-muted-foreground">{user?.email || '—'}</p></div>
           </div>
           <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${openSection === 'profile' ? 'rotate-180' : ''}`} />
         </button>
       </div>
 
-      {/* Profile Info */}
-      <Card className="shadow-card rounded-xl border-0 md:block" style={{ display: openSection === 'profile' ? 'block' : 'none' }}>
+      <Card className="shadow-card rounded-xl border-0 md:block" style={{ display: openSection === 'profile' ? 'block' : undefined }}>
         <CardHeader className="pb-3 hidden md:flex">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <User className="w-4 h-4 text-primary" />
-            </div>
-            Profile အချက်အလက်များ
-          </CardTitle>
+          <CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><User className="w-4 h-4 text-primary" /></div>Profile</CardTitle>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-              <User className="w-7 h-7 text-primary" />
-            </div>
+            <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center shrink-0"><User className="w-7 h-7 text-primary" /></div>
             <div className="min-w-0 flex-1">
-              <p className="text-base font-semibold text-foreground truncate">{session?.name || '—'}</p>
+              <p className="text-base font-semibold text-foreground truncate">{user?.name || '—'}</p>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
-                <span className="text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">
-                  {getRoleDisplayName(session?.role)}
-                </span>
-                <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted text-muted-foreground border border-border">
-                  {getDepartmentDisplayName(session?.role)}
-                </span>
+                <span className="text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">{getRoleLabel(role)}</span>
+                {department && <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted text-muted-foreground border border-border">{getDepartmentLabel(department)}</span>}
               </div>
             </div>
           </div>
           <Separator />
-
-          {/* Form for Sale Stuff to manage editable variables inside their Firestore Profile */}
           <form onSubmit={handleUpdateProfile} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="staff-name" className="text-sm font-medium">အမည်</Label>
-              <Input
-                id="staff-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="သင့်အမည်ထည့်ပါ"
-                required
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="staff-phone" className="text-sm font-medium">ဖုန်းနံပါတ်</Label>
-                <Input
-                  id="staff-phone"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  placeholder="၀၉xxxxxxxxx"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="staff-address" className="text-sm font-medium">လိပ်စာ</Label>
-                <Input
-                  id="staff-address"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  placeholder="မြို့နယ် / တိုင်းဒေသကြီး"
-                />
-              </div>
-            </div>
-
+            <div className="space-y-2"><Label className="text-sm font-medium">Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} required /></div>
+            <div className="space-y-2"><Label className="text-sm font-medium">Phone</Label><Input value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="09xxxxxxxxx" /></div>
             <Button type="submit" disabled={isUpdating} className="w-full sm:w-auto h-10 gradient-primary text-white gap-2 mt-2">
-              {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              အချက်အလက်များသိမ်းဆည်းရန်
+              {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes
             </Button>
           </form>
-
           <Separator />
-          
-          {/* Read-Only System Security Identifiers Layer */}
           <div className="space-y-1 bg-muted/30 rounded-xl p-2">
             {[
-              { icon: Mail, label: 'အီးမေးလ် (ပြုပြင်၍မရပါ)', value: session?.email || '—' },
-              { icon: Shield, label: 'အခွင့်အဆင့်', value: getRoleDisplayName(session?.role) },
-              { icon: Building2, label: 'ဌာန', value: getDepartmentDisplayName(session?.role) },
-              { icon: Smartphone, label: 'User Document ID', value: session?.uid || '—' },
+              { icon: Mail, label: 'Email (cannot be changed)', value: user?.email || '—' },
+              { icon: Shield, label: 'Role', value: getRoleLabel(role) },
+              { icon: Building2, label: 'Department', value: department ? getDepartmentLabel(department) : 'All departments' },
             ].map((item, idx) => (
-              <div
-                key={idx}
-                className="flex items-start gap-3 p-2.5 rounded-lg min-h-[48px]"
-              >
+              <div key={idx} className="flex items-start gap-3 p-2.5 rounded-lg min-h-[48px]">
                 <item.icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-xs text-muted-foreground">{item.label}</p>
-                  <p className="text-sm font-medium text-foreground/70 break-words">{item.value}</p>
-                </div>
+                <div className="min-w-0"><p className="text-xs text-muted-foreground">{item.label}</p><p className="text-sm font-medium text-foreground/70 break-words">{item.value}</p></div>
               </div>
             ))}
           </div>
         </CardContent>
       </Card>
 
-      {/* Preferences — Mobile Accordion Header */}
       <div className="md:hidden">
-        <button
-          type="button"
-          onClick={() => toggleSection('preferences')}
-          className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-all text-left"
-        >
+        <button type="button" onClick={() => toggleSection('preferences')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-all text-left">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Moon className="w-4 h-4 text-primary" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground">System Preferences</p>
-              <p className="text-xs text-muted-foreground">Theme, Language, Notifications</p>
-            </div>
+            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center"><Moon className="w-4 h-4 text-primary" /></div>
+            <div><p className="text-sm font-semibold text-foreground">Preferences</p><p className="text-xs text-muted-foreground">Theme, language, notifications</p></div>
           </div>
           <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${openSection === 'preferences' ? 'rotate-180' : ''}`} />
         </button>
       </div>
 
-      {/* Preferences */}
-      <Card className="shadow-card rounded-xl border-0 md:block" style={{ display: openSection === 'preferences' ? 'block' : 'none' }}>
+      <Card className="shadow-card rounded-xl border-0 md:block" style={{ display: openSection === 'preferences' ? 'block' : undefined }}>
         <CardHeader className="pb-3 hidden md:flex">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Moon className="w-4 h-4 text-primary" />
-            </div>
-            System Preferences
-          </CardTitle>
+          <CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Moon className="w-4 h-4 text-primary" /></div>Preferences</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Language Switcher */}
-          <button
-            type="button"
-            onClick={() => setLang(lang === 'mm' ? 'en' : 'mm')}
-            className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]"
-          >
+          <button type="button" onClick={() => setLang(lang === 'mm' ? 'en' : 'mm')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-xl bg-info/10 flex items-center justify-center shrink-0">
-                <Globe className="w-5 h-5 text-info" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-foreground">{t('settings.language')}</p>
-                <p className="text-xs text-muted-foreground">{t('settings.myanmar')} / {t('settings.english')}</p>
-              </div>
+              <div className="w-11 h-11 rounded-xl bg-info/10 flex items-center justify-center shrink-0"><Globe className="w-5 h-5 text-info" /></div>
+              <div><p className="text-sm font-semibold text-foreground">{t('settings.language')}</p></div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <span className={`text-xs font-medium px-2 py-1 rounded-full border ${lang === 'mm' ? 'bg-primary text-white border-primary' : 'bg-muted text-muted-foreground border-border'}`}>
-                MM
-              </span>
-              <span className={`text-xs font-medium px-2 py-1 rounded-full border ${lang === 'en' ? 'bg-primary text-white border-primary' : 'bg-muted text-muted-foreground border-border'}`}>
-                EN
-              </span>
+              <span className={`text-xs font-medium px-2 py-1 rounded-full border ${lang === 'mm' ? 'bg-primary text-white border-primary' : 'bg-muted text-muted-foreground border-border'}`}>MM</span>
+              <span className={`text-xs font-medium px-2 py-1 rounded-full border ${lang === 'en' ? 'bg-primary text-white border-primary' : 'bg-muted text-muted-foreground border-border'}`}>EN</span>
             </div>
           </button>
 
-          {/* Dark Mode Toggle */}
-          <button
-            type="button"
-            onClick={handleToggleDarkMode}
-            className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]"
-          >
+          <button type="button" onClick={handleToggleDarkMode} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                <Moon className="w-5 h-5 text-primary" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-foreground">Dark Mode</p>
-                <p className="text-xs text-muted-foreground">{t('settings.language') === 'Language' ? 'Dark theme display' : 'အနက်ရောင် theme ဖြင့် ပြသရန်'}</p>
-              </div>
+              <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Moon className="w-5 h-5 text-primary" /></div>
+              <div><p className="text-sm font-semibold text-foreground">Dark Mode</p></div>
             </div>
-            <div className={`w-12 h-7 rounded-full transition-colors relative ${darkMode ? 'bg-primary' : 'bg-muted'}`}>
-              <div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${darkMode ? 'left-6' : 'left-1'}`} />
-            </div>
+            <div className={`w-12 h-7 rounded-full transition-colors relative ${darkMode ? 'bg-primary' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${darkMode ? 'left-6' : 'left-1'}`} /></div>
           </button>
 
-          {/* Notifications Toggle */}
-          <button
-            type="button"
-            onClick={() => setNotificationsEnabled((v) => !v)}
-            className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]"
-          >
+          <button type="button" onClick={() => setNotificationsEnabled((v) => !v)} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-xl bg-success/10 flex items-center justify-center shrink-0">
-                <Bell className="w-5 h-5 text-success" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-foreground">{t('nav.notifications')}</p>
-                <p className="text-xs text-muted-foreground">Real-time {t('nav.notifications')} {lang === 'mm' ? 'လက်ခံခြင်း' : 'receiving'}</p>
-              </div>
+              <div className="w-11 h-11 rounded-xl bg-success/10 flex items-center justify-center shrink-0"><Bell className="w-5 h-5 text-success" /></div>
+              <div><p className="text-sm font-semibold text-foreground">Notifications</p></div>
             </div>
-            <div className={`w-12 h-7 rounded-full transition-colors relative ${notificationsEnabled ? 'bg-success' : 'bg-muted'}`}>
-              <div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${notificationsEnabled ? 'left-6' : 'left-1'}`} />
-            </div>
+            <div className={`w-12 h-7 rounded-full transition-colors relative ${notificationsEnabled ? 'bg-success' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${notificationsEnabled ? 'left-6' : 'left-1'}`} /></div>
           </button>
+
+          {biometricSupported && (
+            <button
+              type="button"
+              onClick={handleToggleBiometric}
+              disabled={biometricBusy}
+              className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px] disabled:opacity-60"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                  {biometricBusy ? <Loader2 className="w-5 h-5 text-primary animate-spin" /> : <FingerprintPattern className="w-5 h-5 text-primary" />}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Face ID / Fingerprint Unlock</p>
+                  <p className="text-xs text-muted-foreground">Require biometrics to open the app on this device</p>
+                </div>
+              </div>
+              <div className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${biometricEnabled ? 'bg-primary' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${biometricEnabled ? 'left-6' : 'left-1'}`} /></div>
+            </button>
+          )}
         </CardContent>
       </Card>
 
-      {/* Tools & Data — Mobile Accordion Header */}
-      <div className="md:hidden">
-        <button
-          type="button"
-          onClick={() => toggleSection('tools')}
-          className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-all text-left"
-        >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Cloud className="w-4 h-4 text-primary" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground">Tools & Data</p>
-              <p className="text-xs text-muted-foreground">File Cloud, Sync, Cache</p>
-            </div>
+      {isExec(role) && (
+        <>
+          <div className="md:hidden">
+            <button type="button" onClick={() => toggleSection('system')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-all text-left">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center"><SettingsIcon className="w-4 h-4 text-primary" /></div>
+                <div><p className="text-sm font-semibold text-foreground">System Configuration</p><p className="text-xs text-muted-foreground">Check-in windows per department</p></div>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${openSection === 'system' ? 'rotate-180' : ''}`} />
+            </button>
           </div>
-          <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${openSection === 'tools' ? 'rotate-180' : ''}`} />
-        </button>
-      </div>
+          <Card className="shadow-card rounded-xl border-0 md:block" style={{ display: openSection === 'system' ? 'block' : undefined }}>
+            <CardHeader className="pb-3 hidden md:flex">
+              <CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><SettingsIcon className="w-4 h-4 text-primary" /></div>System Configuration</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-3">
+                <p className="text-sm font-semibold text-foreground">Departments</p>
+                <p className="text-xs text-muted-foreground">Add new departments here — they immediately become available in every department picker across the app (leads, staff, check-ins, filters).</p>
+                <form onSubmit={handleAddDepartment} className="flex flex-col sm:flex-row gap-2">
+                  <Input placeholder="Code (e.g. commercial)" value={newDeptCode} onChange={(e) => setNewDeptCode(e.target.value)} className="h-10 sm:w-40" />
+                  <Input placeholder="Display name (e.g. Commercial)" value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="h-10 flex-1" />
+                  <Button type="submit" disabled={savingDept} size="sm" className="h-10 gap-1.5 shrink-0">
+                    {savingDept ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add
+                  </Button>
+                </form>
+                <div className="flex flex-wrap gap-2">
+                  {departments.map((d) => (
+                    <span key={d.code} className="text-xs font-medium px-2.5 py-1 rounded-full bg-muted text-muted-foreground border border-border">{d.name}</span>
+                  ))}
+                </div>
+              </div>
 
-      {/* Tools & Data */}
-      <Card className="shadow-card rounded-xl border-0 md:block" style={{ display: openSection === 'tools' ? 'block' : 'none' }}>
-        <CardHeader className="pb-3 hidden md:flex">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Cloud className="w-4 h-4 text-primary" />
-            </div>
-            Tools & Data
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Link
-            to="/file-cloud"
-            className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]"
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                <Cloud className="w-5 h-5 text-primary" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-foreground">File Cloud</p>
-                <p className="text-xs text-muted-foreground">ကိုယ်ပိုင် ဖိုင်များ သိမ်းဆည်းရန်</p>
-              </div>
-            </div>
-            <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-          </Link>
+              <Separator />
 
-          <button
-            type="button"
-            onClick={handleSyncNow}
-            disabled={syncing}
-            className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]"
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-xl bg-info/10 flex items-center justify-center shrink-0">
-                <RefreshCw className={`w-5 h-5 text-info ${syncing ? 'animate-spin' : ''}`} />
+              <div className="space-y-3">
+                <p className="text-sm font-semibold text-foreground">Check-in Windows</p>
+                <p className="text-xs text-muted-foreground">Configure the allowed daily check-in time window per department. Check-ins after the window end are automatically flagged as late.</p>
+                {departments.map((d) => (
+                  <div key={d.code} className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-xl border border-border">
+                    <span className="text-sm font-medium text-foreground w-28 shrink-0 truncate">{d.name}</span>
+                    <Input type="time" value={attendanceSettings[d.code]?.window_start || '07:00'} onChange={(e) => setAttendanceSettings((prev) => ({ ...prev, [d.code]: { window_start: e.target.value, window_end: prev[d.code]?.window_end || '10:00' } }))} className="h-10" />
+                    <span className="text-xs text-muted-foreground shrink-0">to</span>
+                    <Input type="time" value={attendanceSettings[d.code]?.window_end || '10:00'} onChange={(e) => setAttendanceSettings((prev) => ({ ...prev, [d.code]: { window_start: prev[d.code]?.window_start || '07:00', window_end: e.target.value } }))} className="h-10" />
+                    <Button size="sm" disabled={savingAttendance} onClick={() => handleSaveAttendance(d.code)} className="shrink-0">Save</Button>
+                  </div>
+                ))}
               </div>
-              <div>
-                <p className="text-sm font-semibold text-foreground">Sync Now</p>
-                <p className="text-xs text-muted-foreground">Offline data ကို အခု sync လုပ်ရန်</p>
-              </div>
-            </div>
-          </button>
+            </CardContent>
+          </Card>
+        </>
+      )}
 
-          <button
-            type="button"
-            onClick={handleClearCache}
-            disabled={clearing}
-            className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]"
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
-                <Trash2 className="w-5 h-5 text-destructive" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-foreground">Clear Cache</p>
-                <p className="text-xs text-muted-foreground">Local cache နှင့် data ရှင်းလင်းရန်</p>
-              </div>
-            </div>
-          </button>
-        </CardContent>
-      </Card>
-
-      {/* Company & Support */}
       <Card className="shadow-card rounded-xl border-0">
         <CardHeader className="pb-3 hidden md:flex">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Info className="w-4 h-4 text-primary" />
-            </div>
-            ကုမ္ပဏီ အချက်အလက်များ
-          </CardTitle>
+          <CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Info className="w-4 h-4 text-primary" /></div>Company Information</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 p-4 md:p-6">
           <div className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card min-h-[52px]">
-            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-              <MapPin className="w-4 h-4 text-primary" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs text-muted-foreground">ကုမ္ပဏီ လိပ်စာ</p>
-              <p className="text-sm font-medium text-foreground">PSM Properties Co., Ltd.</p>
-              <p className="text-xs text-muted-foreground truncate">Yangon, Myanmar</p>
-            </div>
+            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><MapPin className="w-4 h-4 text-primary" /></div>
+            <div className="min-w-0"><p className="text-xs text-muted-foreground">Address</p><p className="text-sm font-medium text-foreground">PSM Properties Co., Ltd.</p><p className="text-xs text-muted-foreground truncate">Yangon, Myanmar</p></div>
           </div>
-          <a
-            href="tel:+95123456789"
-            className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors min-h-[52px]"
-          >
-            <div className="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center shrink-0">
-              <Phone className="w-4 h-4 text-success" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs text-muted-foreground">ဆက်သွယ်ရန်</p>
-              <p className="text-sm font-medium text-foreground">+95 1 234 567 89</p>
-            </div>
-            <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+          <a href="tel:+95123456789" className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors min-h-[52px]">
+            <div className="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center shrink-0"><Phone className="w-4 h-4 text-success" /></div>
+            <div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">Contact</p><p className="text-sm font-medium text-foreground">+95 1 234 567 89</p></div>
           </a>
-          <a
-            href="mailto:support@psmproperties.com"
-            className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors min-h-[52px]"
-          >
-            <div className="w-10 h-10 rounded-lg bg-info/10 flex items-center justify-center shrink-0">
-              <HeartHandshake className="w-4 h-4 text-info" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs text-muted-foreground">ဆupport အကူညီ</p>
-              <p className="text-sm font-medium text-foreground">support@psmproperties.com</p>
-            </div>
-            <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+          <a href="mailto:support@psmproperties.com" className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors min-h-[52px]">
+            <div className="w-10 h-10 rounded-lg bg-info/10 flex items-center justify-center shrink-0"><HeartHandshake className="w-4 h-4 text-info" /></div>
+            <div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">Support</p><p className="text-sm font-medium text-foreground">support@psmproperties.com</p></div>
           </a>
         </CardContent>
       </Card>
 
-      {/* App Info */}
       <Card className="shadow-card rounded-xl border-0">
         <CardContent className="p-4 min-h-[56px]">
-          <div>
-            <p className="text-sm font-semibold text-foreground">PSM Properties CRM</p>
-            <p className="text-xs text-muted-foreground">Firebase + React + PWA · v96</p>
-          </div>
+          <p className="text-sm font-semibold text-foreground">PSM Properties CRM</p>
+          <p className="text-xs text-muted-foreground">Supabase + React · v1.0</p>
         </CardContent>
       </Card>
     </div>

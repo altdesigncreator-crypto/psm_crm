@@ -11,8 +11,6 @@ interface LeadData {
   preferredProject?: string;
   budgetRange?: string;
   purpose?: string;
-  urgency?: string;
-  paymentMethod?: string;
   leadSource?: string;
   currentLocation?: string;
   remarks?: string;

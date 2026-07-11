@@ -1,48 +1,39 @@
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { type Lead } from '@/types';
+import { type Lead, LEAD_STAGES, LEAD_GRADES } from '@/types';
+import { getDepartmentLabel } from '@/lib/permissions';
 
 const EXPORT_HEADERS = [
-  'ဝယ်သူအမည်',
-  'ဖုန်းနံပါတ်',
-  'အီးမေးလ်',
-  'လက်ရှိနေရာ',
-  'Project',
-  'ဘတ်ဂျက်',
-  'အခြေအနေ',
-  'အဆင့်',
-  'စိတ်ဝင်စားမှု',
-  'အိမ်ရာအမျိုးအစား',
-  'ရည်ရွယ်ချက်',
-  'အရေးကြီးမှု',
-  'အရင်းအမြစ်',
-  'တာဝန်ခံဝန်ထမ်း',
-  'Show Person',
-  'ဆက်သွယ်ရမည့်ရက်',
-  'ဌာန',
-  'မှတ်ချက်',
+  'Name', 'Phone', 'Email', 'Location', 'Project', 'Budget', 'Status', 'Grade',
+  'Interest', 'Property Type', 'Purpose', 'Source', 'Owner', 'Next Follow-up', 'Department', 'Remarks',
 ];
+
+function stageLabel(status: string) {
+  return LEAD_STAGES.find((s) => s.value === status)?.label || status;
+}
+
+function gradeLabel(grade?: string | null) {
+  return LEAD_GRADES.find((g) => g.value === grade)?.label || '';
+}
 
 function getLeadRow(l: Lead): string[] {
   return [
     l.name,
     l.phone,
     l.email || '',
-    l.currentLocation || '',
-    l.preferredProject || '',
-    l.budgetRange || '',
-    l.status,
-    l.leadLevel || '',
-    l.interestType || '',
-    l.propertyType || '',
+    l.current_location || '',
+    l.preferred_project || '',
+    l.budget_range || '',
+    stageLabel(l.status),
+    gradeLabel(l.lead_grade),
+    l.interest_type || '',
+    l.property_type || '',
     l.purpose || '',
-    l.urgency || '',
-    l.leadSource || '',
-    l.assignedAgent || '',
-    l.showPerson || '',
-    l.nextFollowUpDate || '',
-    l.department || '',
+    l.lead_source || '',
+    l.owner_name || '',
+    l.next_follow_up_at ? new Date(l.next_follow_up_at).toLocaleDateString() : '',
+    getDepartmentLabel(l.department_code),
     l.remarks || '',
   ];
 }
@@ -68,26 +59,10 @@ function getExportFileName(base: string, count: number, ext: string): string {
 
 export function exportAsExcel(leads: Lead[]) {
   if (leads.length === 0) return;
-  const data = leads.map((l) => ({
-    'ဝယ်သူအမည်': l.name,
-    'ဖုန်းနံပါတ်': l.phone,
-    'အီးမေးလ်': l.email || '',
-    'လက်ရှိနေရာ': l.currentLocation || '',
-    'Project': l.preferredProject || '',
-    'ဘတ်ဂျက်': l.budgetRange || '',
-    'အခြေအနေ': l.status,
-    'အဆင့်': l.leadLevel || '',
-    'စိတ်ဝင်စားမှု': l.interestType || '',
-    'အိမ်ရာအမျိုးအစား': l.propertyType || '',
-    'ရည်ရွယ်ချက်': l.purpose || '',
-    'အရေးကြီးမှု': l.urgency || '',
-    'အရင်းအမြစ်': l.leadSource || '',
-    'တာဝန်ခံဝန်ထမ်း': l.assignedAgent || '',
-    'Show Person': l.showPerson || '',
-    'ဆက်သွယ်ရမည့်ရက်': l.nextFollowUpDate || '',
-    'ဌာန': l.department || '',
-    'မှတ်ချက်': l.remarks || '',
-  }));
+  const data = leads.map((l) => {
+    const row = getLeadRow(l);
+    return Object.fromEntries(EXPORT_HEADERS.map((h, i) => [h, row[i]]));
+  });
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Leads');
@@ -113,31 +88,9 @@ export function exportAsPDF(leads: Lead[]) {
     head: [EXPORT_HEADERS],
     body: rows,
     theme: 'striped',
-    styles: {
-      fontSize: 9,
-      cellPadding: 2,
-      overflow: 'linebreak',
-      minCellHeight: 6,
-    },
-    headStyles: {
-      fillColor: [4, 99, 202],
-      textColor: [255, 255, 255],
-      fontStyle: 'bold',
-      halign: 'center',
-    },
-    alternateRowStyles: {
-      fillColor: [248, 250, 252],
-    },
-    columnStyles: {
-      0: { cellWidth: 35 },
-      1: { cellWidth: 30 },
-      2: { cellWidth: 40 },
-      3: { cellWidth: 45 },
-      4: { cellWidth: 30 },
-      5: { cellWidth: 30 },
-      6: { cellWidth: 35 },
-      7: { cellWidth: 30 },
-    },
+    styles: { fontSize: 9, cellPadding: 2, overflow: 'linebreak', minCellHeight: 6 },
+    headStyles: { fillColor: [4, 99, 202], textColor: [255, 255, 255], fontStyle: 'bold', halign: 'center' },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
     margin: { left: 10, right: 10, top: 10, bottom: 10 },
     didDrawPage: (data) => {
       doc.setFontSize(8);
@@ -153,9 +106,8 @@ export function exportAsPDF(leads: Lead[]) {
 
 export function exportAsCSV(leads: Lead[]) {
   if (leads.length === 0) return;
-  const headers = ['ဝယ်သူအမည်', 'ဖုန်းနံပါတ်', 'အီးမေးလ်', 'လက်ရှိနေရာ', 'Project', 'ဘတ်ဂျက်', 'အခြေအနေ', 'အဆင့်', 'စိတ်ဝင်စားမှု', 'အိမ်ရာအမျိုးအစား', 'ရည်ရွယ်ချက်', 'အရေးကြီးမှု', 'အရင်းအမြစ်', 'တာဝန်ခံဝန်ထမ်း', 'Show Person', 'ဆက်သွယ်ရမည့်ရက်', 'ဌာန', 'မှတ်ချက်'];
   const rows = leads.map((l) => getLeadRow(l));
-  const csvContent = [headers, ...rows]
+  const csvContent = [EXPORT_HEADERS, ...rows]
     .map((row) =>
       row.map((cell) => {
         const val = String(cell ?? '');
@@ -166,7 +118,7 @@ export function exportAsCSV(leads: Lead[]) {
       }).join(',')
     )
     .join('\n');
-  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
   triggerDownload(blob, getExportFileName('Leads', leads.length, 'csv'));
 }
 
@@ -175,7 +127,7 @@ export function exportAsHTML(leads: Lead[]) {
   const rows = leads.map((l) => getLeadRow(l));
 
   const html = `<!DOCTYPE html>
-<html lang="my">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -230,39 +182,46 @@ tbody tr:last-child td { border-bottom: none; }
 
 // ── KPI Export ─────────────────────────────────────────────────────────
 
-export function exportKPIAsExcel(
-  agentStats: { email: string; totalLeads: number; totalCheckins: number; levelACount: number; levelBCount: number; levelCCount: number }[],
-  departmentStats?: { displayName: string; totalLeads: number; levelACount: number; checkinCount: number; agentCount: number }[]
-) {
-  if (agentStats.length === 0) return;
+interface AgentStat {
+  name: string;
+  totalLeads: number;
+  totalCheckins: number;
+  soldCount: number;
+  totalRevenue: number;
+}
 
+interface DepartmentStat {
+  displayName: string;
+  totalLeads: number;
+  soldCount: number;
+  checkinCount: number;
+  agentCount: number;
+}
+
+export function exportKPIAsExcel(agentStats: AgentStat[], departmentStats?: DepartmentStat[]) {
+  if (agentStats.length === 0) return;
   const wb = XLSX.utils.book_new();
 
-  // Agent stats sheet
   const agentData = agentStats.map((a, idx) => ({
-    'အဆင့်': idx + 1,
-    'ဝန်ထမ်း': a.email,
-    'စုစုပေါင်း Leads': a.totalLeads,
+    Rank: idx + 1,
+    Agent: a.name,
+    'Total Leads': a.totalLeads,
     'Check-ins': a.totalCheckins,
-    'Level A': a.levelACount,
-    'Level B': a.levelBCount,
-    'Level C': a.levelCCount,
-    'Conversion Rate': a.totalLeads > 0 ? `${((a.levelACount / a.totalLeads) * 100).toFixed(1)}%` : '0%',
+    Sold: a.soldCount,
+    Revenue: a.totalRevenue,
+    'Conversion Rate': a.totalLeads > 0 ? `${((a.soldCount / a.totalLeads) * 100).toFixed(1)}%` : '0%',
   }));
-  const agentWs = XLSX.utils.json_to_sheet(agentData);
-  XLSX.utils.book_append_sheet(wb, agentWs, 'ဝန်ထမ်း စွမ်းဆောင်ရည်');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(agentData), 'Agent Performance');
 
-  // Department stats sheet
   if (departmentStats && departmentStats.length > 0) {
     const deptData = departmentStats.map((d) => ({
-      'ဌာန': d.displayName,
-      'စုစုပေါင်း Leads': d.totalLeads,
-      'Level A': d.levelACount,
+      Department: d.displayName,
+      'Total Leads': d.totalLeads,
+      Sold: d.soldCount,
       'Check-ins': d.checkinCount,
-      'ဝန်ထမ်း အရေအတွက်': d.agentCount,
+      Agents: d.agentCount,
     }));
-    const deptWs = XLSX.utils.json_to_sheet(deptData);
-    XLSX.utils.book_append_sheet(wb, deptWs, 'ဌာန စွမ်းဆောင်ရည်');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(deptData), 'Department Performance');
   }
 
   const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -270,10 +229,7 @@ export function exportKPIAsExcel(
   triggerDownload(blob, `PSM_KPI_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
 }
 
-export function exportKPIAsPDF(
-  agentStats: { email: string; totalLeads: number; totalCheckins: number; levelACount: number; levelBCount: number; levelCCount: number }[],
-  departmentStats?: { displayName: string; totalLeads: number; levelACount: number; checkinCount: number; agentCount: number }[]
-) {
+export function exportKPIAsPDF(agentStats: AgentStat[], departmentStats?: DepartmentStat[]) {
   if (agentStats.length === 0) return;
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
@@ -283,7 +239,6 @@ export function exportKPIAsPDF(
   doc.setTextColor(100);
   doc.text(`Generated on ${new Date().toLocaleDateString()}`, 14, 25);
 
-  // Department summary
   let startY = 32;
   if (departmentStats && departmentStats.length > 0) {
     doc.setFontSize(12);
@@ -292,32 +247,24 @@ export function exportKPIAsPDF(
     startY += 4;
     autoTable(doc, {
       startY,
-      head: [['ဌာန', 'Leads', 'Level A', 'Check-ins', 'ဝန်ထမ်းများ']],
-      body: departmentStats.map((d) => [d.displayName, String(d.totalLeads), String(d.levelACount), String(d.checkinCount), String(d.agentCount)]),
+      head: [['Department', 'Leads', 'Sold', 'Check-ins', 'Agents']],
+      body: departmentStats.map((d) => [d.displayName, String(d.totalLeads), String(d.soldCount), String(d.checkinCount), String(d.agentCount)]),
       theme: 'striped',
       styles: { fontSize: 9, cellPadding: 2 },
       headStyles: { fillColor: [4, 99, 202], textColor: [255, 255, 255], fontStyle: 'bold' },
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     startY = (doc as any).lastAutoTable?.finalY + 10 || startY + 30;
   }
 
-  // Agent performance
   doc.setFontSize(12);
   doc.setTextColor(0);
   doc.text('Agent Performance', 14, startY);
   autoTable(doc, {
     startY: startY + 4,
-    head: [['#', 'ဝန်ထမ်း', 'Leads', 'Check-ins', 'Level A', 'Level B', 'Level C', 'Conversion']],
+    head: [['#', 'Agent', 'Leads', 'Check-ins', 'Sold', 'Revenue', 'Conversion']],
     body: agentStats.map((a, idx) => [
-      String(idx + 1),
-      a.email,
-      String(a.totalLeads),
-      String(a.totalCheckins),
-      String(a.levelACount),
-      String(a.levelBCount),
-      String(a.levelCCount),
-      a.totalLeads > 0 ? `${((a.levelACount / a.totalLeads) * 100).toFixed(1)}%` : '0%',
+      String(idx + 1), a.name, String(a.totalLeads), String(a.totalCheckins), String(a.soldCount),
+      a.totalRevenue.toLocaleString(), a.totalLeads > 0 ? `${((a.soldCount / a.totalLeads) * 100).toFixed(1)}%` : '0%',
     ]),
     theme: 'striped',
     styles: { fontSize: 9, cellPadding: 2 },

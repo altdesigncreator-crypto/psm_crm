@@ -2,27 +2,53 @@
 <html lang="my">
   <head>
     <meta charset="UTF-8" />
-    <!-- High-Resolution Custom SVG Icon (Displays a stylized 'P' for PSM Lab Myanmar) -->
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%230f172a'/%3E%3Ctext x='50' y='66' font-size='50' font-family='system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif' font-weight='800' text-anchor='middle' fill='%23D4AF37'%3EP%3C/text%3E%3C/svg%3E" />
-    
-    <!-- App Title (Browser Tab Title) -->
-    <title>PSM Lab Myanmar - CRM</title>
-    
+
+    <!-- App Title (Browser Tab / Share Sheet) -->
+    <title>PSM Sale CRM</title>
+    <meta name="description" content="PSM Sale CRM — leads, follow-ups, pipeline and check-in management for PSM Properties sales staff." />
+
+    <!-- Favicon + Home Screen Icons -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+
     <!-- Progressive Web App Manifest Definition -->
     <link rel="manifest" href="/manifest.json" />
-    
+
     <!-- Responsive Viewport and View Window Layout Handling -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    
+
     <!-- UI System Colors -->
-    <meta name="theme-color" content="#0f172a" />
-    <meta name="background-color" content="#0f172a" />
-    
+    <meta name="theme-color" content="#0A2540" />
+    <meta name="background-color" content="#0A2540" />
+
     <!-- Modern Mobile Standalone Web App Execution Guards -->
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="PSM CRM" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- iOS launch screens (Safari does not synthesize these from the
+         manifest the way Android/Chrome does — without them the app flashes
+         blank white before SplashScreen.tsx can mount). -->
+    <link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/icons/splash/splash-iphone-16-pro-max-1320x2868.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/icons/splash/splash-iphone-16-pro-1206x2622.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/icons/splash/splash-iphone-15-plus-15-pro-max-14-pro-max-1290x2796.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/icons/splash/splash-iphone-15-15-pro-14-pro-1179x2556.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/icons/splash/splash-iphone-14-plus-13-pro-max-12-pro-max-1284x2778.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/icons/splash/splash-iphone-14-13-13-pro-12-12-pro-1170x2532.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/icons/splash/splash-iphone-11-pro-max-xs-max-1242x2688.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/icons/splash/splash-iphone-11-xr-828x1792.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/icons/splash/splash-iphone-x-xs-11pro-12mini-13mini-1125x2436.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="/icons/splash/splash-iphone-8plus-7plus-6splus-1242x2208.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/icons/splash/splash-iphone-8-7-6s-se2-se3-750x1334.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/icons/splash/splash-iphone-se1-5s-640x1136.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/icons/splash/splash-ipad-pro-12.9-2048x2732.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/icons/splash/splash-ipad-pro-11-air-1668x2388.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/icons/splash/splash-ipad-air-pro-10.5-1668x2224.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/icons/splash/splash-ipad-mini-9.7-1536x2048.png" />
+    <link rel="apple-touch-startup-image" media="(device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="/icons/splash/splash-ipad-10.2-1620x2160.png" />
   </head>
   <body>
     <div id="root"></div>

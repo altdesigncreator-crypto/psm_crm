@@ -1,0 +1,104 @@
+[
+  {
+    "cssW": 440,
+    "cssH": 956,
+    "dpr": 3,
+    "fileName": "splash-iphone-16-pro-max-1320x2868.png"
+  },
+  {
+    "cssW": 402,
+    "cssH": 874,
+    "dpr": 3,
+    "fileName": "splash-iphone-16-pro-1206x2622.png"
+  },
+  {
+    "cssW": 430,
+    "cssH": 932,
+    "dpr": 3,
+    "fileName": "splash-iphone-15-plus-15-pro-max-14-pro-max-1290x2796.png"
+  },
+  {
+    "cssW": 393,
+    "cssH": 852,
+    "dpr": 3,
+    "fileName": "splash-iphone-15-15-pro-14-pro-1179x2556.png"
+  },
+  {
+    "cssW": 428,
+    "cssH": 926,
+    "dpr": 3,
+    "fileName": "splash-iphone-14-plus-13-pro-max-12-pro-max-1284x2778.png"
+  },
+  {
+    "cssW": 390,
+    "cssH": 844,
+    "dpr": 3,
+    "fileName": "splash-iphone-14-13-13-pro-12-12-pro-1170x2532.png"
+  },
+  {
+    "cssW": 414,
+    "cssH": 896,
+    "dpr": 3,
+    "fileName": "splash-iphone-11-pro-max-xs-max-1242x2688.png"
+  },
+  {
+    "cssW": 414,
+    "cssH": 896,
+    "dpr": 2,
+    "fileName": "splash-iphone-11-xr-828x1792.png"
+  },
+  {
+    "cssW": 375,
+    "cssH": 812,
+    "dpr": 3,
+    "fileName": "splash-iphone-x-xs-11pro-12mini-13mini-1125x2436.png"
+  },
+  {
+    "cssW": 414,
+    "cssH": 736,
+    "dpr": 3,
+    "fileName": "splash-iphone-8plus-7plus-6splus-1242x2208.png"
+  },
+  {
+    "cssW": 375,
+    "cssH": 667,
+    "dpr": 2,
+    "fileName": "splash-iphone-8-7-6s-se2-se3-750x1334.png"
+  },
+  {
+    "cssW": 320,
+    "cssH": 568,
+    "dpr": 2,
+    "fileName": "splash-iphone-se1-5s-640x1136.png"
+  },
+  {
+    "cssW": 1024,
+    "cssH": 1366,
+    "dpr": 2,
+    "fileName": "splash-ipad-pro-12.9-2048x2732.png"
+  },
+  {
+    "cssW": 834,
+    "cssH": 1194,
+    "dpr": 2,
+    "fileName": "splash-ipad-pro-11-air-1668x2388.png"
+  },
+  {
+    "cssW": 834,
+    "cssH": 1112,
+    "dpr": 2,
+    "fileName": "splash-ipad-air-pro-10.5-1668x2224.png"
+  },
+  {
+    "cssW": 768,
+    "cssH": 1024,
+    "dpr": 2,
+    "fileName": "splash-ipad-mini-9.7-1536x2048.png"
+  },
+  {
+    "cssW": 810,
+    "cssH": 1080,
+    "dpr": 2,
+    "fileName": "splash-ipad-10.2-1620x2160.png"
+  }
+]

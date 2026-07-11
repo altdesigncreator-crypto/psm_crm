@@ -16,6 +16,9 @@ package-lock.json
 playwright-report
 test-results
 
+# Local credentials (never commit real secrets)
+database/credentials.txt
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
