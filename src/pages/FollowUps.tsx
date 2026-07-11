@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTranslation } from '@/contexts/TranslationContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useDepartments } from '@/hooks/useDepartments';
 import { canAddFollowUp, isAdminOrAbove } from '@/lib/permissions';
@@ -28,6 +29,12 @@ function followUpTypeLabel(type: string) {
 function followUpStatusLabel(status: string) {
   return FOLLOWUP_STATUSES.find((s) => s.value === status)?.label || status;
 }
+
+function initialsOf(name: string) {
+  return name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('') || '?';
+}
+
+const TH_STYLE = 'px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap';
 
 const STATUS_STYLE: Record<string, string> = {
   interested: 'bg-success/10 text-success border-success/20',
@@ -92,6 +99,7 @@ function findColumn(headers: string[], keywords: string[]): number {
 
 export default function FollowUps() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const { user, role, department } = useAuth();
   const { nameOf, profiles } = useProfiles();
   const { departments } = useDepartments();
@@ -341,8 +349,8 @@ export default function FollowUps() {
     <div className="space-y-6 animate-fade-in-up">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl md:text-2xl font-semibold text-foreground flex items-center gap-2"><ListChecks className="w-5 h-5 text-primary" /> Follow-ups</h1>
-          <p className="text-sm text-muted-foreground mt-1">Latest follow-up status per customer — click a row for the full history</p>
+          <h1 className="text-xl md:text-2xl font-semibold text-foreground flex items-center gap-2"><ListChecks className="w-5 h-5 text-primary" /> {t('followups.title')}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{t('followups.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {canImport && (
@@ -443,16 +451,15 @@ export default function FollowUps() {
               <div className="hidden md:block overflow-x-auto">
                 <Table>
                   <TableHeader>
-                    <TableRow className="hover:bg-transparent bg-muted/40">
-                      <TableHead className="whitespace-nowrap text-xs font-semibold py-3">Customer Name</TableHead>
-                      <TableHead className="whitespace-nowrap text-xs font-semibold py-3">Phone Number</TableHead>
-                      <TableHead className="whitespace-nowrap text-xs font-semibold py-3">Sale Name</TableHead>
-                      <TableHead className="whitespace-nowrap text-xs font-semibold py-3">Date</TableHead>
-                      <TableHead className="whitespace-nowrap text-xs font-semibold py-3">Location</TableHead>
-                      <TableHead className="whitespace-nowrap text-xs font-semibold py-3">Budget</TableHead>
-                      <TableHead className="whitespace-nowrap text-xs font-semibold py-3">Rate</TableHead>
-                      <TableHead className="text-xs font-semibold py-3">Enquires</TableHead>
-                      <TableHead className="text-xs font-semibold py-3">Follow Up Status</TableHead>
+                    <TableRow className="hover:bg-transparent bg-muted/30">
+                      <TableHead className={`${TH_STYLE} pl-5`}>Customer</TableHead>
+                      <TableHead className={TH_STYLE}>Sales Person</TableHead>
+                      <TableHead className={TH_STYLE}>Last Update</TableHead>
+                      <TableHead className={TH_STYLE}>Location</TableHead>
+                      <TableHead className={TH_STYLE}>Budget</TableHead>
+                      <TableHead className={TH_STYLE}>Grade</TableHead>
+                      <TableHead className={TH_STYLE}>Enquiry</TableHead>
+                      <TableHead className={`${TH_STYLE} pr-5`}>Follow-up Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -460,16 +467,30 @@ export default function FollowUps() {
                       const latest = row.followUps[0];
                       const date = latest?.created_at || row.created_at;
                       return (
-                        <TableRow key={row.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openLead(row)}>
-                          <TableCell className="whitespace-nowrap text-sm font-medium py-3">{row.name}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm py-3">{row.phone}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm py-3">{nameOf(row.owner_id)}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm py-3">{new Date(date).toLocaleDateString()}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm py-3 max-w-[140px] truncate" title={row.current_location || ''}>{row.current_location || '—'}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm py-3">{row.budget_range || '—'}</TableCell>
-                          <TableCell className="whitespace-nowrap py-3"><LeadLevelBadge grade={row.lead_grade} /></TableCell>
-                          <TableCell className="text-sm py-3 max-w-[200px] truncate" title={row.interest_type || ''}>{row.interest_type || '—'}</TableCell>
-                          <TableCell className="py-3 max-w-[240px]">
+                        <TableRow key={row.id} className="cursor-pointer border-border/50 transition-colors hover:bg-muted/40" onClick={() => openLead(row)}>
+                          <TableCell className="pl-5 pr-4 py-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
+                                {initialsOf(row.name)}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-foreground truncate max-w-[170px]">{row.name}</p>
+                                <p className="text-xs text-muted-foreground tabular-nums">{row.phone || 'No phone'}</p>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="px-4 py-3 whitespace-nowrap text-sm text-muted-foreground">{nameOf(row.owner_id)}</TableCell>
+                          <TableCell className="px-4 py-3 whitespace-nowrap text-sm text-muted-foreground">
+                            <span className="inline-flex items-center gap-1.5">
+                              <Calendar className="w-3.5 h-3.5 opacity-60" />
+                              {new Date(date).toLocaleDateString()}
+                            </span>
+                          </TableCell>
+                          <TableCell className="px-4 py-3 whitespace-nowrap text-sm max-w-[140px] truncate" title={row.current_location || ''}>{row.current_location || '—'}</TableCell>
+                          <TableCell className="px-4 py-3 whitespace-nowrap text-sm">{row.budget_range || '—'}</TableCell>
+                          <TableCell className="px-4 py-3 whitespace-nowrap"><LeadLevelBadge grade={row.lead_grade} /></TableCell>
+                          <TableCell className="px-4 py-3 text-sm max-w-[200px] truncate" title={row.interest_type || ''}>{row.interest_type || '—'}</TableCell>
+                          <TableCell className="pl-4 pr-5 py-3 max-w-[240px]">
                             {latest ? (
                               <div className="space-y-1">
                                 <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${STATUS_STYLE[latest.status] || 'bg-muted text-muted-foreground border-border'}`}>

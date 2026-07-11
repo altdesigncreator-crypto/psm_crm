@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/db/supabase';
+import { isBiometricEnabledFor } from '@/lib/biometricAuth';
 import type { RoleTier, Department } from '@/lib/permissions';
 
 export interface StaffUser {
@@ -19,6 +20,12 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<StaffUser>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  /** True only when a "Remember me" session was silently restored on app
+   * start and the user has biometric sign-in enrolled on this device. A
+   * fresh email/password login never sets this — biometrics are an
+   * alternative way in, not a second gate. */
+  needsBiometricUnlock: boolean;
+  completeBiometricUnlock: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -50,6 +57,7 @@ async function loadProfile(userId: string): Promise<StaffUser> {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<StaffUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [needsBiometricUnlock, setNeedsBiometricUnlock] = useState(false);
 
   const hydrate = useCallback(async (sessionUserId: string | null) => {
     if (!sessionUserId) {
@@ -68,7 +76,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(({ data }) => {
-      hydrate(data.session?.user.id ?? null).finally(() => {
+      const restoredUserId = data.session?.user.id ?? null;
+      // Session came back from storage without the user typing anything —
+      // if they enrolled biometrics, offer the biometric sign-in gate.
+      if (restoredUserId && isBiometricEnabledFor(restoredUserId)) {
+        setNeedsBiometricUnlock(true);
+      }
+      hydrate(restoredUserId).finally(() => {
         if (active) setLoading(false);
       });
     });
@@ -92,6 +106,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const profile = await loadProfile(data.user.id);
     setUser(profile);
+    // Signing in with email/password IS the authentication — never stack
+    // the biometric gate on top of it.
+    setNeedsBiometricUnlock(false);
     await supabase.from('audit_logs').insert({ action: 'login', performed_by: profile.id });
     return profile;
   }, []);
@@ -102,7 +119,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     await supabase.auth.signOut();
     setUser(null);
+    setNeedsBiometricUnlock(false);
   }, [user]);
+
+  const completeBiometricUnlock = useCallback(() => setNeedsBiometricUnlock(false), []);
 
   const refreshProfile = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
@@ -111,7 +131,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, role: user?.role ?? null, department: user?.department ?? null, loading, login, logout, refreshProfile }}
+      value={{ user, role: user?.role ?? null, department: user?.department ?? null, loading, login, logout, refreshProfile, needsBiometricUnlock, completeBiometricUnlock }}
     >
       {children}
     </AuthContext.Provider>
@@ -129,6 +149,8 @@ export function useAuth() {
       login: async () => { throw new Error('Auth Context not mounted'); },
       logout: async () => {},
       refreshProfile: async () => {},
+      needsBiometricUnlock: false,
+      completeBiometricUnlock: () => {},
     } as AuthContextType;
   }
   return context;

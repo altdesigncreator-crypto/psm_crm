@@ -225,6 +225,10 @@ export const translations: Record<string, Record<Lang, string>> = {
     mm: 'ဘာသာစကား',
     en: 'Language',
   },
+  'settings.languageDesc': {
+    mm: 'English သို့မဟုတ် မြန်မာ ရွေးချယ်ပါ',
+    en: 'Choose English or Myanmar',
+  },
   'settings.myanmar': {
     mm: 'မြန်မာ',
     en: 'Myanmar',
@@ -233,6 +237,35 @@ export const translations: Record<string, Record<Lang, string>> = {
     mm: 'English',
     en: 'English',
   },
+  // Sidebar navigation
+  'nav.followUps': { mm: 'Follow-up များ', en: 'Follow-ups' },
+  'nav.pipeline': { mm: 'Pipeline', en: 'Pipeline' },
+  'nav.checkInGallery': { mm: 'Check-In ဓာတ်ပုံများ', en: 'Check-In Gallery' },
+  'nav.checkInMap': { mm: 'Check-In မြေပုံ', en: 'Check-In Map' },
+  'nav.kpiBoard': { mm: 'KPI ဘုတ်', en: 'KPI Board' },
+  'nav.staff': { mm: 'ဝန်ထမ်းများ', en: 'Staff' },
+  'nav.roles': { mm: 'ရာထူးနှင့် ခွင့်ပြုချက်များ', en: 'Roles & Permissions' },
+  'nav.section.core': { mm: 'အဓိက လုပ်ငန်းများ', en: 'Core Operations' },
+  'nav.section.staff': { mm: 'ဝန်ထမ်းနှင့် စွမ်းဆောင်ရည်', en: 'Staff & Performance' },
+  'nav.section.admin': { mm: 'စီမံခန့်ခွဲရေး', en: 'Administration' },
+  'nav.logout': { mm: 'ထွက်ရန်', en: 'Log Out' },
+  'nav.signedInAs': { mm: 'အကောင့်ဝင်ထားသူ', en: 'Signed in as' },
+  // Mobile bottom tabs (short labels)
+  'tab.dashboard': { mm: 'ပင်မ', en: 'Dashboard' },
+  'tab.leads': { mm: 'Lead', en: 'Leads' },
+  'tab.add': { mm: 'ထည့်ရန်', en: 'Add' },
+  'tab.checkin': { mm: 'Check-In', en: 'Check-In' },
+  'tab.gallery': { mm: 'ဓာတ်ပုံ', en: 'Gallery' },
+  // Page headers
+  'leads.title': { mm: 'ဖောက်သည် Lead များ', en: 'Customer Leads' },
+  'leads.subtitle': { mm: 'ဖောက်သည် Lead အားလုံးကို စီမံပြီး ခြေရာခံပါ', en: 'Manage and track all customer leads' },
+  'followups.title': { mm: 'Follow-up များ', en: 'Follow-ups' },
+  'followups.subtitle': {
+    mm: 'ဖောက်သည်တစ်ဦးချင်း၏ နောက်ဆုံး follow-up အခြေအနေ — မှတ်တမ်းအပြည့်ကြည့်ရန် အတန်းကိုနှိပ်ပါ',
+    en: 'Latest follow-up status per customer — click a row for the full history',
+  },
+  'checkin.title': { mm: 'နေ့စဉ် Check-in', en: 'Daily Check-in' },
+  'checkin.subtitle': { mm: 'လက်ရှိတည်နေရာမှ check-in လုပ်ရန်', en: 'Live site check-in' },
 };
 
 export function t(key: string, lang: Lang): string {

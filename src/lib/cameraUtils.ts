@@ -1,31 +1,3 @@
-export async function getCameraStream(
-  facingMode: 'environment' | 'user' = 'environment'
-): Promise<MediaStream> {
-  const constraints: MediaStreamConstraints = {
-    video: {
-      facingMode,
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-    },
-    audio: false,
-  };
-  return navigator.mediaDevices.getUserMedia(constraints);
-}
-
-export function captureFromStream(
-  video: HTMLVideoElement,
-  width: number,
-  height: number
-): string {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return '';
-  ctx.drawImage(video, 0, 0, width, height);
-  return canvas.toDataURL('image/jpeg', 0.92);
-}
-
 export function dataURLtoFile(dataUrl: string, fileName: string): File | null {
   try {
     const arr = dataUrl.split(',');

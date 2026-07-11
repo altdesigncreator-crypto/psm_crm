@@ -198,7 +198,10 @@ export default function Settings() {
           <button type="button" onClick={() => setLang(lang === 'mm' ? 'en' : 'mm')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-11 h-11 rounded-xl bg-info/10 flex items-center justify-center shrink-0"><Globe className="w-5 h-5 text-info" /></div>
-              <div><p className="text-sm font-semibold text-foreground">{t('settings.language')}</p></div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">{t('settings.language')}</p>
+                <p className="text-xs text-muted-foreground">{t('settings.languageDesc')}</p>
+              </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <span className={`text-xs font-medium px-2 py-1 rounded-full border ${lang === 'mm' ? 'bg-primary text-white border-primary' : 'bg-muted text-muted-foreground border-border'}`}>MM</span>
@@ -234,8 +237,8 @@ export default function Settings() {
                   {biometricBusy ? <Loader2 className="w-5 h-5 text-primary animate-spin" /> : <FingerprintPattern className="w-5 h-5 text-primary" />}
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-foreground">Face ID / Fingerprint Unlock</p>
-                  <p className="text-xs text-muted-foreground">Require biometrics to open the app on this device</p>
+                  <p className="text-sm font-semibold text-foreground">Face ID / Fingerprint Sign-in</p>
+                  <p className="text-xs text-muted-foreground">Sign back in with biometrics instead of your password on this device</p>
                 </div>
               </div>
               <div className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${biometricEnabled ? 'bg-primary' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${biometricEnabled ? 'left-6' : 'left-1'}`} /></div>

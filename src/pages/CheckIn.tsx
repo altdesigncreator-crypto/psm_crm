@@ -1,26 +1,25 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { supabase } from '@/db/supabase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTranslation } from '@/contexts/TranslationContext';
 import { getDepartmentLabel } from '@/lib/permissions';
-import { getCameraStream, captureFromStream, dataURLtoFile, processCapturedImage } from '@/lib/cameraUtils';
+import { processCapturedImage } from '@/lib/cameraUtils';
 import { watermarkFromFile } from '@/lib/watermark';
 import {
-  Camera, MapPin, CheckCircle2, Loader2, RotateCcw, Smartphone, X, Navigation, RefreshCw, History, Globe, Upload,
+  Camera, MapPin, CheckCircle2, Loader2, RotateCcw, Navigation, History, Globe, Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { CheckIn as CheckInRecord } from '@/types';
 
-type CameraMode = 'none' | 'native' | 'webrtc';
-
 export default function CheckIn() {
   const { user, department } = useAuth();
+  const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const [description, setDescription] = useState('');
   const [photo, setPhoto] = useState<string | null>(null);
@@ -31,9 +30,6 @@ export default function CheckIn() {
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
-  const [cameraMode, setCameraMode] = useState<CameraMode>('none');
-  const [webrtcReady, setWebrtcReady] = useState(false);
-  const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
 
   const [history, setHistory] = useState<CheckInRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -65,39 +61,6 @@ export default function CheckIn() {
     return () => { active = false; };
   }, [user?.id, success]);
 
-  const startWebRTCCamera = useCallback(async (facing: 'environment' | 'user') => {
-    try {
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      const stream = await getCameraStream(facing);
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        setWebrtcReady(true);
-      }
-    } catch {
-      toast.error('Could not access the camera.');
-      setCameraMode('none');
-    }
-  }, []);
-
-  const stopWebRTCCamera = useCallback(() => {
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-    setWebrtcReady(false);
-  }, []);
-
-  useEffect(() => {
-    if (cameraMode === 'webrtc') startWebRTCCamera(cameraFacing);
-    return () => stopWebRTCCamera();
-  }, [cameraMode, cameraFacing, startWebRTCCamera, stopWebRTCCamera]);
-
-  const handleSwitchCamera = () => {
-    const next = cameraFacing === 'environment' ? 'user' : 'environment';
-    setCameraFacing(next);
-    if (cameraMode === 'webrtc') { setWebrtcReady(false); startWebRTCCamera(next); }
-  };
-
   const handleNativeCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -113,25 +76,12 @@ export default function CheckIn() {
     }
   };
 
-  const handleWebRTCCapture = () => {
-    const video = videoRef.current;
-    if (!video || !webrtcReady) return;
-    const dataUrl = captureFromStream(video, video.videoWidth, video.videoHeight);
-    if (!dataUrl) { toast.error('Could not capture the photo.'); return; }
-    const file = dataURLtoFile(dataUrl, `checkin_${Date.now()}.jpg`);
-    if (!file) { toast.error('Could not process the photo.'); return; }
-    setPhotoFile(file);
-    setPhoto(dataUrl);
-    setCameraMode('none');
-    setSuccess(false);
-    toast.success('Photo captured.');
-  };
-
   const handleRetake = () => {
     setPhoto(null);
     setPhotoFile(null);
     setSuccess(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
 
   const handleSubmit = async () => {
@@ -185,8 +135,8 @@ export default function CheckIn() {
   return (
     <div className="max-w-lg mx-auto space-y-5 animate-fade-in-up px-1 pb-6">
       <div>
-        <h1 className="text-xl md:text-2xl font-semibold text-foreground leading-snug">Daily Check-in</h1>
-        <p className="text-sm text-muted-foreground mt-1">Live site check-in</p>
+        <h1 className="text-xl md:text-2xl font-semibold text-foreground leading-snug">{t('checkin.title')}</h1>
+        <p className="text-sm text-muted-foreground mt-1">{t('checkin.subtitle')}</p>
       </div>
 
       <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium ${gpsStatus === 'ok' ? 'bg-success/10 text-success' : gpsStatus === 'loading' ? 'bg-warning/10 text-warning' : 'bg-destructive/10 text-destructive'}`}>
@@ -199,13 +149,13 @@ export default function CheckIn() {
         </div>
       )}
 
-      {!photo && cameraMode === 'none' && (
+      {!photo && (
         <div className="flex items-center gap-2 overflow-x-auto -mx-1 px-1 snap-x snap-mandatory pb-1 md:hidden">
+          <button type="button" onClick={() => cameraInputRef.current?.click()} className="snap-start shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-full bg-success/10 text-success text-xs font-medium active:bg-success/20 active:scale-95 transition-all">
+            <Camera className="w-3.5 h-3.5" /> Take Photo
+          </button>
           <button type="button" onClick={() => fileInputRef.current?.click()} className="snap-start shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20 active:scale-95 transition-all">
             <Upload className="w-3.5 h-3.5" /> Upload Photo
-          </button>
-          <button type="button" onClick={() => setCameraMode('webrtc')} className="snap-start shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-full bg-success/10 text-success text-xs font-medium active:bg-success/20 active:scale-95 transition-all">
-            <Smartphone className="w-3.5 h-3.5" /> Live Camera
           </button>
         </div>
       )}
@@ -229,36 +179,27 @@ export default function CheckIn() {
                 picker so staff can upload an already-taken photo, not just
                 a freshly-shot one. */}
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleNativeCapture} />
+            {/* `capture` opens the phone's native camera app directly. The
+                photo goes through the same watermark pipeline as uploads
+                (see handleSubmit). */}
+            <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleNativeCapture} />
 
-            {!photo && cameraMode === 'none' && (
+            {!photo && (
               <div className="hidden md:grid md:grid-cols-2 gap-3">
+                <button type="button" onClick={() => cameraInputRef.current?.click()} className="h-48 md:h-52 rounded-xl border-2 border-dashed border-border bg-muted/40 hover:bg-muted active:bg-muted/80 active:scale-[0.98] transition-all flex flex-col items-center justify-center gap-3 group">
+                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center group-active:scale-95 transition-transform"><Camera className="w-7 h-7 text-primary" /></div>
+                  <span className="text-sm font-semibold text-foreground">Take Photo</span>
+                  <span className="text-[11px] text-muted-foreground -mt-2">Opens your phone camera</span>
+                </button>
                 <button type="button" onClick={() => fileInputRef.current?.click()} className="h-48 md:h-52 rounded-xl border-2 border-dashed border-border bg-muted/40 hover:bg-muted active:bg-muted/80 active:scale-[0.98] transition-all flex flex-col items-center justify-center gap-3 group">
                   <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center group-active:scale-95 transition-transform"><Upload className="w-7 h-7 text-primary" /></div>
                   <span className="text-sm font-semibold text-foreground">Upload Photo</span>
                   <span className="text-[11px] text-muted-foreground -mt-2">Choose from your device</span>
                 </button>
-                <button type="button" onClick={() => setCameraMode('webrtc')} className="h-48 md:h-52 rounded-xl border-2 border-dashed border-border bg-muted/40 hover:bg-muted active:bg-muted/80 active:scale-[0.98] transition-all flex flex-col items-center justify-center gap-3 group">
-                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center group-active:scale-95 transition-transform"><Smartphone className="w-7 h-7 text-primary" /></div>
-                  <span className="text-sm font-semibold text-foreground">Live Camera</span>
-                </button>
               </div>
             )}
 
-            {cameraMode === 'webrtc' && (
-              <div className="relative w-full rounded-lg overflow-hidden border border-border bg-black">
-                <video ref={videoRef} className="w-full h-52 md:h-60 object-cover" playsInline muted />
-                <div className="absolute top-3 left-3 bg-black/50 backdrop-blur-sm text-white text-[10px] font-medium px-2 py-1 rounded-full flex items-center gap-1">
-                  <Camera className="w-3 h-3" /> {cameraFacing === 'environment' ? 'Back camera' : 'Front camera'}
-                </div>
-                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent p-3 flex items-center justify-between gap-2">
-                  <button type="button" onClick={() => setCameraMode('none')} className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-white hover:bg-white/30 active:bg-white/40 transition-colors"><X className="w-5 h-5" /></button>
-                  <button type="button" onClick={handleWebRTCCapture} disabled={!webrtcReady} className="w-16 h-16 rounded-full border-4 border-white bg-primary flex items-center justify-center disabled:opacity-40 active:scale-90 transition-transform shadow-lg"><Camera className="w-7 h-7 text-white" /></button>
-                  <button type="button" onClick={handleSwitchCamera} disabled={!webrtcReady} className="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-white hover:bg-white/30 active:bg-white/40 transition-colors disabled:opacity-40"><RefreshCw className="w-5 h-5" /></button>
-                </div>
-              </div>
-            )}
-
-            {photo && cameraMode === 'none' && (
+            {photo && (
               <div className="relative w-full rounded-lg overflow-hidden border border-border">
                 <img src={photo} alt="Captured" className="w-full h-48 md:h-56 object-cover" />
                 <button type="button" onClick={handleRetake} className="absolute top-2 right-2 w-11 h-11 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 active:bg-black/90 transition-colors"><RotateCcw className="w-5 h-5" /></button>

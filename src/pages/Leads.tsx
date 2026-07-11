@@ -14,11 +14,16 @@ import {
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetClose,
 } from '@/components/ui/sheet';
-import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode } from 'lucide-react';
+import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode, Trash2 } from 'lucide-react';
 import { LEAD_STAGES, type Lead } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { isManagerOrAbove, getDepartmentLabel } from '@/lib/permissions';
+import { useTranslation } from '@/contexts/TranslationContext';
+import { isManagerOrAbove, isExec, getDepartmentLabel } from '@/lib/permissions';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useDepartments } from '@/hooks/useDepartments';
@@ -35,8 +40,15 @@ function stageLabel(status: string) {
   return LEAD_STAGES.find((s) => s.value === status)?.label || status;
 }
 
+function initialsOf(name: string) {
+  return name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('') || '?';
+}
+
+const TH_STYLE = 'px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap';
+
 export default function Leads() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const { user, role, department } = useAuth();
   const { colors: statusColors } = useStatusColors();
   const { nameOf, profiles } = useProfiles();
@@ -46,6 +58,12 @@ export default function Leads() {
   const [mapOpen, setMapOpen] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [actionSheetLead, setActionSheetLead] = useState<Lead | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Lead | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Deleting leads is exec-only (boss / super admin) — matches the
+  // leads_delete RLS policy (is_exec()) in database/crm.sql.
+  const canDelete = isExec(role);
 
   const importFileRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
@@ -110,6 +128,30 @@ export default function Leads() {
   const openMap = (lead: Lead) => {
     setSelectedLead(lead);
     setMapOpen(true);
+  };
+
+  const handleDeleteLead = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const { error } = await supabase.from('leads').delete().eq('id', deleteTarget.id);
+      if (error) throw error;
+      // No DB trigger logs deletions (triggers only cover insert/update),
+      // so record it here like AuthContext does for login/logout.
+      await supabase.from('audit_logs').insert({
+        action: 'lead_deleted',
+        target_table: 'leads',
+        target_id: deleteTarget.id,
+        performed_by: user?.id,
+        old_value: { name: deleteTarget.name, phone: deleteTarget.phone, owner_id: deleteTarget.owner_id },
+      });
+      toast.success(`Lead "${deleteTarget.name}" deleted.`);
+    } catch {
+      toast.error('Could not delete the lead.');
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
   };
 
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -179,8 +221,8 @@ export default function Leads() {
     <div className="space-y-6 animate-fade-in-up">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-xl md:text-2xl font-semibold text-foreground">Customer Leads</h1>
-          <p className="text-sm text-muted-foreground mt-1">Manage and track all customer leads</p>
+          <h1 className="text-xl md:text-2xl font-semibold text-foreground">{t('leads.title')}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{t('leads.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <input ref={importFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} className="hidden" />
@@ -373,42 +415,61 @@ export default function Leads() {
                 <div className="hidden md:block">
                   <Table>
                     <TableHeader>
-                      <TableRow className="hover:bg-transparent">
-                        <TableHead className="whitespace-nowrap text-xs font-semibold">Name</TableHead>
-                        <TableHead className="whitespace-nowrap text-xs font-semibold">Phone</TableHead>
-                        <TableHead className="whitespace-nowrap text-xs font-semibold">Project</TableHead>
-                        <TableHead className="whitespace-nowrap text-xs font-semibold">Budget</TableHead>
-                        <TableHead className="whitespace-nowrap text-xs font-semibold">Grade</TableHead>
-                        <TableHead className="whitespace-nowrap text-xs font-semibold">Status</TableHead>
-                        <TableHead className="whitespace-nowrap text-xs font-semibold">Sales Person</TableHead>
-                        <TableHead className="whitespace-nowrap text-xs font-semibold">Next Follow-up</TableHead>
-                        <TableHead className="whitespace-nowrap text-xs font-semibold">Location</TableHead>
-                        <TableHead className="whitespace-nowrap text-xs font-semibold">Actions</TableHead>
+                      <TableRow className="hover:bg-transparent bg-muted/30">
+                        <TableHead className={`${TH_STYLE} pl-5`}>Customer</TableHead>
+                        <TableHead className={TH_STYLE}>Project / Budget</TableHead>
+                        <TableHead className={TH_STYLE}>Grade</TableHead>
+                        <TableHead className={TH_STYLE}>Status</TableHead>
+                        <TableHead className={TH_STYLE}>Sales Person</TableHead>
+                        <TableHead className={TH_STYLE}>Next Follow-up</TableHead>
+                        <TableHead className={`${TH_STYLE} pr-5 text-right`}>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredLeads.map((lead) => (
-                        <TableRow key={lead.id} className="transition-colors duration-300 hover:bg-muted/50 cursor-pointer" onClick={() => navigate(`/lead/${lead.id}`)}>
-                          <TableCell className="whitespace-nowrap text-sm font-medium">{lead.name}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{lead.phone || '—'}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{lead.preferred_project || '—'}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{lead.budget_range || '—'}</TableCell>
-                          <TableCell className="whitespace-nowrap"><LeadLevelBadge grade={lead.lead_grade} /></TableCell>
-                          <TableCell className="whitespace-nowrap"><StatusBadge status={stageLabel(lead.status)} color={statusColors?.[lead.status] || '#8FA3BF'} /></TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{lead.owner_name || '—'}</TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{lead.next_follow_up_at ? new Date(lead.next_follow_up_at).toLocaleDateString() : '—'}</TableCell>
-                          <TableCell className="whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                            {lead.latitude && lead.longitude ? (
-                              <button onClick={() => openMap(lead)} className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 font-medium transition-colors">
-                                <MapPin className="w-3.5 h-3.5" /> View map
-                              </button>
-                            ) : (<span className="text-xs text-muted-foreground">—</span>)}
+                        <TableRow key={lead.id} className="cursor-pointer border-border/50 transition-colors hover:bg-muted/40" onClick={() => navigate(`/lead/${lead.id}`)}>
+                          <TableCell className="pl-5 pr-4 py-3">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
+                                {initialsOf(lead.name)}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-foreground truncate max-w-[180px]">{lead.name}</p>
+                                <p className="text-xs text-muted-foreground tabular-nums">{lead.phone || 'No phone'}</p>
+                              </div>
+                            </div>
                           </TableCell>
-                          <TableCell className="whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="sm" className="h-8 px-2 text-primary hover:bg-primary/5 gap-1" onClick={() => navigate(`/lead/${lead.id}`)}>
-                              <Eye className="w-3.5 h-3.5" />
-                              <span className="text-xs font-medium">Details</span>
-                            </Button>
+                          <TableCell className="px-4 py-3">
+                            <p className="text-sm text-foreground truncate max-w-[170px]">{lead.preferred_project || '—'}</p>
+                            {lead.budget_range && <p className="text-xs text-muted-foreground truncate max-w-[170px]">{lead.budget_range}</p>}
+                          </TableCell>
+                          <TableCell className="px-4 py-3 whitespace-nowrap"><LeadLevelBadge grade={lead.lead_grade} /></TableCell>
+                          <TableCell className="px-4 py-3 whitespace-nowrap"><StatusBadge status={stageLabel(lead.status)} color={statusColors?.[lead.status] || '#8FA3BF'} /></TableCell>
+                          <TableCell className="px-4 py-3 whitespace-nowrap text-sm text-muted-foreground">{lead.owner_name || '—'}</TableCell>
+                          <TableCell className="px-4 py-3 whitespace-nowrap text-sm text-muted-foreground">
+                            {lead.next_follow_up_at ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <Calendar className="w-3.5 h-3.5 opacity-60" />
+                                {new Date(lead.next_follow_up_at).toLocaleDateString()}
+                              </span>
+                            ) : '—'}
+                          </TableCell>
+                          <TableCell className="pl-4 pr-5 py-3 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+                            <div className="inline-flex items-center gap-0.5">
+                              {lead.latitude && lead.longitude && (
+                                <Button variant="ghost" size="icon" title="View map" aria-label="View map" className="h-8 w-8 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => openMap(lead)}>
+                                  <MapPin className="w-4 h-4" />
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="icon" title="View details" aria-label="View details" className="h-8 w-8 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => navigate(`/lead/${lead.id}`)}>
+                                <Eye className="w-4 h-4" />
+                              </Button>
+                              {canDelete && (
+                                <Button variant="ghost" size="icon" title="Delete lead" aria-label="Delete lead" className="h-8 w-8 min-h-0 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteTarget(lead)}>
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -514,6 +575,12 @@ export default function Leads() {
                     View location
                   </button>
                 )}
+                {canDelete && (
+                  <button type="button" onClick={() => { setDeleteTarget(actionSheetLead); setActionSheetLead(null); }} className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium text-destructive hover:bg-destructive/5 active:bg-destructive/10 transition-colors">
+                    <div className="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0"><Trash2 className="w-4 h-4 text-destructive" /></div>
+                    Delete lead
+                  </button>
+                )}
                 <button type="button" onClick={() => setActionSheetLead(null)} className="w-full flex items-center justify-center px-4 py-3.5 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted/50 active:bg-muted transition-colors border border-border">
                   Close
                 </button>
@@ -522,6 +589,30 @@ export default function Leads() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Delete confirmation (exec only) */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
+        <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this lead?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{deleteTarget?.name}" and all of its follow-ups, warnings and history will be
+              permanently deleted. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={(e) => { e.preventDefault(); handleDeleteLead(); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+              {deleting ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

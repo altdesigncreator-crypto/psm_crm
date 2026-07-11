@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import IntersectObserver from '@/components/common/IntersectObserver';
 import SplashScreen from '@/components/common/SplashScreen';
 import PWAInstallPrompt from '@/components/PWAInstallPrompt';
+import PermissionPrimer from '@/components/PermissionPrimer';
 import BiometricLock from '@/components/BiometricLock';
 import { Toaster } from '@/components/ui/sonner';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
@@ -10,13 +11,11 @@ import { NotificationsProvider } from '@/contexts/NotificationsContext';
 import { TranslationProvider } from '@/contexts/TranslationContext';
 import { RouteGuard } from '@/components/common/RouteGuard';
 import AppLayout from '@/components/layouts/AppLayout';
-import { isBiometricEnabledFor } from '@/lib/biometricAuth';
 
 import { routes } from './routes';
 
 const AppContent: React.FC = () => {
-  const { user, loading } = useAuth();
-  const [unlocked, setUnlocked] = useState(false);
+  const { user, loading, needsBiometricUnlock, completeBiometricUnlock } = useAuth();
 
   // Wait for the Supabase auth session to settle before rendering routes
   if (loading) {
@@ -29,17 +28,20 @@ const AppContent: React.FC = () => {
     );
   }
 
-  // A "Remember me" session was silently restored on this app load, and the
-  // signed-in user previously enrolled Face ID / Fingerprint on this device
-  // — require that biometric check before showing anything else.
-  if (user && !unlocked && isBiometricEnabledFor(user.id)) {
-    return <BiometricLock onUnlock={() => setUnlocked(true)} />;
+  // A "Remember me" session was silently restored on this app load and the
+  // user enrolled Face ID / Fingerprint on this device — let them choose to
+  // sign in with biometrics or fall back to email & password. A fresh
+  // password login never lands here (see AuthContext).
+  if (user && needsBiometricUnlock) {
+    return <BiometricLock onUnlock={completeBiometricUnlock} />;
   }
 
   return (
     <RouteGuard>
       <IntersectObserver />
       <PWAInstallPrompt />
+      {/* First-time-use camera & GPS permission onboarding (signed-in only) */}
+      {user && <PermissionPrimer />}
       <Routes>
         {/* Public Routes (Login, registration panels) */}
         {routes
