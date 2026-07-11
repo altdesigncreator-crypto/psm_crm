@@ -26,4 +26,21 @@ export default defineConfig({
   optimizeDeps: {
     include: ["react", "react-dom", "@radix-ui/react-slider", "xlsx", "jspdf", "jspdf-autotable"],
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Stable vendor chunks: framework code changes rarely, so returning
+        // visitors keep it cached while app-code chunks update.
+        // (rolldown-vite only accepts the function form.)
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return undefined;
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler|react-router|react-router-dom)[\\/]/.test(id)) {
+            return "vendor-react";
+          }
+          if (id.includes("@supabase")) return "vendor-supabase";
+          return undefined;
+        },
+      },
+    },
+  },
 });

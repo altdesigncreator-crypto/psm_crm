@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import {
   ArrowLeft, User, Mail, Shield, Building2, Moon, Bell, Info, ChevronDown, Phone, MapPin,
-  HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern,
+  HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern, KeyRound, Eye, EyeOff,
 } from 'lucide-react';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { toast } from 'sonner';
@@ -35,6 +35,12 @@ export default function Settings() {
   const [biometricSupported, setBiometricSupported] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(user ? isBiometricEnabledFor(user.id) : false);
   const [biometricBusy, setBiometricBusy] = useState(false);
+
+  const [pwCurrent, setPwCurrent] = useState('');
+  const [pwNew, setPwNew] = useState('');
+  const [pwConfirm, setPwConfirm] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [changingPw, setChangingPw] = useState(false);
 
   useEffect(() => {
     isPlatformAuthenticatorAvailable().then(setBiometricSupported);
@@ -75,6 +81,31 @@ export default function Settings() {
     if (error) { toast.error('Could not update profile.'); return; }
     await refreshProfile();
     toast.success('Profile updated.');
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user?.email) return;
+    if (pwNew.length < 6) { toast.error('New password must be at least 6 characters.'); return; }
+    if (pwNew !== pwConfirm) { toast.error('New passwords do not match.'); return; }
+    if (pwNew === pwCurrent) { toast.error('New password must be different from the current one.'); return; }
+
+    setChangingPw(true);
+    try {
+      // Supabase's updateUser doesn't ask for the old password, so verify it
+      // ourselves by re-authenticating before allowing the change.
+      const { error: verifyErr } = await supabase.auth.signInWithPassword({ email: user.email, password: pwCurrent });
+      if (verifyErr) { toast.error('Current password is incorrect.'); return; }
+
+      const { error } = await supabase.auth.updateUser({ password: pwNew });
+      if (error) { toast.error(error.message || 'Could not change the password.'); return; }
+
+      await supabase.from('audit_logs').insert({ action: 'password_changed', target_table: 'profiles', target_id: user.id, performed_by: user.id });
+      toast.success('Password changed.');
+      setPwCurrent(''); setPwNew(''); setPwConfirm(''); setShowPw(false);
+    } finally {
+      setChangingPw(false);
+    }
   };
 
   const handleSaveAttendance = async (deptCode: string) => {
@@ -162,6 +193,39 @@ export default function Settings() {
             <div className="space-y-2"><Label className="text-sm font-medium">Phone</Label><Input value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="09xxxxxxxxx" /></div>
             <Button type="submit" disabled={isUpdating} className="w-full sm:w-auto h-10 gradient-primary text-white gap-2 mt-2">
               {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes
+            </Button>
+          </form>
+          <Separator />
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-warning/10 flex items-center justify-center"><KeyRound className="w-4 h-4 text-warning" /></div>
+              <p className="text-sm font-semibold text-foreground">Change Password</p>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Current password</Label>
+              <Input type={showPw ? 'text' : 'password'} value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} required autoComplete="current-password" />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">New password</Label>
+              <div className="relative">
+                <Input type={showPw ? 'text' : 'password'} value={pwNew} onChange={(e) => setPwNew(e.target.value)} required minLength={6} autoComplete="new-password" className="pr-12" placeholder="At least 6 characters" />
+                <button
+                  type="button"
+                  onClick={() => setShowPw((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 min-h-0 flex items-center justify-center rounded-full text-muted-foreground"
+                  aria-label={showPw ? 'Hide passwords' : 'Show passwords'}
+                >
+                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Confirm new password</Label>
+              <Input type={showPw ? 'text' : 'password'} value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} required minLength={6} autoComplete="new-password" />
+            </div>
+            <Button type="submit" disabled={changingPw || !pwCurrent || !pwNew || !pwConfirm} className="w-full sm:w-auto h-10 gap-2 mt-2" variant="outline">
+              {changingPw ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+              {changingPw ? 'Changing…' : 'Change Password'}
             </Button>
           </form>
           <Separator />

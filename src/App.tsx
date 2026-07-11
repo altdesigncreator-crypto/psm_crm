@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import IntersectObserver from '@/components/common/IntersectObserver';
 import SplashScreen from '@/components/common/SplashScreen';
@@ -42,6 +42,13 @@ const AppContent: React.FC = () => {
       <PWAInstallPrompt />
       {/* First-time-use camera & GPS permission onboarding (signed-in only) */}
       {user && <PermissionPrimer />}
+      <Suspense
+        fallback={
+          <div className="flex h-screen w-screen items-center justify-center bg-background">
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          </div>
+        }
+      >
       <Routes>
         {/* Public Routes (Login, registration panels) */}
         {routes
@@ -68,16 +75,26 @@ const AppContent: React.FC = () => {
           }
         />
       </Routes>
+      </Suspense>
       <Toaster />
     </RouteGuard>
   );
 };
 
 const App: React.FC = () => {
-  const [splashDone, setSplashDone] = useState(false);
+  // The animated splash plays once per browser session — replaying its
+  // ~3.4s sequence on every refresh made the whole app feel slow.
+  const [splashDone, setSplashDone] = useState(() => sessionStorage.getItem('psm_splash_shown') === '1');
 
   if (!splashDone) {
-    return <SplashScreen onFinish={() => setSplashDone(true)} />;
+    return (
+      <SplashScreen
+        onFinish={() => {
+          sessionStorage.setItem('psm_splash_shown', '1');
+          setSplashDone(true);
+        }}
+      />
+    );
   }
 
   return (

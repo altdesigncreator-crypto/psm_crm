@@ -54,6 +54,11 @@ async function loadProfile(userId: string): Promise<StaffUser> {
   };
 }
 
+// Set once biometrics (or a password login) verified this browser session —
+// sessionStorage survives refreshes but not closing the browser/app, so the
+// biometric prompt appears once per session instead of on every refresh.
+const BIO_UNLOCKED_FLAG = 'psm_bio_unlocked';
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<StaffUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -78,8 +83,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     supabase.auth.getSession().then(({ data }) => {
       const restoredUserId = data.session?.user.id ?? null;
       // Session came back from storage without the user typing anything —
-      // if they enrolled biometrics, offer the biometric sign-in gate.
-      if (restoredUserId && isBiometricEnabledFor(restoredUserId)) {
+      // if they enrolled biometrics, offer the biometric sign-in gate, but
+      // only once per browser session: a plain refresh after unlocking
+      // must not ask again.
+      if (
+        restoredUserId
+        && isBiometricEnabledFor(restoredUserId)
+        && sessionStorage.getItem(BIO_UNLOCKED_FLAG) !== restoredUserId
+      ) {
         setNeedsBiometricUnlock(true);
       }
       hydrate(restoredUserId).finally(() => {
@@ -107,8 +118,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const profile = await loadProfile(data.user.id);
     setUser(profile);
     // Signing in with email/password IS the authentication — never stack
-    // the biometric gate on top of it.
+    // the biometric gate on top of it, and count it as this session's unlock.
     setNeedsBiometricUnlock(false);
+    sessionStorage.setItem(BIO_UNLOCKED_FLAG, profile.id);
     await supabase.from('audit_logs').insert({ action: 'login', performed_by: profile.id });
     return profile;
   }, []);
@@ -120,9 +132,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await supabase.auth.signOut();
     setUser(null);
     setNeedsBiometricUnlock(false);
+    sessionStorage.removeItem(BIO_UNLOCKED_FLAG);
   }, [user]);
 
-  const completeBiometricUnlock = useCallback(() => setNeedsBiometricUnlock(false), []);
+  const completeBiometricUnlock = useCallback(() => {
+    setNeedsBiometricUnlock(false);
+    if (user?.id) sessionStorage.setItem(BIO_UNLOCKED_FLAG, user.id);
+  }, [user?.id]);
 
   const refreshProfile = useCallback(async () => {
     const { data } = await supabase.auth.getSession();

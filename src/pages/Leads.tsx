@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
-import * as XLSX from 'xlsx';
 import { supabase } from '@/db/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -159,6 +158,7 @@ export default function Leads() {
     if (!file || !user?.id) return;
     setImporting(true);
     try {
+      const XLSX = await import('xlsx'); // heavy — loaded only when importing
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array' });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];

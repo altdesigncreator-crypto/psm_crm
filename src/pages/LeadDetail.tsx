@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   ArrowLeft, User, Phone, Mail, MapPin, Building2, DollarSign, Target, Calendar,
-  TrendingUp, MessageSquare, Navigation, Clock, FileText, Sparkles, Loader2,
+  TrendingUp, MessageSquare, Navigation, Clock, FileText, Loader2,
   Plus, AlertTriangle, ArrowRightLeft, History, Trash2,
 } from 'lucide-react';
 import {
@@ -55,7 +55,6 @@ export default function LeadDetail() {
   const [mapOpen, setMapOpen] = useState(false);
   const { colors: statusColors } = useStatusColors();
   const { profiles, nameOf } = useProfiles();
-  const [aiScoring, setAiScoring] = useState(false);
 
   const [followUpForm, setFollowUpForm] = useState({ type: 'phone', status: 'interested', notes: '' });
   const [savingFollowUp, setSavingFollowUp] = useState(false);
@@ -129,37 +128,6 @@ export default function LeadDetail() {
       toast.error('Could not delete the lead.');
       setDeleting(false);
       setDeleteOpen(false);
-    }
-  };
-
-  const handleAiRescore = async () => {
-    setAiScoring(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('lead-score', {
-        body: {
-          lead: {
-            name: lead.name, phone: lead.phone, email: lead.email || undefined,
-            interestType: lead.interest_type || undefined, propertyType: lead.property_type || undefined,
-            preferredProject: lead.preferred_project || undefined, budgetRange: lead.budget_range || undefined,
-            purpose: lead.purpose || undefined, leadSource: lead.lead_source || undefined,
-            currentLocation: lead.current_location || undefined, remarks: lead.remarks || undefined,
-          },
-        },
-      });
-      if (error || !data?.score) throw new Error(error?.message || 'AI scoring failed.');
-
-      const { error: updateErr } = await supabase
-        .from('leads')
-        .update({ lead_grade: data.score, lead_grade_reason: data.reasoning })
-        .eq('id', lead.id);
-      if (updateErr) throw updateErr;
-
-      setLead((prev) => (prev ? { ...prev, lead_grade: data.score, lead_grade_reason: data.reasoning } : prev));
-      toast.success(`AI re-score: ${data.score} — ${data.reasoning}`);
-    } catch (err: any) {
-      toast.error(err.message || 'AI scoring failed.');
-    } finally {
-      setAiScoring(false);
     }
   };
 
@@ -298,13 +266,6 @@ export default function LeadDetail() {
               <DetailRow label="Email" value={lead.email} icon={<Mail className="w-4 h-4" />} />
               <DetailRow label="Current Location" value={lead.current_location} icon={<MapPin className="w-4 h-4" />} />
               <DetailRow label="Created" value={createdDate} icon={<Clock className="w-4 h-4" />} />
-              <button
-                type="button" onClick={handleAiRescore} disabled={aiScoring}
-                className="w-full h-11 flex items-center justify-center gap-2 rounded-xl border border-primary/30 text-primary bg-primary/5 active:bg-primary/10 active:scale-[0.98] transition-all text-sm font-medium disabled:opacity-40 mt-1"
-              >
-                {aiScoring ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                {aiScoring ? 'Scoring…' : 'AI Re-score'}
-              </button>
               {lead.lead_grade_reason && (
                 <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-2 py-1.5">{lead.lead_grade_reason}</p>
               )}

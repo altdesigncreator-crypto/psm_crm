@@ -106,7 +106,10 @@ export default function CheckIn() {
         photoUrl = supabase.storage.from('checkin-photos').getPublicUrl(path).data.publicUrl;
       }
 
-      const { error } = await supabase.from('check_ins').insert({
+      // The DB trigger (compute_checkin_status) flips status to 'late' when
+      // the time is past the department's window — read the row back so we
+      // can tell the user whether approval is now required.
+      const { data: inserted, error } = await supabase.from('check_ins').insert({
         employee_id: user.id,
         department_code: department || 'house',
         latitude: lat,
@@ -114,14 +117,18 @@ export default function CheckIn() {
         photo_url: photoUrl,
         notes: description.trim(),
         status: 'on_time',
-      });
+      }).select('*').single();
       if (error) {
         if (error.code === '23505') throw new Error('You have already checked in today.');
         throw error;
       }
 
       setSuccess(true);
-      toast.success('Check-in submitted.');
+      if (inserted?.is_late) {
+        toast.warning('You checked in late — it is now waiting for Super Admin approval.');
+      } else {
+        toast.success('Check-in submitted.');
+      }
       setTimeout(() => { setDescription(''); setPhoto(null); setPhotoFile(null); setSuccess(false); }, 2500);
     } catch (err: any) {
       toast.error(err.message || 'Check-in failed.');
@@ -266,7 +273,18 @@ export default function CheckIn() {
                     <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0"><MapPin className="w-4 h-4 text-primary" /></div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-foreground truncate">{h.notes || '—'}</p>
-                      <span className="text-xs text-muted-foreground">{h.check_in_date} · {h.status}</span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs text-muted-foreground">{h.check_in_date}</span>
+                        {h.is_late ? (
+                          h.approved_by ? (
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-success/10 text-success border border-success/20">Late · Approved</span>
+                          ) : (
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-warning/10 text-warning border border-warning/20">Late · Pending approval</span>
+                          )
+                        ) : (
+                          <span className="text-xs text-muted-foreground">· {h.status}</span>
+                        )}
+                      </div>
                     </div>
                     {h.latitude && h.longitude && (
                       <button type="button" onClick={() => { setHistoryMapCoords([{ lat: h.latitude!, lng: h.longitude!, label: h.notes || '' }]); setHistoryMapOpen(true); }} className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center active:bg-muted/80 transition-colors shrink-0">

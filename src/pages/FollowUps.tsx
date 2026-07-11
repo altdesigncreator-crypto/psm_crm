@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import * as XLSX from 'xlsx';
 import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
@@ -207,7 +206,8 @@ export default function FollowUps() {
     ];
   });
 
-  const exportAsExcel = () => {
+  const exportAsExcel = async () => {
+    const XLSX = await import('xlsx'); // heavy — loaded only when exporting
     const data = buildExportRows().map((row) => Object.fromEntries(EXPORT_HEADERS.map((h, i) => [h, row[i]])));
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -238,6 +238,7 @@ export default function FollowUps() {
     if (!file || !user?.id) return;
     setImporting(true);
     try {
+      const XLSX = await import('xlsx'); // heavy — loaded only when importing
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array' });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
