@@ -1,10 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Download, X, Share, SquarePlus } from 'lucide-react';
-
-interface BeforeInstallPromptEvent extends Event {
-  prompt(): Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
+import { usePwaInstall } from '@/hooks/usePwaInstall';
 
 const DISMISS_KEY = 'pwa-install-dismissed';
 
@@ -22,24 +18,18 @@ function isSafariBrowser() {
 }
 
 /** Chrome/Android fires `beforeinstallprompt` and can trigger the native
- * install dialog directly. iOS Safari never fires that event — there is no
- * programmatic install API — so home-screen installation there is always a
- * manual "Share → Add to Home Screen" action we can only walk the user
- * through with instructions. */
+ * install dialog directly (see src/hooks/usePwaInstall.ts, also used by the
+ * always-visible header button in AppLayout.tsx). iOS Safari never fires
+ * that event — there is no programmatic install API — so home-screen
+ * installation there is always a manual "Share → Add to Home Screen" action
+ * we can only walk the user through with instructions. */
 export default function PWAInstallPrompt() {
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const { canInstall, isStandalone, promptInstall } = usePwaInstall();
   const [visible, setVisible] = useState(false);
   const [iosVisible, setIosVisible] = useState(false);
-  const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
-    // Hide if already installed (standalone) or previously dismissed within 24h
-    const standalone = window.matchMedia('(display-mode: standalone)').matches
-      || (window.navigator as any).standalone === true; // iOS-specific flag
-    if (standalone) {
-      setIsStandalone(true);
-      return;
-    }
+    if (isStandalone) return;
     const dismissedAt = sessionStorage.getItem(DISMISS_KEY);
     if (dismissedAt) {
       const hoursSince = (Date.now() - parseInt(dismissedAt, 10)) / 3600000;
@@ -48,27 +38,15 @@ export default function PWAInstallPrompt() {
 
     if (isIOSDevice() && isSafariBrowser()) {
       setIosVisible(true);
-      return;
     }
+  }, [isStandalone]);
 
-    const handleBeforeInstall = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
-      setVisible(true);
-    };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
-    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
-  }, []);
+  useEffect(() => {
+    if (canInstall) setVisible(true);
+  }, [canInstall]);
 
   const handleInstall = async () => {
-    if (!deferredPrompt) return;
-    await deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') {
-      setIsStandalone(true);
-    }
-    setDeferredPrompt(null);
+    await promptInstall();
     setVisible(false);
   };
 

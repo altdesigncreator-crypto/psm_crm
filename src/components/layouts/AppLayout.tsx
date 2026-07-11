@@ -3,10 +3,12 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotifications, type Notification } from '@/contexts/NotificationsContext';
 import { canAccessRoute, getRoleLabel, getDepartmentLabel, type RouteKey } from '@/lib/permissions';
+import { usePwaInstall } from '@/hooks/usePwaInstall';
 import {
   LayoutDashboard, UserPlus, Users, LogOut, Menu, Bell, Footprints, Image, Shield,
   Footprints as CheckInIcon, CalendarDays, BarChart3, Plus, Home, MapPin,
   Settings as SettingsIcon, BarChart3 as AnalyticsIcon, Thermometer, Kanban, Briefcase, ListChecks,
+  Download,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -89,6 +91,7 @@ function NotificationItem({ n, onClick }: { n: Notification; onClick: () => void
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, role, department, logout } = useAuth();
   const { notifications, unreadCount, markAllAsRead } = useNotifications();
+  const { canInstall, promptInstall } = usePwaInstall();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -233,24 +236,36 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <span className="text-[10px] text-primary-foreground/60 tracking-wide">Properties</span>
             </div>
           </div>
-          <Popover open={notifOpenMobile} onOpenChange={setNotifOpenMobile}>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon" className="relative h-10 w-10" onClick={() => handleOpenNotifs(setNotifOpenMobile)}>
-                <Bell className="w-5 h-5 text-foreground" />
-                {unreadCount > 0 && (
-                  <>
-                    <span className="absolute top-0.5 right-0.5 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center">{unreadCount > 9 ? '9+' : unreadCount}</span>
-                    <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-destructive rounded-full animate-ping" />
-                  </>
-                )}
+          <div className="flex items-center gap-1">
+            {canInstall && (
+              <Button variant="ghost" size="icon" className="h-10 w-10 text-primary" onClick={promptInstall} aria-label="Install app" title="Install app">
+                <Download className="w-5 h-5" />
               </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-3" align="end">{renderNotifDropdown(setNotifOpenMobile)}</PopoverContent>
-          </Popover>
+            )}
+            <Popover open={notifOpenMobile} onOpenChange={setNotifOpenMobile}>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" className="relative h-10 w-10" onClick={() => handleOpenNotifs(setNotifOpenMobile)}>
+                  <Bell className="w-5 h-5 text-foreground" />
+                  {unreadCount > 0 && (
+                    <>
+                      <span className="absolute top-0.5 right-0.5 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center">{unreadCount > 9 ? '9+' : unreadCount}</span>
+                      <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-destructive rounded-full animate-ping" />
+                    </>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-3" align="end">{renderNotifDropdown(setNotifOpenMobile)}</PopoverContent>
+            </Popover>
+          </div>
         </header>
 
         {/* Tablet/desktop top bar with notification bell */}
-        <header className="hidden md:flex items-center justify-end px-6 py-3 border-b border-border shrink-0">
+        <header className="hidden md:flex items-center justify-end gap-2 px-6 py-3 border-b border-border shrink-0">
+          {canInstall && (
+            <Button variant="outline" size="sm" className="h-9 gap-2 text-primary border-primary/30 hover:bg-primary/5" onClick={promptInstall}>
+              <Download className="w-4 h-4" /> Install App
+            </Button>
+          )}
           <Popover open={notifOpenDesktop} onOpenChange={setNotifOpenDesktop}>
             <PopoverTrigger asChild>
               <Button variant="ghost" size="icon" className="relative h-10 w-10" onClick={() => handleOpenNotifs(setNotifOpenDesktop)}>
