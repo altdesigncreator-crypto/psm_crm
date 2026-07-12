@@ -1,4 +1,4 @@
-import React, { useState, Suspense } from 'react';
+import React, { Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import IntersectObserver from '@/components/common/IntersectObserver';
 import SplashScreen from '@/components/common/SplashScreen';
@@ -17,15 +17,11 @@ import { routes } from './routes';
 const AppContent: React.FC = () => {
   const { user, loading, needsBiometricUnlock, completeBiometricUnlock } = useAuth();
 
-  // Wait for the Supabase auth session to settle before rendering routes
+  // The branded intro doubles as the loading screen while the Supabase
+  // auth session settles — one loading experience, gone as soon as the
+  // session is ready.
   if (loading) {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center bg-[#F8FAFC]">
-        <div className="animate-pulse text-sm font-medium text-muted-foreground">
-          Workspace Synchronization...
-        </div>
-      </div>
-    );
+    return <SplashScreen />;
   }
 
   // A "Remember me" session was silently restored on this app load and the
@@ -82,21 +78,6 @@ const AppContent: React.FC = () => {
 };
 
 const App: React.FC = () => {
-  // The animated splash plays once per browser session — replaying its
-  // ~3.4s sequence on every refresh made the whole app feel slow.
-  const [splashDone, setSplashDone] = useState(() => sessionStorage.getItem('psm_splash_shown') === '1');
-
-  if (!splashDone) {
-    return (
-      <SplashScreen
-        onFinish={() => {
-          sessionStorage.setItem('psm_splash_shown', '1');
-          setSplashDone(true);
-        }}
-      />
-    );
-  }
-
   return (
     <AuthProvider>
       <Router>
