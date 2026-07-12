@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useDepartments } from '@/hooks/useDepartments';
-import { canAddFollowUp, isAdminOrAbove } from '@/lib/permissions';
+import { canAddFollowUp, isAdminOrAbove, isDepartmentScoped } from '@/lib/permissions';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -419,13 +419,17 @@ export default function FollowUps() {
               <Input placeholder="Search by customer, phone, or sales person…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 h-12" />
             </div>
             <div className="flex gap-2">
-              <Select value={deptFilter} onValueChange={setDeptFilter}>
-                <SelectTrigger className="w-full md:w-[160px] h-12"><Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Department" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All departments</SelectItem>
-                  {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
-                </SelectContent>
-              </Select>
+              {/* Dept-scoped roles (admin/manager/sale) only see their own
+                  department via RLS — no point offering the filter. */}
+              {!isDepartmentScoped(role) && (
+                <Select value={deptFilter} onValueChange={setDeptFilter}>
+                  <SelectTrigger className="w-full md:w-[160px] h-12"><Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Department" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All departments</SelectItem>
+                    {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              )}
               <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger className="w-full md:w-[180px] h-12"><SelectValue placeholder="Follow-up status" /></SelectTrigger>
                 <SelectContent>

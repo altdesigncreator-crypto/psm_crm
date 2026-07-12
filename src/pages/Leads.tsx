@@ -18,7 +18,7 @@ import { LEAD_STAGES, type Lead } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
-import { isManagerOrAbove, isExec, getDepartmentLabel } from '@/lib/permissions';
+import { isManagerOrAbove, isExec, isDepartmentScoped, getDepartmentLabel } from '@/lib/permissions';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -63,6 +63,9 @@ export default function Leads() {
   // Deleting leads is exec-only (boss / super admin) — matches the
   // leads_delete RLS policy (is_exec()) in database/crm.sql.
   const canDelete = isExec(role);
+  // Admin/Manager/Sale only ever see their own department (RLS), so the
+  // department filter is meaningless noise for them.
+  const showDeptFilter = !isDepartmentScoped(role);
 
   const importFileRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
@@ -307,6 +310,7 @@ export default function Leads() {
                       deptFilter={deptFilter} setDeptFilter={setDeptFilter}
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
                       leads={leads} uniqueAgents={uniqueAgents} departments={departments}
+                      showDept={showDeptFilter}
                     />
                     <SheetClose asChild>
                       <button type="button" className="w-full h-12 rounded-lg bg-primary text-primary-foreground font-medium text-sm transition-colors hover:bg-primary/90 active:bg-primary/80">
@@ -342,16 +346,18 @@ export default function Leads() {
                   ))}
                 </SelectContent>
               </Select>
-              <Select value={deptFilter} onValueChange={setDeptFilter}>
-                <SelectTrigger className="w-[140px] h-11">
-                  <Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
-                  <SelectValue placeholder="Department" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All departments</SelectItem>
-                  {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
-                </SelectContent>
-              </Select>
+              {showDeptFilter && (
+                <Select value={deptFilter} onValueChange={setDeptFilter}>
+                  <SelectTrigger className="w-[140px] h-11">
+                    <Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
+                    <SelectValue placeholder="Department" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All departments</SelectItem>
+                    {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              )}
               <Select value={agentFilter} onValueChange={setAgentFilter}>
                 <SelectTrigger className="w-[180px] h-11">
                   <UserIcon className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
@@ -617,7 +623,7 @@ export default function Leads() {
   );
 }
 
-function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProjectFilter, deptFilter, setDeptFilter, agentFilter, setAgentFilter, leads, uniqueAgents, departments }: any) {
+function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProjectFilter, deptFilter, setDeptFilter, agentFilter, setAgentFilter, leads, uniqueAgents, departments, showDept = true }: any) {
   return (
     <>
       <div className="space-y-2">
@@ -642,16 +648,18 @@ function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProject
           </SelectContent>
         </Select>
       </div>
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Department</label>
-        <Select value={deptFilter} onValueChange={setDeptFilter}>
-          <SelectTrigger className="h-12 w-full"><SelectValue placeholder="Select department" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All departments</SelectItem>
-            {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
-          </SelectContent>
-        </Select>
-      </div>
+      {showDept && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">Department</label>
+          <Select value={deptFilter} onValueChange={setDeptFilter}>
+            <SelectTrigger className="h-12 w-full"><SelectValue placeholder="Select department" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All departments</SelectItem>
+              {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
       <div className="space-y-2">
         <label className="text-sm font-medium text-foreground">Sales Person</label>
         <Select value={agentFilter} onValueChange={setAgentFilter}>

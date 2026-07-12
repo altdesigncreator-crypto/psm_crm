@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProfiles } from '@/hooks/useProfiles';
-import { isExec, isManagerOrAbove, getDepartmentLabel } from '@/lib/permissions';
+import { isExec, isManagerOrAbove, isDepartmentScoped, getDepartmentLabel } from '@/lib/permissions';
 import { useDepartments } from '@/hooks/useDepartments';
 import type { CheckIn as CheckInRecord } from '@/types';
 
@@ -141,13 +141,16 @@ export default function CheckInGallery() {
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
             <Filter className="w-4 h-4 text-muted-foreground shrink-0" />
-            <Select value={deptFilter} onValueChange={setDeptFilter}>
-              <SelectTrigger className="h-11 w-32 text-sm"><SelectValue placeholder="Department" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All departments</SelectItem>
-                {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
-              </SelectContent>
-            </Select>
+            {/* Dept-scoped roles only see their own department via RLS */}
+            {!isDepartmentScoped(role) && (
+              <Select value={deptFilter} onValueChange={setDeptFilter}>
+                <SelectTrigger className="h-11 w-32 text-sm"><SelectValue placeholder="Department" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All departments</SelectItem>
+                  {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            )}
             <Select value={agentFilter} onValueChange={setAgentFilter}>
               <SelectTrigger className="h-11 w-36 text-sm"><SelectValue placeholder="Employee" /></SelectTrigger>
               <SelectContent>
