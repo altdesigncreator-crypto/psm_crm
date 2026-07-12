@@ -148,11 +148,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // scrolling the main content never scrolls the nav, and vice versa.
   const sidebarContent = (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-3 px-5 py-5 border-b border-white/10 shrink-0">
-        <div className="flex flex-col">
-          <span className="text-white font-bold text-lg leading-tight tracking-tight">PSM</span>
-          <span className="text-[#D4AF37] text-[10px] leading-tight tracking-wide font-medium">Properties</span>
-        </div>
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-white/10 shrink-0">
+        <img src="/logo-dark.png" alt="PSM Properties" className="h-12 w-auto" draggable={false} />
       </div>
 
       <ScrollArea className="flex-1 min-h-0 px-3 py-4">
@@ -235,10 +232,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <Button variant="ghost" size="icon" className="text-foreground h-10 w-10" onClick={() => setMobileOpen(true)}><Menu className="w-5 h-5" /></Button>
               </SheetTrigger>
             </Sheet>
-            <div className="flex flex-col leading-tight">
-              <span className="font-bold text-sm tracking-tight">PSM</span>
-              <span className="text-[10px] text-primary-foreground/60 tracking-wide">Properties</span>
-            </div>
+            {/* Light/dark wordmark swap follows the app's class-based theme */}
+            <img src="/logo.png" alt="PSM Properties" className="h-9 w-auto dark:hidden" draggable={false} />
+            <img src="/logo-dark.png" alt="PSM Properties" className="h-9 w-auto hidden dark:block" draggable={false} />
           </div>
           <Popover open={notifOpenMobile} onOpenChange={setNotifOpenMobile}>
             <PopoverTrigger asChild>

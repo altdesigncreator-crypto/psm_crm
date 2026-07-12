@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Building2 } from 'lucide-react';
 
 const LOAD_STAGES = [
   { at: 0, label: 'Connecting…' },
@@ -81,18 +80,16 @@ const SplashScreen: React.FC<{ onFinish?: () => void }> = ({ onFinish }) => {
           entered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
         }`}
       >
-        {/* Brand mark with a soft breathing glow */}
-        <div className="relative mb-6">
-          <div className={`absolute inset-0 rounded-2xl blur-xl opacity-40 animate-pulse ${isDark ? 'bg-[#D4AF37]/40' : 'bg-[#0463CA]/30'}`} />
-          <div className="relative w-16 h-16 rounded-2xl gradient-primary flex items-center justify-center shadow-lg ring-1 ring-white/15">
-            <Building2 className="w-8 h-8 text-white" />
-          </div>
+        {/* Brand wordmark with a soft breathing glow */}
+        <div className="relative">
+          <div className={`absolute inset-4 rounded-full blur-2xl opacity-30 animate-pulse ${isDark ? 'bg-[#5AA4E4]/50' : 'bg-[#0463CA]/30'}`} />
+          <img
+            src={isDark ? '/logo-dark.png' : '/logo.png'}
+            alt="PSM Properties"
+            className="relative w-52 h-auto"
+            draggable={false}
+          />
         </div>
-
-        <h1 className={`text-2xl font-bold tracking-tight ${textClass}`}>PSM Sale CRM</h1>
-        <p className={`text-[11px] uppercase tracking-[0.25em] font-medium mt-1.5 ${isDark ? 'text-[#D4AF37]' : 'text-[#0463CA]'}`}>
-          Properties
-        </p>
 
         {/* Progress */}
         <div className="w-64 mt-10">

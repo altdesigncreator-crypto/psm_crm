@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { verifyBiometric } from '@/lib/biometricAuth';
 import { Button } from '@/components/ui/button';
-import { Building2, FingerprintPattern, Loader2, Mail } from 'lucide-react';
+import { FingerprintPattern, Loader2, Mail } from 'lucide-react';
 
 interface BiometricLockProps {
   onUnlock: () => void;
@@ -39,9 +39,7 @@ export default function BiometricLock({ onUnlock }: BiometricLockProps) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] px-4">
       <div className="w-full max-w-sm animate-fade-in-up text-center bg-white rounded-lg shadow-card p-8 space-y-6">
-        <div className="w-14 h-14 rounded-xl gradient-primary flex items-center justify-center mx-auto shadow-card">
-          <Building2 className="w-7 h-7 text-white" />
-        </div>
+        <img src="/logo.png" alt="PSM Properties" className="h-16 w-auto mx-auto" draggable={false} />
         <div>
           <h1 className="text-lg font-semibold text-foreground">Welcome back{user ? `, ${user.name}` : ''}</h1>
           <p className="text-sm text-muted-foreground mt-1">Choose how you want to sign in</p>
