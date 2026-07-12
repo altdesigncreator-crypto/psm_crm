@@ -14,8 +14,12 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import {
   ArrowLeft, User, Mail, Shield, Building2, Moon, Bell, Info, ChevronDown, Phone, MapPin,
-  HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern, KeyRound, Eye, EyeOff,
+  HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern, KeyRound, Eye, EyeOff, Trash2,
 } from 'lucide-react';
+import {
+  AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { toast } from 'sonner';
 
@@ -41,6 +45,10 @@ export default function Settings() {
   const [pwConfirm, setPwConfirm] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [changingPw, setChangingPw] = useState(false);
+
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   useEffect(() => {
     isPlatformAuthenticatorAvailable().then(setBiometricSupported);
@@ -105,6 +113,36 @@ export default function Settings() {
       setPwCurrent(''); setPwNew(''); setPwConfirm(''); setShowPw(false);
     } finally {
       setChangingPw(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!user?.email) return;
+    if (!deletePassword) { toast.error('Enter your password to confirm.'); return; }
+    setIsDeletingAccount(true);
+    try {
+      // Confirm it's really the account owner at the keyboard.
+      const { error: verifyErr } = await supabase.auth.signInWithPassword({ email: user.email, password: deletePassword });
+      if (verifyErr) { toast.error('Password is incorrect.'); return; }
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const { data, error } = await supabase.functions.invoke('delete-my-account', {
+        body: {},
+        headers: { Authorization: `Bearer ${sessionData.session?.access_token}` },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Could not delete your account.');
+
+      disableBiometric(user.id);
+      toast.success('Your account has been deleted.');
+      // Plain signOut (not context logout) — the profile row is gone, so the
+      // audit-logged logout would fail its foreign key.
+      await supabase.auth.signOut();
+    } catch (err: any) {
+      toast.error(err.message || 'Could not delete your account.');
+    } finally {
+      setIsDeletingAccount(false);
+      setDeleteAccountOpen(false);
+      setDeletePassword('');
     }
   };
 
@@ -241,8 +279,65 @@ export default function Settings() {
               </div>
             ))}
           </div>
+
+          {/* Danger zone — Boss/Super Admin can't self-delete (the server
+              enforces this too); their accounts are managed via Staff. */}
+          {!isExec(role) && (
+            <>
+              <Separator />
+              <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3.5">
+                <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                  <Trash2 className="w-4 h-4 text-destructive" /> Delete Account
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Permanently deletes your login, check-ins and notifications. Leads you own must be
+                  reassigned by your manager first. This cannot be undone.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setDeleteAccountOpen(true)}
+                  className="w-full sm:w-auto h-10 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive gap-1.5"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete my account
+                </Button>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
+
+      {/* Delete-account confirmation — requires the password */}
+      <AlertDialog open={deleteAccountOpen} onOpenChange={(open) => { if (!isDeletingAccount) { setDeleteAccountOpen(open); if (!open) setDeletePassword(''); } }}>
+        <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete your account?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your login is removed permanently, along with your check-ins and notifications.
+              This cannot be undone. Enter your password to confirm.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            type="password"
+            value={deletePassword}
+            onChange={(e) => setDeletePassword(e.target.value)}
+            placeholder="Your password"
+            autoComplete="current-password"
+            className="h-11"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingAccount}>Cancel</AlertDialogCancel>
+            <Button
+              disabled={isDeletingAccount || !deletePassword}
+              onClick={handleDeleteAccount}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-10"
+            >
+              {isDeletingAccount ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+              {isDeletingAccount ? 'Deleting…' : 'Delete forever'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="md:hidden">
         <button type="button" onClick={() => toggleSection('preferences')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-all text-left">
