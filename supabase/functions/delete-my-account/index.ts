@@ -16,9 +16,9 @@ function json(body: unknown, status = 200) {
 
 /**
  * A staff member permanently deletes their OWN account (self-service, from
- * Settings). Boss/Super Admin cannot self-delete — that guards against the
- * system losing its global accounts; those are removed via User Management
- * by the other exec if ever needed.
+ * Settings). The Boss account cannot self-delete, and a Super Admin can
+ * only self-delete while at least one other active executive remains —
+ * the system must never lose its last global account.
  *
  * The client verifies the password (signInWithPassword) before calling;
  * this function only ever deletes the authenticated caller, so a stolen
@@ -57,8 +57,21 @@ serve(async (req) => {
       .single();
 
     if (meErr || !me) return json({ error: 'Profile not found.' }, 404);
-    if (['boss', 'super_admin'].includes(me.role)) {
-      return json({ error: 'Boss/Super Admin accounts cannot be self-deleted. Ask the other executive to remove the account via Staff management.' }, 403);
+    if (me.role === 'boss') {
+      return json({ error: 'The Boss account cannot be self-deleted.' }, 403);
+    }
+    if (me.role === 'super_admin') {
+      // A Super Admin may delete their own account, but never the system's
+      // last executive — that would lock everyone out of administration.
+      const { count: otherExecs } = await admin
+        .from('profiles')
+        .select('id', { count: 'exact', head: true })
+        .in('role', ['boss', 'super_admin'])
+        .eq('status', 'active')
+        .neq('id', id);
+      if ((otherExecs ?? 0) === 0) {
+        return json({ error: 'You are the last executive account. Create another Boss/Super Admin before deleting this one.' }, 409);
+      }
     }
 
     // Leads are business data — they must be reassigned, never lost.

@@ -338,9 +338,9 @@ export default function Settings() {
             ))}
           </div>
 
-          {/* Danger zone — Boss/Super Admin can't self-delete (the server
-              enforces this too); their accounts are managed via Staff. */}
-          {!isExec(role) && (
+          {/* Danger zone — the Boss account can't self-delete; a Super Admin
+              can, unless they're the last executive (server enforces both). */}
+          {role !== 'boss' && (
             <>
               <Separator />
               <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3.5">
