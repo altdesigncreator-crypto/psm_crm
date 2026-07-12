@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import {
   ArrowLeft, User, Mail, Shield, Building2, Moon, Bell, Info, ChevronDown, Phone, MapPin,
-  HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern, KeyRound, Eye, EyeOff, Trash2,
+  HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern, KeyRound, Eye, EyeOff, Trash2, Edit2,
 } from 'lucide-react';
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -27,7 +27,7 @@ export default function Settings() {
   const navigate = useNavigate();
   const { lang, setLang, t } = useTranslation();
   const { user, role, department, refreshProfile } = useAuth();
-  const { departments, createDepartment } = useDepartments();
+  const { departments, createDepartment, updateDepartment, deleteDepartment, deactivateDepartment } = useDepartments();
 
   const [name, setName] = useState(user?.name || '');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -60,6 +60,11 @@ export default function Settings() {
   const [newDeptCode, setNewDeptCode] = useState('');
   const [newDeptName, setNewDeptName] = useState('');
   const [savingDept, setSavingDept] = useState(false);
+  const [editingDeptCode, setEditingDeptCode] = useState<string | null>(null);
+  const [editingDeptName, setEditingDeptName] = useState('');
+  const [savingDeptEdit, setSavingDeptEdit] = useState(false);
+  const [deptDeleteTarget, setDeptDeleteTarget] = useState<{ code: string; name: string } | null>(null);
+  const [deletingDept, setDeletingDept] = useState(false);
 
   useEffect(() => {
     if (!isExec(role)) return;
@@ -175,6 +180,59 @@ export default function Settings() {
       toast.error(err?.message || 'Could not set up biometric unlock.');
     } finally {
       setBiometricBusy(false);
+    }
+  };
+
+  const handleRenameDepartment = async (code: string) => {
+    if (!editingDeptName.trim()) { toast.error('Enter a department name.'); return; }
+    setSavingDeptEdit(true);
+    const error = await updateDepartment(code, editingDeptName);
+    setSavingDeptEdit(false);
+    if (error) { toast.error(error.message || 'Could not rename the department.'); return; }
+    toast.success('Department renamed.');
+    setEditingDeptCode(null);
+  };
+
+  const handleDeleteDepartment = async () => {
+    if (!deptDeleteTarget) return;
+    const { code, name } = deptDeleteTarget;
+    setDeletingDept(true);
+    try {
+      // Current staff or leads in the department block deletion — those must
+      // be moved deliberately, not orphaned.
+      const [{ count: staffCount }, { count: leadCount }] = await Promise.all([
+        supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('department_code', code),
+        supabase.from('leads').select('id', { count: 'exact', head: true }).eq('department_code', code),
+      ]);
+      if ((staffCount ?? 0) > 0 || (leadCount ?? 0) > 0) {
+        toast.error(`Cannot delete ${name} — ${staffCount ?? 0} staff and ${leadCount ?? 0} leads still belong to it. Move them to another department first.`);
+        return;
+      }
+
+      const error = await deleteDepartment(code);
+      if (error) {
+        // FK violation: historical rows (old check-ins etc.) still reference
+        // the code — deactivate instead so history keeps its labels.
+        if ((error as { code?: string }).code === '23503') {
+          const softErr = await deactivateDepartment(code);
+          if (softErr) { toast.error(softErr.message || 'Could not remove the department.'); return; }
+          toast.success(`${name} had historical records, so it was deactivated instead — it no longer appears anywhere in the app.`);
+        } else {
+          toast.error(error.message || 'Could not delete the department.');
+          return;
+        }
+      } else {
+        toast.success(`${name} department deleted.`);
+      }
+      await supabase.from('audit_logs').insert({
+        action: 'department_deleted',
+        target_table: 'departments',
+        performed_by: user?.id,
+        old_value: { code, name },
+      });
+    } finally {
+      setDeletingDept(false);
+      setDeptDeleteTarget(null);
     }
   };
 
@@ -424,7 +482,7 @@ export default function Settings() {
             <CardContent className="space-y-6">
               <div className="space-y-3">
                 <p className="text-sm font-semibold text-foreground">Departments</p>
-                <p className="text-xs text-muted-foreground">Add new departments here — they immediately become available in every department picker across the app (leads, staff, check-ins, filters).</p>
+                <p className="text-xs text-muted-foreground">Add, rename or delete departments — changes apply immediately to every department picker across the app (leads, staff, check-ins, filters).</p>
                 <form onSubmit={handleAddDepartment} className="flex flex-col sm:flex-row gap-2">
                   <Input placeholder="Code (e.g. commercial)" value={newDeptCode} onChange={(e) => setNewDeptCode(e.target.value)} className="h-10 sm:w-40" />
                   <Input placeholder="Display name (e.g. Commercial)" value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="h-10 flex-1" />
@@ -432,9 +490,39 @@ export default function Settings() {
                     {savingDept ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add
                   </Button>
                 </form>
-                <div className="flex flex-wrap gap-2">
+                <div className="space-y-2">
                   {departments.map((d) => (
-                    <span key={d.code} className="text-xs font-medium px-2.5 py-1 rounded-full bg-muted text-muted-foreground border border-border">{d.name}</span>
+                    <div key={d.code} className="flex items-center gap-2 p-2.5 rounded-xl border border-border">
+                      {editingDeptCode === d.code ? (
+                        <>
+                          <Input
+                            value={editingDeptName}
+                            onChange={(e) => setEditingDeptName(e.target.value)}
+                            className="h-10 flex-1"
+                            autoFocus
+                          />
+                          <Button size="sm" disabled={savingDeptEdit} onClick={() => handleRenameDepartment(d.code)} className="h-10 shrink-0">
+                            {savingDeptEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+                          </Button>
+                          <Button size="sm" variant="ghost" disabled={savingDeptEdit} onClick={() => setEditingDeptCode(null)} className="h-10 shrink-0">
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-foreground truncate">{d.name}</p>
+                            <p className="text-[11px] text-muted-foreground">code: {d.code}</p>
+                          </div>
+                          <Button variant="ghost" size="icon" aria-label={`Rename ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => { setEditingDeptCode(d.code); setEditingDeptName(d.name); }}>
+                            <Edit2 className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" aria-label={`Delete ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => setDeptDeleteTarget({ code: d.code, name: d.name })}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -485,6 +573,31 @@ export default function Settings() {
           <p className="text-xs text-muted-foreground">Supabase + React · v1.0</p>
         </CardContent>
       </Card>
+
+      {/* Department delete confirmation (exec only — the section itself is gated) */}
+      <AlertDialog open={!!deptDeleteTarget} onOpenChange={(open) => !open && !deletingDept && setDeptDeleteTarget(null)}>
+        <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete the {deptDeleteTarget?.name} department?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Departments with staff or leads cannot be deleted — move them first. If old records
+              (like past check-ins) reference it, the department is deactivated instead of deleted,
+              which removes it from every picker while history keeps its labels.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingDept}>Cancel</AlertDialogCancel>
+            <Button
+              disabled={deletingDept}
+              onClick={handleDeleteDepartment}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-10"
+            >
+              {deletingDept ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+              {deletingDept ? 'Deleting…' : 'Delete'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
