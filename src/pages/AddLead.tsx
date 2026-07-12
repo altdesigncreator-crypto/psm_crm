@@ -369,9 +369,13 @@ export default function AddLead() {
             </CardContent>
           </Card>
 
-          <div className="md:static fixed bottom-16 left-0 right-0 z-40 px-4 py-3 bg-card/95 backdrop-blur-lg border-t border-border md:bg-transparent md:backdrop-blur-none md:border-none md:px-0 md:py-0">
-            {error && <div className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-3 mb-3 md:mb-0">{error}</div>}
-            <Button type="submit" disabled={submitting || checkingDuplicate} className="w-full h-14 md:h-12 gradient-primary hover:gradient-primary-hover text-white font-semibold text-base transition-all duration-300 hover:shadow-card-hover shadow-lg md:shadow-none active:scale-[0.98]">
+          {/* In normal flow (not fixed) — the old floating bar sat at a fixed
+              64px offset that collided with the bottom tab bar (which is
+              taller on phones with a safe-area inset) and hid the last form
+              fields behind it. */}
+          <div className="space-y-3">
+            {error && <div className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-3">{error}</div>}
+            <Button type="submit" disabled={submitting || checkingDuplicate} className="w-full h-14 md:h-12 gradient-primary hover:gradient-primary-hover text-white font-semibold text-base transition-all duration-300 hover:shadow-card-hover active:scale-[0.98]">
               {checkingDuplicate ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Checking for duplicates…</>) : submitting ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving…</>) : (<><CheckCircle2 className="w-4 h-4 mr-2" /> Save Lead</>)}
             </Button>
           </div>
