@@ -8,6 +8,7 @@ import {
   LayoutDashboard, UserPlus, Users, LogOut, Menu, Bell, Footprints, Image, Shield,
   Footprints as CheckInIcon, CalendarDays, BarChart3, Plus, Home, MapPin,
   Settings as SettingsIcon, BarChart3 as AnalyticsIcon, Thermometer, Kanban, Briefcase, ListChecks,
+  Activity as ActivityIcon,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -39,6 +40,7 @@ const NAV_SECTIONS: { tKey: string; items: NavItem[] }[] = [
   {
     tKey: 'nav.section.staff',
     items: [
+      { tKey: 'nav.teamActivity', path: '/team-activity', routeKey: 'team-activity', icon: ActivityIcon },
       { tKey: 'nav.kpiBoard', path: '/kpi-board', routeKey: 'kpi-board', icon: BarChart3 },
       { tKey: 'nav.staff', path: '/user-management', routeKey: 'user-management', icon: Briefcase },
     ],

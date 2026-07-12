@@ -117,7 +117,7 @@ export type RouteKey =
   | 'check-in' | 'check-in-gallery' | 'check-in-map'
   | 'notifications' | 'settings'
   | 'user-management' | 'role-management'
-  | 'kpi-board' | 'agent-detail' | 'analytics';
+  | 'kpi-board' | 'agent-detail' | 'analytics' | 'team-activity';
 
 /** Central route-level access map — the piece that was completely missing
  * before (routes.tsx only checked "is logged in", never role). */
@@ -147,6 +147,10 @@ export function canAccessRoute(role: RoleTier | null | undefined, routeKey: Rout
     case 'analytics':
       return isExec(role);
     case 'agent-detail':
+      return isManagerOrAbove(role);
+    case 'team-activity':
+      // Daily staff-activity monitor — management tool; RLS scopes what each
+      // tier sees (exec: all, admin/manager: own department).
       return isManagerOrAbove(role);
     default:
       return false;

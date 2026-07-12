@@ -242,6 +242,7 @@ export const translations: Record<string, Record<Lang, string>> = {
   'nav.pipeline': { mm: 'Pipeline', en: 'Pipeline' },
   'nav.checkInGallery': { mm: 'Check-In ဓာတ်ပုံများ', en: 'Check-In Gallery' },
   'nav.checkInMap': { mm: 'Check-In မြေပုံ', en: 'Check-In Map' },
+  'nav.teamActivity': { mm: 'နေ့စဉ် လုပ်ဆောင်ချက်', en: 'Daily Activity' },
   'nav.kpiBoard': { mm: 'KPI ဘုတ်', en: 'KPI Board' },
   'nav.staff': { mm: 'ဝန်ထမ်းများ', en: 'Staff' },
   'nav.roles': { mm: 'ရာထူးနှင့် ခွင့်ပြုချက်များ', en: 'Roles & Permissions' },
@@ -266,6 +267,11 @@ export const translations: Record<string, Record<Lang, string>> = {
   },
   'checkin.title': { mm: 'နေ့စဉ် Check-in', en: 'Daily Check-in' },
   'checkin.subtitle': { mm: 'လက်ရှိတည်နေရာမှ check-in လုပ်ရန်', en: 'Live site check-in' },
+  'activity.title': { mm: 'နေ့စဉ် လုပ်ဆောင်ချက်များ', en: 'Daily Activity' },
+  'activity.subtitle': {
+    mm: 'ဝန်ထမ်းတစ်ဦးချင်း နေ့အလိုက် ထည့်သွင်းသော lead များ၊ follow-up များနှင့် check-in များ',
+    en: 'What each staff member did on a given day — leads added, follow-ups made, check-in status',
+  },
 };
 
 export function t(key: string, lang: Lang): string {

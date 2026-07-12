@@ -5,7 +5,7 @@
  * app shell and serves a stale-while-revalidate strategy for static assets.
  */
 
-const CACHE_VERSION = 'v101';
+const CACHE_VERSION = 'v105';
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `dynamic-${CACHE_VERSION}`;
 
@@ -46,7 +46,24 @@ self.addEventListener('fetch', (event) => {
   // meaningful offline cache for live data.
   if (url.hostname.includes('supabase.co')) return;
 
-  if (url.pathname.match(/\.(js|css|png|jpg|jpeg|svg|woff2?|ttf|ico)$/) || url.pathname === '/' || url.pathname === '/index.html') {
+  // App shell (HTML) is network-first: serving it cache-first left users
+  // running an old build until the cache version bumped — new features
+  // simply never appeared. The cache is only an offline fallback now.
+  if (request.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(STATIC_CACHE).then((cache) => cache.put(request, clone));
+          return response;
+        })
+        .catch(() => caches.match(request).then((cached) => cached || caches.match('/index.html')))
+    );
+    return;
+  }
+
+  // Hashed build assets are immutable — cache-first is safe for them.
+  if (url.pathname.match(/\.(js|css|png|jpg|jpeg|svg|woff2?|ttf|ico)$/)) {
     event.respondWith(
       caches.match(request).then((cached) => {
         if (cached) {

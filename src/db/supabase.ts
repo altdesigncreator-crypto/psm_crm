@@ -12,7 +12,19 @@ const REMEMBER_ME_FLAG = 'psm_remember_me';
 const rememberAwareStorage = {
   getItem: (key: string) => {
     const remembered = localStorage.getItem(REMEMBER_ME_FLAG) === 'true';
-    return (remembered ? localStorage : sessionStorage).getItem(key);
+    const primary = remembered ? localStorage : sessionStorage;
+    const secondary = remembered ? sessionStorage : localStorage;
+    const value = primary.getItem(key);
+    if (value !== null) return value;
+    // Heal flag/location mismatches (flag flipped between sessions, or a
+    // session written by an older build): migrate the session to where
+    // reads look now instead of silently "forgetting" the login.
+    const fallback = secondary.getItem(key);
+    if (fallback !== null) {
+      primary.setItem(key, fallback);
+      secondary.removeItem(key);
+    }
+    return fallback;
   },
   setItem: (key: string, value: string) => {
     const remembered = localStorage.getItem(REMEMBER_ME_FLAG) === 'true';

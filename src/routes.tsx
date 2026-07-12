@@ -23,6 +23,7 @@ const PipelineBoard = lazy(() => import('./pages/PipelineBoard'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
 const CheckInMap = lazy(() => import('./pages/CheckInMap'));
 const RoleManagement = lazy(() => import('./pages/RoleManagement'));
+const TeamActivity = lazy(() => import('./pages/TeamActivity'));
 
 export interface RouteConfig {
   name: string;
@@ -153,6 +154,16 @@ export const routes: RouteConfig[] = [
     element: (
       <ProtectedRoute>
         <RoleManagement />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    name: 'Daily Activity',
+    path: '/team-activity',
+    routeKey: 'team-activity',
+    element: (
+      <ProtectedRoute>
+        <TeamActivity />
       </ProtectedRoute>
     ),
   },

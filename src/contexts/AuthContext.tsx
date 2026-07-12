@@ -30,6 +30,15 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/** Thrown by loadProfile. `definitive` = the account truly can't be used
+ * (missing or deactivated) — as opposed to a transient network/API failure
+ * that should never cost the user their remembered session. */
+class ProfileLoadError extends Error {
+  constructor(message: string, public definitive: boolean) {
+    super(message);
+  }
+}
+
 async function loadProfile(userId: string): Promise<StaffUser> {
   const { data, error } = await supabase
     .from('profiles')
@@ -38,10 +47,13 @@ async function loadProfile(userId: string): Promise<StaffUser> {
     .single();
 
   if (error || !data) {
-    throw new Error('Could not load your staff profile. Contact your administrator.');
+    // PGRST116 = zero rows: the profile genuinely doesn't exist. Anything
+    // else (network drop, timeout, transient API error) is retryable.
+    const missing = (error as { code?: string } | null)?.code === 'PGRST116';
+    throw new ProfileLoadError('Could not load your staff profile. Contact your administrator.', missing);
   }
   if (data.status !== 'active') {
-    throw new Error('Your account has been deactivated. Contact your administrator.');
+    throw new ProfileLoadError('Your account has been deactivated. Contact your administrator.', true);
   }
 
   return {
@@ -69,13 +81,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       return;
     }
-    try {
-      const profile = await loadProfile(sessionUserId);
-      setUser(profile);
-    } catch {
-      setUser(null);
-      await supabase.auth.signOut();
+    // Retry transient failures — a flaky mobile connection on app start used
+    // to hit the catch below and sign the user out, permanently destroying
+    // the "Remember me" session over a hiccup.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const profile = await loadProfile(sessionUserId);
+        setUser(profile);
+        return;
+      } catch (err) {
+        if (err instanceof ProfileLoadError && err.definitive) {
+          // Account is really gone/deactivated — only then drop the session.
+          setUser(null);
+          await supabase.auth.signOut();
+          return;
+        }
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
+      }
     }
+    // Still failing after retries (offline?): show the login screen but KEEP
+    // the stored session so the next launch can restore it.
+    setUser(null);
   }, []);
 
   useEffect(() => {
