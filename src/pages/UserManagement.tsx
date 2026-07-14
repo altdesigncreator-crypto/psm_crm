@@ -11,8 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import {
   User as UserIcon, Search, Filter, SlidersHorizontal, Download, FileSpreadsheet, FileText,
-  Briefcase, Phone, Mail, ShieldAlert, UserPlus, Loader2, Edit2, AlertTriangle,
-  Briefcase, Phone, Mail, ShieldAlert, UserPlus, Loader2, Edit2, KeyRound, Trash2,
+  Briefcase, Phone, Mail, ShieldAlert, UserPlus, Loader2, Edit2, AlertTriangle, KeyRound, Trash2,
 } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -173,6 +172,8 @@ export default function UserManagement() {
     if (error) { toast.error(error.message || 'Could not issue warning.'); return; }
     toast.success(`Warning issued to ${warnTarget.name}.`);
     setWarnTarget(null);
+  };
+
   const handleResetPassword = async () => {
     if (resetPassword.length < 6) { toast.error('New password must be at least 6 characters.'); return; }
     setIsResetting(true);
