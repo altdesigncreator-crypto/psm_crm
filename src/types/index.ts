@@ -8,6 +8,16 @@ export type CheckInStatus = 'on_time' | 'late' | 'absent' | 'leave' | 'field_wor
 export type WarningReason = 'followup_overdue' | 'customer_complaint' | 'no_activity' | 'late_checkin' | 'pipeline_stalled' | 'missed_appointment';
 export type NotificationType = 'new_lead_assigned' | 'followup_reminder' | 'appointment_reminder' | 'site_visit_reminder' | 'booking_confirmation' | 'warning_notification' | 'checkin_reminder';
 export type ApptStatus = 'scheduled' | 'completed' | 'missed' | 'cancelled';
+export type SystemMessageType = 'info' | 'warning' | 'maintenance' | 'critical';
+
+export interface SystemMessage {
+  id: string;
+  message: string;
+  type: SystemMessageType;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface Profile {
   id: string;
@@ -198,6 +208,13 @@ export const WARNING_REASONS: { value: WarningReason; label: string }[] = [
   { value: 'late_checkin', label: 'Late Check-in' },
   { value: 'pipeline_stalled', label: 'Pipeline Stalled' },
   { value: 'missed_appointment', label: 'Missed Appointment' },
+];
+
+export const SYSTEM_MESSAGE_TYPES: { value: SystemMessageType; label: string }[] = [
+  { value: 'info', label: 'Info' },
+  { value: 'warning', label: 'Warning' },
+  { value: 'maintenance', label: 'Maintenance' },
+  { value: 'critical', label: 'Critical' },
 ];
 
 export const LEAD_GRADES: { value: LeadGrade; label: string }[] = [

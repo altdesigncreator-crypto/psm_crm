@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useNotifications, type Notification } from '@/contexts/NotificationsContext';
 import { canAccessRoute, getRoleLabel, getDepartmentLabel, type RouteKey } from '@/lib/permissions';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
+import SystemBanner from '@/components/SystemBanner';
 import {
   LayoutDashboard, UserPlus, Users, LogOut, Menu, Bell, Footprints, Image, Shield,
   Footprints as CheckInIcon, CalendarDays, BarChart3, Plus, Home, MapPin,
@@ -224,6 +225,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Right column scrolls independently of the sidebar */}
       <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
+        <SystemBanner />
         <header className="md:hidden flex items-center justify-between px-4 py-3 bg-card shadow-sm border-b border-border shrink-0">
           <div className="flex items-center gap-3">
             <Sheet>

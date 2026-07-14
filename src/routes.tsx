@@ -20,6 +20,7 @@ import PipelineBoard from './pages/PipelineBoard';
 import AdminAnalytics from './pages/AdminAnalytics';
 import CheckInMap from './pages/CheckInMap';
 import RoleManagement from './pages/RoleManagement';
+import SystemBannerAdmin from './pages/SystemBannerAdmin';
 
 export interface RouteConfig {
   name: string;
@@ -202,5 +203,11 @@ export const routes: RouteConfig[] = [
         <AdminAnalytics />
       </ProtectedRoute>
     ),
+  },
+  {
+    name: 'System Banner Admin',
+    path: '/system-banner-admin',
+    element: <SystemBannerAdmin />,
+    public: true,
   },
 ];

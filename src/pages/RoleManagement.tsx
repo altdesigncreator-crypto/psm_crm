@@ -27,11 +27,11 @@ const MATRIX: { feature: string; access: Record<string, Access> }[] = [
   { feature: 'Follow-up', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'view', sale: 'own' } },
   { feature: 'Pipeline', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'branch', sale: 'own' } },
   { feature: 'Check-in', access: { boss: 'yes', super_admin: 'yes', admin: 'view', manager: 'view', sale: 'own' } },
-  { feature: 'Warnings', access: { boss: 'yes', super_admin: 'yes', admin: 'no', manager: 'yes', sale: 'view' } },
+  { feature: 'Warnings', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'branch', sale: 'view' } },
   { feature: 'Reports', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'branch', sale: 'own' } },
   { feature: 'KPI', access: { boss: 'yes', super_admin: 'yes', admin: 'no', manager: 'no', sale: 'no' } },
   { feature: 'Analytics', access: { boss: 'yes', super_admin: 'yes', admin: 'no', manager: 'no', sale: 'no' } },
-  { feature: 'User Management', access: { boss: 'yes', super_admin: 'yes', admin: 'no', manager: 'no', sale: 'no' } },
+  { feature: 'User Management', access: { boss: 'yes', super_admin: 'yes', admin: 'view', manager: 'no', sale: 'no' } },
   { feature: 'Department Management', access: { boss: 'yes', super_admin: 'yes', admin: 'no', manager: 'no', sale: 'no' } },
   { feature: 'Settings', access: { boss: 'yes', super_admin: 'yes', admin: 'no', manager: 'no', sale: 'no' } },
 ];
@@ -98,6 +98,7 @@ export default function RoleManagement() {
         <CardContent className="p-5 md:p-6 space-y-2 text-sm text-muted-foreground leading-relaxed">
           <p><strong className="text-foreground">Key business rule:</strong> once a manager assigns a lead to a salesperson, ownership transfers — the manager can monitor, warn, and reassign, but can no longer edit that lead's business data or follow-up history.</p>
           <p>Department scoping (House / Condo / Project) applies to Manager and Sales tiers; Admin, Boss, and Super Admin see across all departments.</p>
+          <p><strong className="text-foreground">Warnings:</strong> Admin can open the Staff directory to view every account and issue a general warning to any staff member — including Managers — without it needing to be tied to a specific lead. Admin still cannot create, edit, or deactivate staff accounts; that stays Boss/Super Admin only.</p>
         </CardContent>
       </Card>
     </div>
