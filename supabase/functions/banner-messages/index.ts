@@ -4,7 +4,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, X-Banner-Token',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, X-Client-Info, X-Banner-Token',
 };
 
 function json(body: unknown, status = 200) {
