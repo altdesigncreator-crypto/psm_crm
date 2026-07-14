@@ -14,8 +14,12 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import {
   ArrowLeft, User, Mail, Shield, Building2, Moon, Bell, Info, ChevronDown, Phone, MapPin,
-  HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern,
+  HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern, KeyRound, Eye, EyeOff, Trash2, Edit2,
 } from 'lucide-react';
+import {
+  AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { toast } from 'sonner';
 
@@ -23,7 +27,7 @@ export default function Settings() {
   const navigate = useNavigate();
   const { lang, setLang, t } = useTranslation();
   const { user, role, department, refreshProfile } = useAuth();
-  const { departments, createDepartment } = useDepartments();
+  const { departments, createDepartment, updateDepartment, deleteDepartment, deactivateDepartment } = useDepartments();
 
   const [name, setName] = useState(user?.name || '');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -36,6 +40,16 @@ export default function Settings() {
   const [biometricEnabled, setBiometricEnabled] = useState(user ? isBiometricEnabledFor(user.id) : false);
   const [biometricBusy, setBiometricBusy] = useState(false);
 
+  const [pwCurrent, setPwCurrent] = useState('');
+  const [pwNew, setPwNew] = useState('');
+  const [pwConfirm, setPwConfirm] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [changingPw, setChangingPw] = useState(false);
+
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+
   useEffect(() => {
     isPlatformAuthenticatorAvailable().then(setBiometricSupported);
   }, []);
@@ -46,6 +60,11 @@ export default function Settings() {
   const [newDeptCode, setNewDeptCode] = useState('');
   const [newDeptName, setNewDeptName] = useState('');
   const [savingDept, setSavingDept] = useState(false);
+  const [editingDeptCode, setEditingDeptCode] = useState<string | null>(null);
+  const [editingDeptName, setEditingDeptName] = useState('');
+  const [savingDeptEdit, setSavingDeptEdit] = useState(false);
+  const [deptDeleteTarget, setDeptDeleteTarget] = useState<{ code: string; name: string } | null>(null);
+  const [deletingDept, setDeletingDept] = useState(false);
 
   useEffect(() => {
     if (!isExec(role)) return;
@@ -77,6 +96,61 @@ export default function Settings() {
     toast.success('Profile updated.');
   };
 
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user?.email) return;
+    if (pwNew.length < 6) { toast.error('New password must be at least 6 characters.'); return; }
+    if (pwNew !== pwConfirm) { toast.error('New passwords do not match.'); return; }
+    if (pwNew === pwCurrent) { toast.error('New password must be different from the current one.'); return; }
+
+    setChangingPw(true);
+    try {
+      // Supabase's updateUser doesn't ask for the old password, so verify it
+      // ourselves by re-authenticating before allowing the change.
+      const { error: verifyErr } = await supabase.auth.signInWithPassword({ email: user.email, password: pwCurrent });
+      if (verifyErr) { toast.error('Current password is incorrect.'); return; }
+
+      const { error } = await supabase.auth.updateUser({ password: pwNew });
+      if (error) { toast.error(error.message || 'Could not change the password.'); return; }
+
+      await supabase.from('audit_logs').insert({ action: 'password_changed', target_table: 'profiles', target_id: user.id, performed_by: user.id });
+      toast.success('Password changed.');
+      setPwCurrent(''); setPwNew(''); setPwConfirm(''); setShowPw(false);
+    } finally {
+      setChangingPw(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!user?.email) return;
+    if (!deletePassword) { toast.error('Enter your password to confirm.'); return; }
+    setIsDeletingAccount(true);
+    try {
+      // Confirm it's really the account owner at the keyboard.
+      const { error: verifyErr } = await supabase.auth.signInWithPassword({ email: user.email, password: deletePassword });
+      if (verifyErr) { toast.error('Password is incorrect.'); return; }
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const { data, error } = await supabase.functions.invoke('delete-my-account', {
+        body: {},
+        headers: { Authorization: `Bearer ${sessionData.session?.access_token}` },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Could not delete your account.');
+
+      disableBiometric(user.id);
+      toast.success('Your account has been deleted.');
+      // Plain signOut (not context logout) — the profile row is gone, so the
+      // audit-logged logout would fail its foreign key.
+      await supabase.auth.signOut();
+    } catch (err: any) {
+      toast.error(err.message || 'Could not delete your account.');
+    } finally {
+      setIsDeletingAccount(false);
+      setDeleteAccountOpen(false);
+      setDeletePassword('');
+    }
+  };
+
   const handleSaveAttendance = async (deptCode: string) => {
     const settings = attendanceSettings[deptCode];
     if (!settings) return;
@@ -106,6 +180,59 @@ export default function Settings() {
       toast.error(err?.message || 'Could not set up biometric unlock.');
     } finally {
       setBiometricBusy(false);
+    }
+  };
+
+  const handleRenameDepartment = async (code: string) => {
+    if (!editingDeptName.trim()) { toast.error('Enter a department name.'); return; }
+    setSavingDeptEdit(true);
+    const error = await updateDepartment(code, editingDeptName);
+    setSavingDeptEdit(false);
+    if (error) { toast.error(error.message || 'Could not rename the department.'); return; }
+    toast.success('Department renamed.');
+    setEditingDeptCode(null);
+  };
+
+  const handleDeleteDepartment = async () => {
+    if (!deptDeleteTarget) return;
+    const { code, name } = deptDeleteTarget;
+    setDeletingDept(true);
+    try {
+      // Current staff or leads in the department block deletion — those must
+      // be moved deliberately, not orphaned.
+      const [{ count: staffCount }, { count: leadCount }] = await Promise.all([
+        supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('department_code', code),
+        supabase.from('leads').select('id', { count: 'exact', head: true }).eq('department_code', code),
+      ]);
+      if ((staffCount ?? 0) > 0 || (leadCount ?? 0) > 0) {
+        toast.error(`Cannot delete ${name} — ${staffCount ?? 0} staff and ${leadCount ?? 0} leads still belong to it. Move them to another department first.`);
+        return;
+      }
+
+      const error = await deleteDepartment(code);
+      if (error) {
+        // FK violation: historical rows (old check-ins etc.) still reference
+        // the code — deactivate instead so history keeps its labels.
+        if ((error as { code?: string }).code === '23503') {
+          const softErr = await deactivateDepartment(code);
+          if (softErr) { toast.error(softErr.message || 'Could not remove the department.'); return; }
+          toast.success(`${name} had historical records, so it was deactivated instead — it no longer appears anywhere in the app.`);
+        } else {
+          toast.error(error.message || 'Could not delete the department.');
+          return;
+        }
+      } else {
+        toast.success(`${name} department deleted.`);
+      }
+      await supabase.from('audit_logs').insert({
+        action: 'department_deleted',
+        target_table: 'departments',
+        performed_by: user?.id,
+        old_value: { code, name },
+      });
+    } finally {
+      setDeletingDept(false);
+      setDeptDeleteTarget(null);
     }
   };
 
@@ -165,6 +292,39 @@ export default function Settings() {
             </Button>
           </form>
           <Separator />
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-warning/10 flex items-center justify-center"><KeyRound className="w-4 h-4 text-warning" /></div>
+              <p className="text-sm font-semibold text-foreground">Change Password</p>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Current password</Label>
+              <Input type={showPw ? 'text' : 'password'} value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} required autoComplete="current-password" />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">New password</Label>
+              <div className="relative">
+                <Input type={showPw ? 'text' : 'password'} value={pwNew} onChange={(e) => setPwNew(e.target.value)} required minLength={6} autoComplete="new-password" className="pr-12" placeholder="At least 6 characters" />
+                <button
+                  type="button"
+                  onClick={() => setShowPw((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 min-h-0 flex items-center justify-center rounded-full text-muted-foreground"
+                  aria-label={showPw ? 'Hide passwords' : 'Show passwords'}
+                >
+                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Confirm new password</Label>
+              <Input type={showPw ? 'text' : 'password'} value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} required minLength={6} autoComplete="new-password" />
+            </div>
+            <Button type="submit" disabled={changingPw || !pwCurrent || !pwNew || !pwConfirm} className="w-full sm:w-auto h-10 gap-2 mt-2" variant="outline">
+              {changingPw ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+              {changingPw ? 'Changing…' : 'Change Password'}
+            </Button>
+          </form>
+          <Separator />
           <div className="space-y-1 bg-muted/30 rounded-xl p-2">
             {[
               { icon: Mail, label: 'Email (cannot be changed)', value: user?.email || '—' },
@@ -177,8 +337,65 @@ export default function Settings() {
               </div>
             ))}
           </div>
+
+          {/* Danger zone — the Boss account can't self-delete; a Super Admin
+              can, unless they're the last executive (server enforces both). */}
+          {role !== 'boss' && (
+            <>
+              <Separator />
+              <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3.5">
+                <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                  <Trash2 className="w-4 h-4 text-destructive" /> Delete Account
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Permanently deletes your login, check-ins and notifications. Leads you own must be
+                  reassigned by your manager first. This cannot be undone.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setDeleteAccountOpen(true)}
+                  className="w-full sm:w-auto h-10 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive gap-1.5"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete my account
+                </Button>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
+
+      {/* Delete-account confirmation — requires the password */}
+      <AlertDialog open={deleteAccountOpen} onOpenChange={(open) => { if (!isDeletingAccount) { setDeleteAccountOpen(open); if (!open) setDeletePassword(''); } }}>
+        <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete your account?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your login is removed permanently, along with your check-ins and notifications.
+              This cannot be undone. Enter your password to confirm.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Input
+            type="password"
+            value={deletePassword}
+            onChange={(e) => setDeletePassword(e.target.value)}
+            placeholder="Your password"
+            autoComplete="current-password"
+            className="h-11"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingAccount}>Cancel</AlertDialogCancel>
+            <Button
+              disabled={isDeletingAccount || !deletePassword}
+              onClick={handleDeleteAccount}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-10"
+            >
+              {isDeletingAccount ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+              {isDeletingAccount ? 'Deleting…' : 'Delete forever'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="md:hidden">
         <button type="button" onClick={() => toggleSection('preferences')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-all text-left">
@@ -198,7 +415,10 @@ export default function Settings() {
           <button type="button" onClick={() => setLang(lang === 'mm' ? 'en' : 'mm')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-11 h-11 rounded-xl bg-info/10 flex items-center justify-center shrink-0"><Globe className="w-5 h-5 text-info" /></div>
-              <div><p className="text-sm font-semibold text-foreground">{t('settings.language')}</p></div>
+              <div>
+                <p className="text-sm font-semibold text-foreground">{t('settings.language')}</p>
+                <p className="text-xs text-muted-foreground">{t('settings.languageDesc')}</p>
+              </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <span className={`text-xs font-medium px-2 py-1 rounded-full border ${lang === 'mm' ? 'bg-primary text-white border-primary' : 'bg-muted text-muted-foreground border-border'}`}>MM</span>
@@ -234,8 +454,8 @@ export default function Settings() {
                   {biometricBusy ? <Loader2 className="w-5 h-5 text-primary animate-spin" /> : <FingerprintPattern className="w-5 h-5 text-primary" />}
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-foreground">Face ID / Fingerprint Unlock</p>
-                  <p className="text-xs text-muted-foreground">Require biometrics to open the app on this device</p>
+                  <p className="text-sm font-semibold text-foreground">Face ID / Fingerprint Sign-in</p>
+                  <p className="text-xs text-muted-foreground">Sign back in with biometrics instead of your password on this device</p>
                 </div>
               </div>
               <div className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${biometricEnabled ? 'bg-primary' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${biometricEnabled ? 'left-6' : 'left-1'}`} /></div>
@@ -262,7 +482,7 @@ export default function Settings() {
             <CardContent className="space-y-6">
               <div className="space-y-3">
                 <p className="text-sm font-semibold text-foreground">Departments</p>
-                <p className="text-xs text-muted-foreground">Add new departments here — they immediately become available in every department picker across the app (leads, staff, check-ins, filters).</p>
+                <p className="text-xs text-muted-foreground">Add, rename or delete departments — changes apply immediately to every department picker across the app (leads, staff, check-ins, filters).</p>
                 <form onSubmit={handleAddDepartment} className="flex flex-col sm:flex-row gap-2">
                   <Input placeholder="Code (e.g. commercial)" value={newDeptCode} onChange={(e) => setNewDeptCode(e.target.value)} className="h-10 sm:w-40" />
                   <Input placeholder="Display name (e.g. Commercial)" value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="h-10 flex-1" />
@@ -270,9 +490,39 @@ export default function Settings() {
                     {savingDept ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add
                   </Button>
                 </form>
-                <div className="flex flex-wrap gap-2">
+                <div className="space-y-2">
                   {departments.map((d) => (
-                    <span key={d.code} className="text-xs font-medium px-2.5 py-1 rounded-full bg-muted text-muted-foreground border border-border">{d.name}</span>
+                    <div key={d.code} className="flex items-center gap-2 p-2.5 rounded-xl border border-border">
+                      {editingDeptCode === d.code ? (
+                        <>
+                          <Input
+                            value={editingDeptName}
+                            onChange={(e) => setEditingDeptName(e.target.value)}
+                            className="h-10 flex-1"
+                            autoFocus
+                          />
+                          <Button size="sm" disabled={savingDeptEdit} onClick={() => handleRenameDepartment(d.code)} className="h-10 shrink-0">
+                            {savingDeptEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+                          </Button>
+                          <Button size="sm" variant="ghost" disabled={savingDeptEdit} onClick={() => setEditingDeptCode(null)} className="h-10 shrink-0">
+                            Cancel
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-foreground truncate">{d.name}</p>
+                            <p className="text-[11px] text-muted-foreground">code: {d.code}</p>
+                          </div>
+                          <Button variant="ghost" size="icon" aria-label={`Rename ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => { setEditingDeptCode(d.code); setEditingDeptName(d.name); }}>
+                            <Edit2 className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" aria-label={`Delete ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => setDeptDeleteTarget({ code: d.code, name: d.name })}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -323,6 +573,31 @@ export default function Settings() {
           <p className="text-xs text-muted-foreground">Supabase + React · v1.0</p>
         </CardContent>
       </Card>
+
+      {/* Department delete confirmation (exec only — the section itself is gated) */}
+      <AlertDialog open={!!deptDeleteTarget} onOpenChange={(open) => !open && !deletingDept && setDeptDeleteTarget(null)}>
+        <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete the {deptDeleteTarget?.name} department?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Departments with staff or leads cannot be deleted — move them first. If old records
+              (like past check-ins) reference it, the department is deactivated instead of deleted,
+              which removes it from every picker while history keeps its labels.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingDept}>Cancel</AlertDialogCancel>
+            <Button
+              disabled={deletingDept}
+              onClick={handleDeleteDepartment}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-10"
+            >
+              {deletingDept ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+              {deletingDept ? 'Deleting…' : 'Delete'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -8,15 +8,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   ArrowLeft, User, Phone, Mail, MapPin, Building2, DollarSign, Target, Calendar,
-  TrendingUp, MessageSquare, Navigation, Clock, FileText, Sparkles, Loader2,
-  Plus, AlertTriangle, ArrowRightLeft, History,
+  TrendingUp, MessageSquare, Navigation, Clock, FileText, Loader2,
+  Plus, AlertTriangle, ArrowRightLeft, History, Trash2,
 } from 'lucide-react';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { FOLLOWUP_TYPES, FOLLOWUP_STATUSES, LEAD_STAGES, WARNING_REASONS, getGradeForFollowUpStatus, type Lead, type FollowUp, type Warning as WarningRecord } from '@/types';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useAuth } from '@/contexts/AuthContext';
-import { canEditLead, canAddFollowUp, canAssignLead, canIssueWarning, canMonitorLead, isManagerOrAbove } from '@/lib/permissions';
+import { canEditLead, canAddFollowUp, canAssignLead, canIssueWarning, canMonitorLead, isManagerOrAbove, isExec } from '@/lib/permissions';
 import { supabase } from '@/db/supabase';
 import { toast } from 'sonner';
 import StatusBadge from '@/components/StatusBadge';
@@ -51,13 +55,14 @@ export default function LeadDetail() {
   const [mapOpen, setMapOpen] = useState(false);
   const { colors: statusColors } = useStatusColors();
   const { profiles, nameOf } = useProfiles();
-  const [aiScoring, setAiScoring] = useState(false);
 
   const [followUpForm, setFollowUpForm] = useState({ type: 'phone', status: 'interested', notes: '' });
   const [savingFollowUp, setSavingFollowUp] = useState(false);
   const [warningForm, setWarningForm] = useState({ reason: 'followup_overdue', message: '' });
   const [savingWarning, setSavingWarning] = useState(false);
   const [reassignTo, setReassignTo] = useState('');
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const currentUser = user ? { id: user.id, role, department: user.department } : null;
 
@@ -102,35 +107,27 @@ export default function LeadDetail() {
   const canFollowUp = canAddFollowUp(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code });
   const canWarn = canIssueWarning(currentUser) && canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code });
   const canReassign = canAssignLead(currentUser) && canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code });
+  // Exec-only (boss / super admin), matching the leads_delete RLS policy.
+  const canDelete = isExec(role);
 
-  const handleAiRescore = async () => {
-    setAiScoring(true);
+  const handleDeleteLead = async () => {
+    setDeleting(true);
     try {
-      const { data, error } = await supabase.functions.invoke('lead-score', {
-        body: {
-          lead: {
-            name: lead.name, phone: lead.phone, email: lead.email || undefined,
-            interestType: lead.interest_type || undefined, propertyType: lead.property_type || undefined,
-            preferredProject: lead.preferred_project || undefined, budgetRange: lead.budget_range || undefined,
-            purpose: lead.purpose || undefined, leadSource: lead.lead_source || undefined,
-            currentLocation: lead.current_location || undefined, remarks: lead.remarks || undefined,
-          },
-        },
+      const { error } = await supabase.from('leads').delete().eq('id', lead.id);
+      if (error) throw error;
+      await supabase.from('audit_logs').insert({
+        action: 'lead_deleted',
+        target_table: 'leads',
+        target_id: lead.id,
+        performed_by: user?.id,
+        old_value: { name: lead.name, phone: lead.phone, owner_id: lead.owner_id },
       });
-      if (error || !data?.score) throw new Error(error?.message || 'AI scoring failed.');
-
-      const { error: updateErr } = await supabase
-        .from('leads')
-        .update({ lead_grade: data.score, lead_grade_reason: data.reasoning })
-        .eq('id', lead.id);
-      if (updateErr) throw updateErr;
-
-      setLead((prev) => (prev ? { ...prev, lead_grade: data.score, lead_grade_reason: data.reasoning } : prev));
-      toast.success(`AI re-score: ${data.score} — ${data.reasoning}`);
-    } catch (err: any) {
-      toast.error(err.message || 'AI scoring failed.');
-    } finally {
-      setAiScoring(false);
+      toast.success(`Lead "${lead.name}" deleted.`);
+      navigate('/leads');
+    } catch {
+      toast.error('Could not delete the lead.');
+      setDeleting(false);
+      setDeleteOpen(false);
     }
   };
 
@@ -183,8 +180,11 @@ export default function LeadDetail() {
 
   return (
     <div className="max-w-5xl mx-auto animate-fade-in-up space-y-5">
-      {/* Header */}
-      <div className="flex items-center gap-3">
+      {/* Header — on phones the controls cluster (grade / status / delete) is
+          wider than the space left next to the back arrow and title, so it
+          wraps onto its own full-width second row; from `sm:` up everything
+          sits inline as before. */}
+      <div className="flex flex-wrap items-center gap-3">
         <Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 active:bg-muted/50" onClick={() => navigate('/leads')}>
           <ArrowLeft className="w-5 h-5" />
         </Button>
@@ -192,11 +192,11 @@ export default function LeadDetail() {
           <h1 className="text-xl md:text-2xl font-bold text-foreground">Lead Profile</h1>
           <p className="text-sm text-muted-foreground mt-0.5 truncate">{lead.name} — {lead.phone}</p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 w-full sm:w-auto sm:shrink-0">
           <LeadLevelBadge grade={lead.lead_grade} />
           {editable ? (
             <Select value={lead.status} onValueChange={handleStageChange}>
-              <SelectTrigger className="h-9 w-[150px]"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 flex-1 sm:flex-none sm:w-[150px]"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {LEAD_STAGES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
               </SelectContent>
@@ -204,8 +204,37 @@ export default function LeadDetail() {
           ) : (
             <StatusBadge status={stageLabel(lead.status)} color={statusColors[lead.status] || '#8FA3BF'} className="px-4 py-1.5 text-sm font-semibold" />
           )}
+          {canDelete && (
+            <Button variant="outline" size="icon" onClick={() => setDeleteOpen(true)} className="h-9 w-9 shrink-0 border-destructive/30 text-destructive hover:bg-destructive/5 hover:text-destructive" aria-label="Delete lead">
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          )}
         </div>
       </div>
+
+      {/* Delete confirmation (exec only) */}
+      <AlertDialog open={deleteOpen} onOpenChange={(open) => !deleting && setDeleteOpen(open)}>
+        <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this lead?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{lead.name}" and all of its follow-ups, warnings and history will be
+              permanently deleted. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              onClick={(e) => { e.preventDefault(); handleDeleteLead(); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+              {deleting ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Mobile quick actions */}
       <div className="md:hidden flex items-center gap-2 -mx-4 px-4 py-3 bg-card border-y border-border sticky top-0 z-30">
@@ -237,13 +266,6 @@ export default function LeadDetail() {
               <DetailRow label="Email" value={lead.email} icon={<Mail className="w-4 h-4" />} />
               <DetailRow label="Current Location" value={lead.current_location} icon={<MapPin className="w-4 h-4" />} />
               <DetailRow label="Created" value={createdDate} icon={<Clock className="w-4 h-4" />} />
-              <button
-                type="button" onClick={handleAiRescore} disabled={aiScoring}
-                className="w-full h-11 flex items-center justify-center gap-2 rounded-xl border border-primary/30 text-primary bg-primary/5 active:bg-primary/10 active:scale-[0.98] transition-all text-sm font-medium disabled:opacity-40 mt-1"
-              >
-                {aiScoring ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                {aiScoring ? 'Scoring…' : 'AI Re-score'}
-              </button>
               {lead.lead_grade_reason && (
                 <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-2 py-1.5">{lead.lead_grade_reason}</p>
               )}

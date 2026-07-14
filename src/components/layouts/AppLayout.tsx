@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTranslation } from '@/contexts/TranslationContext';
 import { useNotifications, type Notification } from '@/contexts/NotificationsContext';
 import { canAccessRoute, getRoleLabel, getDepartmentLabel, type RouteKey } from '@/lib/permissions';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
@@ -8,7 +9,11 @@ import {
   LayoutDashboard, UserPlus, Users, LogOut, Menu, Bell, Footprints, Image, Shield,
   Footprints as CheckInIcon, CalendarDays, BarChart3, Plus, Home, MapPin,
   Settings as SettingsIcon, BarChart3 as AnalyticsIcon, Thermometer, Kanban, Briefcase, ListChecks,
+<<<<<<< HEAD
   Download,
+=======
+  Activity as ActivityIcon,
+>>>>>>> 64d0c4212fee019828fed6f896508319fcd3771e
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -16,50 +21,52 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface NavItem {
-  name: string;
+  /** Translation key — resolved through t() at render time. */
+  tKey: string;
   path: string;
   routeKey: RouteKey;
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
 }
 
-const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
+const NAV_SECTIONS: { tKey: string; items: NavItem[] }[] = [
   {
-    label: 'Core Operations',
+    tKey: 'nav.section.core',
     items: [
-      { name: 'Dashboard', path: '/dashboard', routeKey: 'dashboard', icon: LayoutDashboard },
-      { name: 'Add Lead', path: '/add-lead', routeKey: 'add-lead', icon: UserPlus },
-      { name: 'Leads', path: '/leads', routeKey: 'leads', icon: Users },
-      { name: 'Follow-ups', path: '/follow-ups', routeKey: 'follow-ups', icon: ListChecks },
-      { name: 'Pipeline', path: '/pipeline', routeKey: 'pipeline', icon: Kanban },
-      { name: 'Check-In', path: '/check-in', routeKey: 'check-in', icon: Footprints },
-      { name: 'Check-In Gallery', path: '/check-in-gallery', routeKey: 'check-in-gallery', icon: Image },
-      { name: 'Check-In Map', path: '/check-in-map', routeKey: 'check-in-map', icon: Thermometer },
+      { tKey: 'nav.dashboard', path: '/dashboard', routeKey: 'dashboard', icon: LayoutDashboard },
+      { tKey: 'nav.addLead', path: '/add-lead', routeKey: 'add-lead', icon: UserPlus },
+      { tKey: 'nav.leads', path: '/leads', routeKey: 'leads', icon: Users },
+      { tKey: 'nav.followUps', path: '/follow-ups', routeKey: 'follow-ups', icon: ListChecks },
+      { tKey: 'nav.pipeline', path: '/pipeline', routeKey: 'pipeline', icon: Kanban },
+      { tKey: 'nav.checkIn', path: '/check-in', routeKey: 'check-in', icon: Footprints },
+      { tKey: 'nav.checkInGallery', path: '/check-in-gallery', routeKey: 'check-in-gallery', icon: Image },
+      { tKey: 'nav.checkInMap', path: '/check-in-map', routeKey: 'check-in-map', icon: Thermometer },
     ],
   },
   {
-    label: 'Staff & Performance',
+    tKey: 'nav.section.staff',
     items: [
-      { name: 'KPI Board', path: '/kpi-board', routeKey: 'kpi-board', icon: BarChart3 },
-      { name: 'Staff', path: '/user-management', routeKey: 'user-management', icon: Briefcase },
+      { tKey: 'nav.teamActivity', path: '/team-activity', routeKey: 'team-activity', icon: ActivityIcon },
+      { tKey: 'nav.kpiBoard', path: '/kpi-board', routeKey: 'kpi-board', icon: BarChart3 },
+      { tKey: 'nav.staff', path: '/user-management', routeKey: 'user-management', icon: Briefcase },
     ],
   },
   {
-    label: 'Administration',
+    tKey: 'nav.section.admin',
     items: [
-      { name: 'Roles & Permissions', path: '/role-management', routeKey: 'role-management', icon: Shield },
-      { name: 'Analytics', path: '/analytics', routeKey: 'analytics', icon: AnalyticsIcon },
-      { name: 'Notifications', path: '/notifications', routeKey: 'notifications', icon: Bell },
-      { name: 'Settings', path: '/settings', routeKey: 'settings', icon: SettingsIcon },
+      { tKey: 'nav.roles', path: '/role-management', routeKey: 'role-management', icon: Shield },
+      { tKey: 'nav.analytics', path: '/analytics', routeKey: 'analytics', icon: AnalyticsIcon },
+      { tKey: 'nav.notifications', path: '/notifications', routeKey: 'notifications', icon: Bell },
+      { tKey: 'nav.settings', path: '/settings', routeKey: 'settings', icon: SettingsIcon },
     ],
   },
 ];
 
 const TAB_ITEMS = [
-  { name: 'Dashboard', path: '/dashboard', icon: Home },
-  { name: 'Leads', path: '/leads', icon: Users },
-  { name: 'Add', path: '/add-lead', icon: Plus, isFab: true },
-  { name: 'Check-In', path: '/check-in', icon: MapPin },
-  { name: 'Gallery', path: '/check-in-gallery', icon: Image },
+  { tKey: 'tab.dashboard', path: '/dashboard', icon: Home },
+  { tKey: 'tab.leads', path: '/leads', icon: Users },
+  { tKey: 'tab.add', path: '/add-lead', icon: Plus, isFab: true },
+  { tKey: 'tab.checkin', path: '/check-in', icon: MapPin },
+  { tKey: 'tab.gallery', path: '/check-in-gallery', icon: Image },
 ];
 
 function formatNotifTime(iso?: string) {
@@ -90,6 +97,7 @@ function NotificationItem({ n, onClick }: { n: Notification; onClick: () => void
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, role, department, logout } = useAuth();
+  const { t } = useTranslation();
   const { notifications, unreadCount, markAllAsRead } = useNotifications();
   const { canInstall, promptInstall } = usePwaInstall();
   const location = useLocation();
@@ -148,18 +156,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // scrolling the main content never scrolls the nav, and vice versa.
   const sidebarContent = (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-3 px-5 py-5 border-b border-white/10 shrink-0">
-        <div className="flex flex-col">
-          <span className="text-white font-bold text-lg leading-tight tracking-tight">PSM</span>
-          <span className="text-[#D4AF37] text-[10px] leading-tight tracking-wide font-medium">Properties</span>
-        </div>
+      <div className="flex items-center gap-3 px-5 py-4 border-b border-white/10 shrink-0">
+        <img src="/logo-dark.png" alt="PSM Properties" className="h-12 w-auto" draggable={false} />
       </div>
 
       <ScrollArea className="flex-1 min-h-0 px-3 py-4">
         <div className="space-y-6 pb-4">
           {visibleSections.map((section) => (
-            <div key={section.label}>
-              <p className="px-4 text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-2">{section.label}</p>
+            <div key={section.tKey}>
+              <p className="px-4 text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-2">{t(section.tKey)}</p>
               <div className="space-y-1">
                 {section.items.map((item) => {
                   const isActive = location.pathname === item.path;
@@ -181,7 +186,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                           </span>
                         )}
                       </div>
-                      <span>{item.name}</span>
+                      <span>{t(item.tKey)}</span>
                     </Link>
                   );
                 })}
@@ -193,7 +198,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       <div className="px-3 py-4 border-t border-white/10 space-y-3 shrink-0 bg-gradient-to-t from-black/10 to-transparent">
         <div className="px-4 py-1">
-          <p className="text-white/50 text-[10px] font-medium">Signed in as</p>
+          <p className="text-white/50 text-[10px] font-medium">{t('nav.signedInAs')}</p>
           <p className="text-white/90 text-sm font-medium truncate">{user?.name}</p>
           {role && <p className="text-white/40 text-[10px] mt-0.5">{department ? `${getDepartmentLabel(department)} · ` : ''}{getRoleLabel(role)}</p>}
         </div>
@@ -203,7 +208,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           onClick={handleLogout}
         >
           <LogOut className="w-[18px] h-[18px] shrink-0" strokeWidth={2} />
-          <span className="text-sm font-medium">Log Out</span>
+          <span className="text-sm font-medium">{t('nav.logout')}</span>
         </Button>
       </div>
     </div>
@@ -217,7 +222,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </aside>
 
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        <SheetContent side="left" className="w-[280px] p-0 gradient-primary border-none">
+        <SheetContent
+          side="left"
+          className="w-[280px] p-0 gradient-primary border-none"
+          closeClassName="text-white/70 hover:bg-white/10 hover:text-white active:bg-white/15"
+        >
           {sidebarContent}
         </SheetContent>
       </Sheet>
@@ -231,10 +240,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <Button variant="ghost" size="icon" className="text-foreground h-10 w-10" onClick={() => setMobileOpen(true)}><Menu className="w-5 h-5" /></Button>
               </SheetTrigger>
             </Sheet>
-            <div className="flex flex-col leading-tight">
-              <span className="font-bold text-sm tracking-tight">PSM</span>
-              <span className="text-[10px] text-primary-foreground/60 tracking-wide">Properties</span>
-            </div>
+            {/* Light/dark wordmark swap follows the app's class-based theme */}
+            <img src="/logo.png" alt="PSM Properties" className="h-9 w-auto dark:hidden" draggable={false} />
+            <img src="/logo-dark.png" alt="PSM Properties" className="h-9 w-auto hidden dark:block" draggable={false} />
           </div>
           <div className="flex items-center gap-1">
             {canInstall && (
@@ -307,7 +315,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   <Icon className={`w-5 h-5 transition-colors duration-200 ${isActive ? 'text-primary' : 'text-muted-foreground'}`} strokeWidth={isActive ? 2.5 : 2} />
                   {isActive && <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary" />}
                 </div>
-                <span className={`text-[10px] font-medium transition-colors duration-200 ${isActive ? 'text-primary font-semibold' : 'text-muted-foreground'}`}>{item.name}</span>
+                <span className={`text-[10px] font-medium transition-colors duration-200 ${isActive ? 'text-primary font-semibold' : 'text-muted-foreground'}`}>{t(item.tKey)}</span>
               </Link>
             );
           })}

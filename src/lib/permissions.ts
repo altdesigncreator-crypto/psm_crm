@@ -52,9 +52,10 @@ export function isSale(role: RoleTier | null | undefined): boolean {
   return role === 'sale';
 }
 
-/** Department-scoped roles (manager/sale) only see their own department's data. */
+/** Department-scoped roles (admin/manager/sale) only see their own
+ * department's data — only Boss/Super Admin are global. */
 export function isDepartmentScoped(role: RoleTier | null | undefined): boolean {
-  return role === 'manager' || role === 'sale';
+  return role === 'admin' || role === 'manager' || role === 'sale';
 }
 
 interface LeadRecord {
@@ -65,16 +66,18 @@ interface LeadRecord {
 /** Mirrors the `leads_select` RLS policy in database/crm.sql. */
 export function canViewLead(user: CurrentUser | null, lead: LeadRecord): boolean {
   if (!user) return false;
-  if (isAdminOrAbove(user.role)) return true;
-  if (user.role === 'manager') return lead.departmentCode === user.department;
+  if (isExec(user.role)) return true;
+  if (user.role === 'admin' || user.role === 'manager') return lead.departmentCode === user.department;
   return lead.ownerId === user.id;
 }
 
-/** Mirrors the `leads_update` RLS policy — the "manager loses edit rights
- * after handing a lead off" business rule lives here and in the database. */
+/** Mirrors the `leads_update` RLS policy — Admin edits any lead in their own
+ * department; the "manager loses edit rights after handing a lead off"
+ * business rule lives here and in the database. */
 export function canEditLead(user: CurrentUser | null, lead: LeadRecord): boolean {
   if (!user) return false;
-  if (isAdminOrAbove(user.role)) return true;
+  if (isExec(user.role)) return true;
+  if (user.role === 'admin') return lead.departmentCode === user.department;
   if (user.role === 'manager') return lead.departmentCode === user.department && lead.ownerId === user.id;
   return lead.ownerId === user.id;
 }
@@ -87,17 +90,19 @@ export function canAssignLead(user: CurrentUser | null): boolean {
   return isManagerOrAbove(user?.role);
 }
 
-/** Managers can view/monitor + warn/reassign even leads they no longer own. */
+/** Admins and managers can view/monitor + warn/reassign leads in their own
+ * department, even ones they don't own. */
 export function canMonitorLead(user: CurrentUser | null, lead: LeadRecord): boolean {
   if (!user) return false;
-  if (isAdminOrAbove(user.role)) return true;
-  if (user.role === 'manager') return lead.departmentCode === user.department;
+  if (isExec(user.role)) return true;
+  if (user.role === 'admin' || user.role === 'manager') return lead.departmentCode === user.department;
   return lead.ownerId === user.id;
 }
 
 export function canAddFollowUp(user: CurrentUser | null, lead: LeadRecord): boolean {
   if (!user) return false;
-  if (isAdminOrAbove(user.role)) return true;
+  if (isExec(user.role)) return true;
+  if (user.role === 'admin') return lead.departmentCode === user.department;
   // Managers are deliberately excluded — FRD: Follow-up = "View Only" for Manager.
   return lead.ownerId === user.id;
 }
@@ -112,7 +117,7 @@ export type RouteKey =
   | 'check-in' | 'check-in-gallery' | 'check-in-map'
   | 'notifications' | 'settings'
   | 'user-management' | 'role-management'
-  | 'kpi-board' | 'agent-detail' | 'analytics';
+  | 'kpi-board' | 'agent-detail' | 'analytics' | 'team-activity';
 
 /** Central route-level access map — the piece that was completely missing
  * before (routes.tsx only checked "is logged in", never role). */
@@ -142,6 +147,10 @@ export function canAccessRoute(role: RoleTier | null | undefined, routeKey: Rout
     case 'analytics':
       return isExec(role);
     case 'agent-detail':
+      return isManagerOrAbove(role);
+    case 'team-activity':
+      // Daily staff-activity monitor — management tool; RLS scopes what each
+      // tier sees (exec: all, admin/manager: own department).
       return isManagerOrAbove(role);
     default:
       return false;

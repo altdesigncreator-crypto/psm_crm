@@ -11,8 +11,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import {
   User as UserIcon, Search, Filter, SlidersHorizontal, Download, FileSpreadsheet, FileText,
-  Briefcase, Phone, Mail, ShieldAlert, UserPlus, Loader2, Edit2,
+  Briefcase, Phone, Mail, ShieldAlert, UserPlus, Loader2, Edit2, KeyRound, Trash2,
 } from 'lucide-react';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { exportAsExcel, exportAsCSV } from '@/lib/exportUtils';
 import { ROLE_TIERS, ROLE_LABELS, isExec, getDepartmentLabel, type RoleTier, type Department } from '@/lib/permissions';
@@ -48,6 +52,10 @@ export default function UserManagement() {
   const [editRole, setEditRole] = useState<RoleTier>('sale');
   const [editDept, setEditDept] = useState<Department>('');
   const [editStatus, setEditStatus] = useState<'active' | 'inactive'>('active');
+  const [resetPassword, setResetPassword] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const canManage = isExec(role);
 
@@ -108,7 +116,7 @@ export default function UserManagement() {
       const { data, error } = await supabase.functions.invoke('create-staff-user', {
         body: {
           name: newName.trim(), email: newEmail.trim().toLowerCase(), phone: newPhone.trim() || undefined,
-          password: newPassword, role: newRole, department: newRole === 'boss' || newRole === 'super_admin' || newRole === 'admin' ? null : newDept,
+          password: newPassword, role: newRole, department: newRole === 'boss' || newRole === 'super_admin' ? null : newDept,
         },
         headers: { Authorization: `Bearer ${sessionData.session?.access_token}` },
       });
@@ -131,7 +139,47 @@ export default function UserManagement() {
     setEditRole(s.role);
     setEditDept(s.department_code || departments[0]?.code || '');
     setEditStatus(s.status);
+    setResetPassword('');
     setIsEditOpen(true);
+  };
+
+  const handleResetPassword = async () => {
+    if (resetPassword.length < 6) { toast.error('New password must be at least 6 characters.'); return; }
+    setIsResetting(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const { data, error } = await supabase.functions.invoke('reset-staff-password', {
+        body: { userId: selectedStaffId, newPassword: resetPassword },
+        headers: { Authorization: `Bearer ${sessionData.session?.access_token}` },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Could not reset the password.');
+      toast.success(`Password reset for ${data?.name || editName}.`);
+      setResetPassword('');
+    } catch (err: any) {
+      toast.error(err.message || 'Could not reset the password.');
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
+  const handleDeleteStaff = async () => {
+    setIsDeleting(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const { data, error } = await supabase.functions.invoke('delete-staff-user', {
+        body: { userId: selectedStaffId },
+        headers: { Authorization: `Bearer ${sessionData.session?.access_token}` },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || 'Could not delete the account.');
+      toast.success(`${data?.name || editName}'s account was deleted.`);
+      setDeleteConfirmOpen(false);
+      setIsEditOpen(false);
+    } catch (err: any) {
+      toast.error(err.message || 'Could not delete the account.');
+      setDeleteConfirmOpen(false);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleUpdateStaff = async (e: React.FormEvent) => {
@@ -140,7 +188,7 @@ export default function UserManagement() {
     setIsUpdating(true);
     const { error } = await supabase.from('profiles').update({
       name: editName.trim(), phone: editPhone.trim() || null, role: editRole,
-      department_code: editRole === 'boss' || editRole === 'super_admin' || editRole === 'admin' ? null : editDept,
+      department_code: editRole === 'boss' || editRole === 'super_admin' ? null : editDept,
       status: editStatus,
     }).eq('id', selectedStaffId);
     setIsUpdating(false);
@@ -192,7 +240,8 @@ export default function UserManagement() {
                       <SelectContent>{ROLE_TIERS.map((r) => (<SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>))}</SelectContent>
                     </Select>
                   </div>
-                  {newRole !== 'boss' && newRole !== 'super_admin' && newRole !== 'admin' && (
+                  {/* Admin is department-scoped like Manager — department required */}
+                  {newRole !== 'boss' && newRole !== 'super_admin' && (
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium text-muted-foreground">Department</Label>
                       <Select value={newDept} onValueChange={(v) => setNewDept(v)}>
@@ -228,7 +277,7 @@ export default function UserManagement() {
                   <SelectContent>{ROLE_TIERS.map((r) => (<SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>))}</SelectContent>
                 </Select>
               </div>
-              {editRole !== 'boss' && editRole !== 'super_admin' && editRole !== 'admin' && (
+              {editRole !== 'boss' && editRole !== 'super_admin' && (
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium text-muted-foreground">Department</Label>
                   <Select value={editDept} onValueChange={(v) => setEditDept(v)}>
@@ -245,6 +294,62 @@ export default function UserManagement() {
                 <SelectContent><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
               </Select>
             </div>
+
+            {/* Password reset — exec only (this page already is), and only
+                for Admin/Manager/Sales targets; the edge function enforces
+                the same rule server-side so exec accounts can't be hijacked. */}
+            {(editRole === 'admin' || editRole === 'manager' || editRole === 'sale') && (
+              <div className="space-y-2 rounded-xl border border-warning/30 bg-warning/5 p-3.5 mt-1">
+                <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5 text-warning" /> Reset Password
+                </Label>
+                <p className="text-[11px] text-muted-foreground">Sets a new login password for this staff member immediately.</p>
+                <div className="flex gap-2">
+                  <Input
+                    type="text"
+                    value={resetPassword}
+                    onChange={(e) => setResetPassword(e.target.value)}
+                    placeholder="New password (min 6 characters)"
+                    className="h-11 flex-1"
+                    autoComplete="off"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={isResetting || resetPassword.length < 6}
+                    onClick={handleResetPassword}
+                    className="h-11 shrink-0 border-warning/40 text-warning hover:bg-warning/10 hover:text-warning gap-1.5"
+                  >
+                    {isResetting ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+                    Reset
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Danger zone — same target rule as password reset: only
+                Admin/Manager/Sales accounts, enforced server-side too. */}
+            {(editRole === 'admin' || editRole === 'manager' || editRole === 'sale') && (
+              <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3.5">
+                <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <Trash2 className="w-3.5 h-3.5 text-destructive" /> Delete Account
+                </Label>
+                <p className="text-[11px] text-muted-foreground">
+                  Permanently removes this staff member's login, check-ins and notifications.
+                  Their leads must be reassigned first.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isDeleting}
+                  onClick={() => setDeleteConfirmOpen(true)}
+                  className="h-11 w-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive gap-1.5"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete this staff member
+                </Button>
+              </div>
+            )}
+
             <div className="flex gap-3 pt-5 mt-2 border-t border-border/60">
               <DialogClose asChild><Button type="button" variant="outline" className="flex-1 h-11">Cancel</Button></DialogClose>
               <Button type="submit" disabled={isUpdating} className="flex-1 h-11 gradient-primary text-white font-medium">{isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Changes'}</Button>
@@ -252,6 +357,30 @@ export default function UserManagement() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Delete confirmation */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={(open) => !isDeleting && setDeleteConfirmOpen(open)}>
+        <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {editName}'s account?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Their login is removed permanently, along with their check-ins, notifications and
+              warnings. Leads they created stay (uncredited). This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isDeleting}
+              onClick={(e) => { e.preventDefault(); handleDeleteStaff(); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+              {isDeleting ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Card className="shadow-sm border border-border/50 bg-card rounded-xl overflow-hidden">
         <CardContent className="p-4">

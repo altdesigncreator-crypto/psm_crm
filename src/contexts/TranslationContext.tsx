@@ -9,15 +9,16 @@ interface TranslationContextType {
 }
 
 const TranslationContext = createContext<TranslationContextType>({
-  lang: 'mm',
+  lang: 'en',
   setLang: () => {},
   t: (key: string) => key,
 });
 
 export function TranslationProvider({ children }: { children: React.ReactNode }) {
+  // English on first use; Myanmar only when the user explicitly chose it.
   const [lang, setLangState] = useState<Lang>(() => {
     const saved = localStorage.getItem('crm-lang') as Lang;
-    return saved === 'en' ? 'en' : 'mm';
+    return saved === 'mm' ? 'mm' : 'en';
   });
 
   const setLang = useCallback((newLang: Lang) => {

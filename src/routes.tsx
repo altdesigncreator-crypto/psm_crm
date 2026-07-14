@@ -1,25 +1,29 @@
-import React from 'react';
+import React, { lazy } from 'react';
 import type { ReactNode } from 'react';
 import { ProtectedRoute } from './components/ProtectedRoutes';
 import type { RouteKey } from '@/lib/permissions';
 
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import AddLead from './pages/AddLead';
-import Leads from './pages/Leads';
-import FollowUps from './pages/FollowUps';
-import LeadDetail from './pages/LeadDetail';
-import Notifications from './pages/Notifications';
-import CheckIn from './pages/CheckIn';
-import CheckInGallery from './pages/CheckInGallery';
-import UserManagement from './pages/UserManagement';
-import KPIBoard from './pages/KPIBoard';
-import AgentDetail from './pages/AgentDetail';
-import Settings from './pages/Settings';
-import PipelineBoard from './pages/PipelineBoard';
-import AdminAnalytics from './pages/AdminAnalytics';
-import CheckInMap from './pages/CheckInMap';
-import RoleManagement from './pages/RoleManagement';
+// Every page is lazy-loaded so the initial bundle only carries the app
+// shell — each route's code downloads the first time it's visited (and is
+// then cached). The Suspense fallback lives in App.tsx.
+const Login = lazy(() => import('./pages/Login'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const AddLead = lazy(() => import('./pages/AddLead'));
+const Leads = lazy(() => import('./pages/Leads'));
+const FollowUps = lazy(() => import('./pages/FollowUps'));
+const LeadDetail = lazy(() => import('./pages/LeadDetail'));
+const Notifications = lazy(() => import('./pages/Notifications'));
+const CheckIn = lazy(() => import('./pages/CheckIn'));
+const CheckInGallery = lazy(() => import('./pages/CheckInGallery'));
+const UserManagement = lazy(() => import('./pages/UserManagement'));
+const KPIBoard = lazy(() => import('./pages/KPIBoard'));
+const AgentDetail = lazy(() => import('./pages/AgentDetail'));
+const Settings = lazy(() => import('./pages/Settings'));
+const PipelineBoard = lazy(() => import('./pages/PipelineBoard'));
+const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
+const CheckInMap = lazy(() => import('./pages/CheckInMap'));
+const RoleManagement = lazy(() => import('./pages/RoleManagement'));
+const TeamActivity = lazy(() => import('./pages/TeamActivity'));
 
 export interface RouteConfig {
   name: string;
@@ -150,6 +154,16 @@ export const routes: RouteConfig[] = [
     element: (
       <ProtectedRoute>
         <RoleManagement />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    name: 'Daily Activity',
+    path: '/team-activity',
+    routeKey: 'team-activity',
+    element: (
+      <ProtectedRoute>
+        <TeamActivity />
       </ProtectedRoute>
     ),
   },

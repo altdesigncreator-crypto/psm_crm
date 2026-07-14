@@ -2,13 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/db/supabase';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { MapPin, Clock, CalendarDays, User, ImageOff, Eye, X, Filter, Trash2, LayoutGrid, List, ChevronLeft, ChevronRight, Calendar } from 'lucide-react';
+import { MapPin, Clock, CalendarDays, User, ImageOff, Eye, X, Filter, Trash2, LayoutGrid, List, ChevronLeft, ChevronRight, Calendar, AlertTriangle, UserX, CheckCircle2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProfiles } from '@/hooks/useProfiles';
-import { isExec, getDepartmentLabel } from '@/lib/permissions';
+import { isExec, isManagerOrAbove, isDepartmentScoped, getDepartmentLabel } from '@/lib/permissions';
 import { useDepartments } from '@/hooks/useDepartments';
 import type { CheckIn as CheckInRecord } from '@/types';
 
@@ -18,8 +19,8 @@ function formatDateTime(iso: string): string {
 }
 
 export default function CheckInGallery() {
-  const { role } = useAuth();
-  const { nameOf } = useProfiles();
+  const { user, role } = useAuth();
+  const { nameOf, profiles } = useProfiles();
   const { departments } = useDepartments();
   const [checkins, setCheckins] = useState<CheckInRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,9 +32,14 @@ export default function CheckInGallery() {
   const [selectedCoords, setSelectedCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [lightboxPhoto, setLightboxPhoto] = useState<CheckInRecord | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
-  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
+  // Daily view by default — one chosen day at a time keeps the gallery
+  // manageable as records grow; "All days" is the explicit opt-out.
+  const [selectedDay, setSelectedDay] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [allDays, setAllDays] = useState(false);
 
   const canDelete = isExec(role);
+  // Late check-ins wait for exec (Super Admin / Boss) approval.
+  const canApprove = isExec(role);
 
   useEffect(() => {
     let active = true;
@@ -51,23 +57,49 @@ export default function CheckInGallery() {
   const agents = useMemo(() => Array.from(new Set(checkins.map((c) => nameOf(c.employee_id)))).sort(), [checkins, nameOf]);
 
   const filteredCheckins = useMemo(() => {
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfWeek = new Date(startOfToday);
-    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
     return checkins.filter((c) => {
       const matchesAgent = agentFilter === 'all' || nameOf(c.employee_id) === agentFilter;
       const matchesDept = deptFilter === 'all' || c.department_code === deptFilter;
-      let matchesDate = true;
-      const cDate = new Date(c.check_in_time);
-      if (dateFilter === 'today') matchesDate = cDate >= startOfToday;
-      else if (dateFilter === 'week') matchesDate = cDate >= startOfWeek;
-      else if (dateFilter === 'month') matchesDate = cDate >= startOfMonth;
-      return matchesAgent && matchesDept && matchesDate;
+      const matchesDay = allDays || c.check_in_date === selectedDay;
+      return matchesAgent && matchesDept && matchesDay;
     });
-  }, [checkins, agentFilter, deptFilter, dateFilter, nameOf]);
+  }, [checkins, agentFilter, deptFilter, allDays, selectedDay, nameOf]);
+
+  // Attendance for the selected day (department filter applies; the
+  // employee filter deliberately does not, so the lists stay complete).
+  const dayCheckins = useMemo(
+    () => (allDays ? [] : checkins.filter((c) => c.check_in_date === selectedDay && (deptFilter === 'all' || c.department_code === deptFilter))),
+    [checkins, allDays, selectedDay, deptFilter]
+  );
+  const lateCheckins = useMemo(() => dayCheckins.filter((c) => c.is_late), [dayCheckins]);
+  const absentStaff = useMemo(() => {
+    if (allDays) return [];
+    const checked = new Set(dayCheckins.map((c) => c.employee_id));
+    // Execs don't do field check-ins — everyone else active is expected to.
+    return profiles.filter((p) =>
+      p.status === 'active'
+      && p.role !== 'boss' && p.role !== 'super_admin'
+      && (deptFilter === 'all' || p.department_code === deptFilter)
+      && !checked.has(p.id)
+    );
+  }, [profiles, dayCheckins, allDays, deptFilter]);
+
+  const handleApprove = async (c: CheckInRecord) => {
+    if (!user?.id) return;
+    const { error } = await supabase
+      .from('check_ins')
+      .update({ approved_by: user.id, approved_at: new Date().toISOString() })
+      .eq('id', c.id);
+    if (error) { toast.error('Could not approve this check-in.'); return; }
+    await supabase.from('audit_logs').insert({
+      action: 'checkin_late_approved',
+      target_table: 'check_ins',
+      target_id: c.id,
+      performed_by: user.id,
+      new_value: { employee_id: c.employee_id, check_in_date: c.check_in_date },
+    });
+    toast.success(`Late check-in approved for ${nameOf(c.employee_id)}.`);
+  };
 
   const openMap = (lat: number, lng: number) => { setSelectedCoords({ lat, lng }); setMapOpen(true); };
   const openLightbox = (record: CheckInRecord, index = 0) => { setLightboxPhoto(record); setLightboxIndex(index); setLightboxOpen(true); };
@@ -100,7 +132,8 @@ export default function CheckInGallery() {
         <div>
           <h1 className="text-xl md:text-2xl font-bold text-foreground leading-snug">Check-in Records</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {filteredCheckins.length} total
+            {allDays ? 'All days' : new Date(`${selectedDay}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+            {` · ${filteredCheckins.length} record${filteredCheckins.length === 1 ? '' : 's'}`}
             {agentFilter !== 'all' && ` · ${agentFilter}`}
             {deptFilter !== 'all' && ` · ${getDepartmentLabel(deptFilter)}`}
           </p>
@@ -108,13 +141,16 @@ export default function CheckInGallery() {
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
             <Filter className="w-4 h-4 text-muted-foreground shrink-0" />
-            <Select value={deptFilter} onValueChange={setDeptFilter}>
-              <SelectTrigger className="h-11 w-32 text-sm"><SelectValue placeholder="Department" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All departments</SelectItem>
-                {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
-              </SelectContent>
-            </Select>
+            {/* Dept-scoped roles only see their own department via RLS */}
+            {!isDepartmentScoped(role) && (
+              <Select value={deptFilter} onValueChange={setDeptFilter}>
+                <SelectTrigger className="h-11 w-32 text-sm"><SelectValue placeholder="Department" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All departments</SelectItem>
+                  {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            )}
             <Select value={agentFilter} onValueChange={setAgentFilter}>
               <SelectTrigger className="h-11 w-36 text-sm"><SelectValue placeholder="Employee" /></SelectTrigger>
               <SelectContent>
@@ -122,15 +158,24 @@ export default function CheckInGallery() {
                 {agents.map((a) => (<SelectItem key={a} value={a}>{a}</SelectItem>))}
               </SelectContent>
             </Select>
-            <Select value={dateFilter} onValueChange={(v) => setDateFilter(v as any)}>
-              <SelectTrigger className="h-11 w-28 text-sm"><Calendar className="w-3.5 h-3.5 mr-1" /><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All time</SelectItem>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="week">This week</SelectItem>
-                <SelectItem value="month">This month</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              <Input
+                type="date"
+                value={selectedDay}
+                disabled={allDays}
+                onChange={(e) => { if (e.target.value) { setSelectedDay(e.target.value); setAllDays(false); } }}
+                className="h-11 w-[150px] text-sm disabled:opacity-50"
+              />
+            </div>
+            <Button
+              type="button"
+              variant={allDays ? 'default' : 'outline'}
+              onClick={() => setAllDays((v) => !v)}
+              className="h-11 px-3 text-xs font-medium"
+            >
+              {allDays ? 'Showing all days' : 'All days'}
+            </Button>
           </div>
           <div className="flex items-center border border-border rounded-lg overflow-hidden shrink-0">
             <Button variant={viewMode === 'gallery' ? 'default' : 'ghost'} size="sm" className="h-11 px-3 rounded-none" onClick={() => setViewMode('gallery')}><LayoutGrid className="w-4 h-4" /></Button>
@@ -138,6 +183,75 @@ export default function CheckInGallery() {
           </div>
         </div>
       </div>
+
+      {/* Daily attendance — late arrivals awaiting approval, and staff who
+          have not checked in on the selected day. Managers and above only. */}
+      {!allDays && isManagerOrAbove(role) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card className="shadow-card rounded-xl border-0">
+            <CardContent className="p-4 md:p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-warning/10 flex items-center justify-center"><AlertTriangle className="w-4 h-4 text-warning" /></div>
+                <p className="text-sm font-semibold text-foreground">Late Check-ins</p>
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-warning/10 text-warning">{lateCheckins.length}</span>
+              </div>
+              {lateCheckins.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-3 text-center">No late check-ins on this day.</p>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {lateCheckins.map((c) => (
+                    <div key={c.id} className="flex items-center gap-3 p-2.5 rounded-lg border border-border/60">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-foreground truncate">{nameOf(c.employee_id)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(c.check_in_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                          {' · '}{getDepartmentLabel(c.department_code)}
+                        </p>
+                      </div>
+                      {c.approved_by ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full bg-success/10 text-success shrink-0">
+                          <CheckCircle2 className="w-3 h-3" /> Approved
+                        </span>
+                      ) : canApprove ? (
+                        <Button size="sm" onClick={() => handleApprove(c)} className="h-8 min-h-0 px-3 text-xs shrink-0 gradient-primary text-white">
+                          Approve
+                        </Button>
+                      ) : (
+                        <span className="text-[11px] font-medium px-2 py-1 rounded-full bg-warning/10 text-warning shrink-0">Pending</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-card rounded-xl border-0">
+            <CardContent className="p-4 md:p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 rounded-lg bg-destructive/10 flex items-center justify-center"><UserX className="w-4 h-4 text-destructive" /></div>
+                <p className="text-sm font-semibold text-foreground">Not Checked In</p>
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-destructive/10 text-destructive">{absentStaff.length}</span>
+              </div>
+              {absentStaff.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-3 text-center">Everyone has checked in on this day.</p>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {absentStaff.map((p) => (
+                    <div key={p.id} className="flex items-center gap-3 p-2.5 rounded-lg border border-border/60">
+                      <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0"><User className="w-4 h-4 text-muted-foreground" /></div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
+                        <p className="text-xs text-muted-foreground">{p.department_code ? getDepartmentLabel(p.department_code) : '—'}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {filteredCheckins.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-muted-foreground"><ImageOff className="w-10 h-10 mb-3 opacity-40" /><p className="text-sm font-medium">No records for this filter</p></div>
@@ -154,6 +268,11 @@ export default function CheckInGallery() {
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 active:bg-black/10 transition-colors duration-300 flex items-center justify-center">
                   <div className="w-11 h-11 rounded-full bg-white/90 text-foreground opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center shadow-lg"><Eye className="w-5 h-5" /></div>
                 </div>
+                {c.is_late && (
+                  <span className={`absolute top-2 left-2 z-10 text-[10px] font-semibold px-2 py-0.5 rounded-full text-white shadow-sm ${c.approved_by ? 'bg-success' : 'bg-warning'}`}>
+                    {c.approved_by ? 'Late · Approved' : 'Late · Pending'}
+                  </span>
+                )}
                 {canDelete && (
                   <button type="button" onClick={(e) => { e.stopPropagation(); handleDelete(c.id); }} className="absolute top-2 right-2 z-10 w-10 h-10 rounded-full bg-white/90 text-destructive flex items-center justify-center hover:bg-destructive hover:text-white active:bg-destructive/80 transition-colors shadow-sm">
                     <Trash2 className="w-4 h-4" />
@@ -189,6 +308,7 @@ export default function CheckInGallery() {
                   <th className="text-left px-4 py-3 font-semibold text-muted-foreground whitespace-nowrap">Department</th>
                   <th className="text-left px-4 py-3 font-semibold text-muted-foreground whitespace-nowrap">Notes</th>
                   <th className="text-left px-4 py-3 font-semibold text-muted-foreground whitespace-nowrap">Date</th>
+                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground whitespace-nowrap">Status</th>
                   <th className="text-left px-4 py-3 font-semibold text-muted-foreground whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
@@ -207,7 +327,23 @@ export default function CheckInGallery() {
                     <td className="px-4 py-3 whitespace-nowrap text-foreground">{c.notes || '—'}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-muted-foreground text-xs">{formatDateTime(c.check_in_time)}</td>
                     <td className="px-4 py-3 whitespace-nowrap">
+                      {c.is_late ? (
+                        c.approved_by ? (
+                          <span className="text-xs font-medium px-2 py-1 rounded-full bg-success/10 text-success">Late · Approved</span>
+                        ) : (
+                          <span className="text-xs font-medium px-2 py-1 rounded-full bg-warning/10 text-warning">Late · Pending</span>
+                        )
+                      ) : (
+                        <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted text-muted-foreground">On time</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-2">
+                        {canApprove && c.is_late && !c.approved_by && (
+                          <button type="button" onClick={() => handleApprove(c)} className="flex items-center gap-1.5 text-xs font-medium text-success hover:bg-success/10 active:bg-success/20 rounded-md px-2.5 py-1.5 transition-colors">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> <span className="hidden md:inline">Approve</span>
+                          </button>
+                        )}
                         {c.latitude && c.longitude && (
                           <button type="button" onClick={() => openMap(c.latitude!, c.longitude!)} className="flex items-center gap-1.5 text-xs font-medium text-primary hover:bg-primary/10 active:bg-primary/20 rounded-md px-2.5 py-1.5 transition-colors">
                             <MapPin className="w-3.5 h-3.5" /> <span className="hidden md:inline">Location</span>

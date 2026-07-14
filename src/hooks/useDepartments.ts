@@ -28,5 +28,27 @@ export function useDepartments() {
     return error;
   }, [load]);
 
-  return { departments, loading, createDepartment, refresh: load };
+  const updateDepartment = useCallback(async (code: string, name: string) => {
+    const { error } = await supabase.from('departments').update({ name: name.trim() }).eq('code', code);
+    if (!error) await load();
+    return error;
+  }, [load]);
+
+  /** Hard delete — fails with a FK violation if historical rows (e.g. old
+   * check-ins) still reference the code; callers fall back to deactivate. */
+  const deleteDepartment = useCallback(async (code: string) => {
+    const { error } = await supabase.from('departments').delete().eq('code', code);
+    if (!error) await load();
+    return error;
+  }, [load]);
+
+  /** Soft delete: hides the department from every picker (the hook only
+   * loads is_active rows) while historical records keep their labels. */
+  const deactivateDepartment = useCallback(async (code: string) => {
+    const { error } = await supabase.from('departments').update({ is_active: false }).eq('code', code);
+    if (!error) await load();
+    return error;
+  }, [load]);
+
+  return { departments, loading, createDepartment, updateDepartment, deleteDepartment, deactivateDepartment, refresh: load };
 }

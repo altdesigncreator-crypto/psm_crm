@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Building2, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Login() {
@@ -43,9 +43,7 @@ export default function Login() {
       <div className="w-full max-w-md animate-fade-in-up space-y-3">
         <div className="bg-white rounded-lg shadow-card p-6 sm:p-8">
           <div className="flex flex-col items-center mb-8">
-            <div className="w-14 h-14 rounded-xl gradient-primary flex items-center justify-center mb-4 shadow-card">
-              <Building2 className="w-7 h-7 text-white" />
-            </div>
+            <img src="/logo.png" alt="PSM Properties" className="h-20 w-auto mb-4" draggable={false} />
             <h1 className="text-xl font-semibold text-foreground">Welcome Back</h1>
             <p className="text-sm text-muted-foreground mt-1">Sign in to your PSM Sale CRM account</p>
           </div>
