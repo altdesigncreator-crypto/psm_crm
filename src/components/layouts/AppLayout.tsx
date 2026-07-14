@@ -5,15 +5,13 @@ import { useTranslation } from '@/contexts/TranslationContext';
 import { useNotifications, type Notification } from '@/contexts/NotificationsContext';
 import { canAccessRoute, getRoleLabel, getDepartmentLabel, type RouteKey } from '@/lib/permissions';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
+import SystemBanner from '@/components/SystemBanner';
 import {
   LayoutDashboard, UserPlus, Users, LogOut, Menu, Bell, Footprints, Image, Shield,
   Footprints as CheckInIcon, CalendarDays, BarChart3, Plus, Home, MapPin,
   Settings as SettingsIcon, BarChart3 as AnalyticsIcon, Thermometer, Kanban, Briefcase, ListChecks,
-<<<<<<< HEAD
   Download,
-=======
   Activity as ActivityIcon,
->>>>>>> 64d0c4212fee019828fed6f896508319fcd3771e
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -233,6 +231,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Right column scrolls independently of the sidebar */}
       <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
+        <SystemBanner />
         <header className="md:hidden flex items-center justify-between px-4 py-3 bg-card shadow-sm border-b border-border shrink-0">
           <div className="flex items-center gap-3">
             <Sheet>

@@ -111,6 +111,16 @@ export function canIssueWarning(user: CurrentUser | null): boolean {
   return isManagerOrAbove(user?.role);
 }
 
+/** Mirrors the `warnings_insert` RLS policy for a general (not lead-tied)
+ * staff warning — e.g. Admin warning a Manager directly from the Staff
+ * page, rather than through a specific lead's follow-up trail. */
+export function canWarnStaff(user: CurrentUser | null, target: { departmentCode?: string | null }): boolean {
+  if (!user) return false;
+  if (isAdminOrAbove(user.role)) return true;
+  if (user.role === 'manager') return target.departmentCode === user.department;
+  return false;
+}
+
 /** Route names as used in src/routes.tsx / nav config. */
 export type RouteKey =
   | 'dashboard' | 'add-lead' | 'leads' | 'lead-detail' | 'pipeline' | 'follow-ups'
@@ -139,8 +149,11 @@ export function canAccessRoute(role: RoleTier | null | undefined, routeKey: Rout
     case 'settings':
       return true; // personal profile/preferences page; system-config section within it is exec-gated
     case 'user-management':
-      // FRD: User Management is Boss/Super Admin only — Admin cannot manage staff.
-      return isExec(role);
+      // FRD: creating/editing/deactivating staff accounts is Boss/Super Admin
+      // only. Admin can still open this page to view the directory and issue
+      // warnings (see canWarnStaff) — that's enforced inside the page itself,
+      // not by blocking the route.
+      return isAdminOrAbove(role);
     case 'role-management':
       return isExec(role);
     case 'kpi-board':

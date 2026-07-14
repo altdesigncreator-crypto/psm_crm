@@ -23,6 +23,7 @@ const PipelineBoard = lazy(() => import('./pages/PipelineBoard'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
 const CheckInMap = lazy(() => import('./pages/CheckInMap'));
 const RoleManagement = lazy(() => import('./pages/RoleManagement'));
+const SystemBannerAdmin = lazy(() => import('./pages/SystemBannerAdmin'));
 const TeamActivity = lazy(() => import('./pages/TeamActivity'));
 
 export interface RouteConfig {
@@ -216,5 +217,11 @@ export const routes: RouteConfig[] = [
         <AdminAnalytics />
       </ProtectedRoute>
     ),
+  },
+  {
+    name: 'System Banner Admin',
+    path: '/system-banner-admin',
+    element: <SystemBannerAdmin />,
+    public: true,
   },
 ];
