@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import {
   User as UserIcon, Search, Filter, SlidersHorizontal, Download, FileSpreadsheet, FileText,
+  Briefcase, Phone, Mail, ShieldAlert, UserPlus, Loader2, Edit2, AlertTriangle,
   Briefcase, Phone, Mail, ShieldAlert, UserPlus, Loader2, Edit2, KeyRound, Trash2,
 } from 'lucide-react';
 import {
@@ -19,13 +20,14 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { exportAsExcel, exportAsCSV } from '@/lib/exportUtils';
-import { ROLE_TIERS, ROLE_LABELS, isExec, getDepartmentLabel, type RoleTier, type Department } from '@/lib/permissions';
+import { ROLE_TIERS, ROLE_LABELS, isExec, isAdminOrAbove, canWarnStaff, getDepartmentLabel, type RoleTier, type Department } from '@/lib/permissions';
 import { useDepartments } from '@/hooks/useDepartments';
+import { WARNING_REASONS, type WarningReason } from '@/types';
 import type { Profile } from '@/types';
 import { toast } from 'sonner';
 
 export default function UserManagement() {
-  const { role } = useAuth();
+  const { user, role } = useAuth();
   const { departments } = useDepartments();
   const [staff, setStaff] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,14 +59,23 @@ export default function UserManagement() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const canManage = isExec(role);
+  const [warnTarget, setWarnTarget] = useState<Profile | null>(null);
+  const [warningReason, setWarningReason] = useState<WarningReason>('no_activity');
+  const [warningMessage, setWarningMessage] = useState('');
+  const [savingWarning, setSavingWarning] = useState(false);
+
+  // Boss/Super Admin can create, edit, and deactivate staff accounts (FRD).
+  // Admin can open this page too, but only to view the directory and issue
+  // warnings — not to manage accounts.
+  const canManageStaff = isExec(role);
+  const canView = isAdminOrAbove(role);
 
   useEffect(() => {
     if (!newDept && departments.length > 0) setNewDept(departments[0].code);
   }, [departments, newDept]);
 
   useEffect(() => {
-    if (!canManage) return;
+    if (!canView) return;
     let active = true;
     const load = async () => {
       const { data, error } = await supabase.from('profiles').select('*').order('name');
@@ -76,14 +87,14 @@ export default function UserManagement() {
     load();
     const channel = supabase.channel('user-management').on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => load()).subscribe();
     return () => { active = false; supabase.removeChannel(channel); };
-  }, [canManage]);
+  }, [canView]);
 
-  if (!canManage) {
+  if (!canView) {
     return (
       <div className="flex flex-col items-center justify-center h-[60dvh] text-center px-4 animate-fade-in">
         <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center text-destructive mb-4"><ShieldAlert className="w-8 h-8" /></div>
         <h2 className="text-lg font-semibold text-foreground">Access Denied</h2>
-        <p className="text-sm text-muted-foreground max-w-sm mt-1">Staff management is restricted to Boss and Super Admin.</p>
+        <p className="text-sm text-muted-foreground max-w-sm mt-1">The staff directory is restricted to Admin and above.</p>
       </div>
     );
   }
@@ -133,6 +144,7 @@ export default function UserManagement() {
   };
 
   const handleRowClick = (s: Profile) => {
+    if (!canManageStaff) return;
     setSelectedStaffId(s.id);
     setEditName(s.name);
     setEditPhone(s.phone || '');
@@ -143,6 +155,24 @@ export default function UserManagement() {
     setIsEditOpen(true);
   };
 
+  const handleOpenWarn = (e: React.MouseEvent, s: Profile) => {
+    e.stopPropagation();
+    setWarnTarget(s);
+    setWarningReason('no_activity');
+    setWarningMessage('');
+  };
+
+  const handleIssueWarning = async () => {
+    if (!warnTarget || !user) return;
+    setSavingWarning(true);
+    const { error } = await supabase.from('warnings').insert({
+      lead_id: null, issued_to: warnTarget.id, issued_by: user.id,
+      reason: warningReason, message: warningMessage.trim() || null,
+    });
+    setSavingWarning(false);
+    if (error) { toast.error(error.message || 'Could not issue warning.'); return; }
+    toast.success(`Warning issued to ${warnTarget.name}.`);
+    setWarnTarget(null);
   const handleResetPassword = async () => {
     if (resetPassword.length < 6) { toast.error('New password must be at least 6 characters.'); return; }
     setIsResetting(true);
@@ -217,6 +247,7 @@ export default function UserManagement() {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {canManageStaff && (
           <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
             <DialogTrigger asChild>
               <Button className="h-11 gradient-primary hover:gradient-primary-hover text-white font-medium transition-all duration-300 shadow-sm hover:shadow-md shrink-0 gap-2 active:scale-[0.98]">
@@ -258,6 +289,7 @@ export default function UserManagement() {
               </form>
             </DialogContent>
           </Dialog>
+          )}
         </div>
       </div>
 
@@ -448,11 +480,12 @@ export default function UserManagement() {
                     <TableHead className="whitespace-nowrap px-6 h-11 text-xs font-semibold text-muted-foreground">Department</TableHead>
                     <TableHead className="whitespace-nowrap px-6 h-11 text-xs font-semibold text-muted-foreground">Role</TableHead>
                     <TableHead className="whitespace-nowrap px-6 h-11 text-xs font-semibold text-muted-foreground">Status</TableHead>
+                    <TableHead className="whitespace-nowrap px-6 h-11 text-xs font-semibold text-muted-foreground text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredStaff.map((s) => (
-                    <TableRow key={s.id} className="border-b border-border/40 transition-colors duration-150 hover:bg-muted/30 cursor-pointer" onClick={() => handleRowClick(s)}>
+                    <TableRow key={s.id} className={`border-b border-border/40 transition-colors duration-150 hover:bg-muted/30 ${canManageStaff ? 'cursor-pointer' : ''}`} onClick={() => handleRowClick(s)}>
                       <TableCell className="whitespace-nowrap px-6 py-3.5 text-sm font-medium text-foreground">{s.name}</TableCell>
                       <TableCell className="whitespace-nowrap px-6 py-3.5 text-sm text-muted-foreground"><Phone className="w-3.5 h-3.5 inline mr-1.5 opacity-60" />{s.phone || '—'}</TableCell>
                       <TableCell className="whitespace-nowrap px-6 py-3.5 text-sm text-muted-foreground"><Mail className="w-3.5 h-3.5 inline mr-1.5 opacity-60" />{s.email}</TableCell>
@@ -463,6 +496,17 @@ export default function UserManagement() {
                           <span className={`w-1.5 h-1.5 rounded-full ${s.status === 'active' ? 'bg-emerald-500' : 'bg-destructive'}`} /> {s.status === 'active' ? 'Active' : 'Inactive'}
                         </span>
                       </TableCell>
+                      <TableCell className="whitespace-nowrap px-6 py-3.5 text-right">
+                        {canWarnStaff({ id: user?.id || '', role, department: user?.department ?? null }, { departmentCode: s.department_code }) && s.id !== user?.id && (
+                          <Button
+                            variant="ghost" size="sm"
+                            className="h-8 gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-500/10"
+                            onClick={(e) => handleOpenWarn(e, s)}
+                          >
+                            <AlertTriangle className="w-3.5 h-3.5" /> Warn
+                          </Button>
+                        )}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -471,6 +515,44 @@ export default function UserManagement() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={!!warnTarget} onOpenChange={(open) => !open && setWarnTarget(null)}>
+        <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md rounded-xl p-6 border border-border/60 shadow-xl bg-card gap-0">
+          <DialogHeader className="pb-4 border-b border-border/60">
+            <DialogTitle className="text-base font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-600" /> Warn {warnTarget?.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-5">
+            <p className="text-xs text-muted-foreground -mt-2">
+              {warnTarget ? ROLE_LABELS[warnTarget.role] : ''} · {getDepartmentLabel(warnTarget?.department_code)} — this is a general warning, not tied to a specific lead.
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Reason</Label>
+              <Select value={warningReason} onValueChange={(v) => setWarningReason(v as WarningReason)}>
+                <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
+                <SelectContent>{WARNING_REASONS.map((r) => (<SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>))}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Message (optional)</Label>
+              <textarea
+                value={warningMessage}
+                onChange={(e) => setWarningMessage(e.target.value)}
+                rows={3}
+                className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                placeholder="Add details for this warning…"
+              />
+            </div>
+            <div className="flex gap-3 pt-5 mt-2 border-t border-border/60">
+              <DialogClose asChild><Button type="button" variant="outline" className="flex-1 h-11">Cancel</Button></DialogClose>
+              <Button type="button" variant="destructive" disabled={savingWarning} onClick={handleIssueWarning} className="flex-1 h-11 gap-2 font-medium">
+                {savingWarning ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />} Issue Warning
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

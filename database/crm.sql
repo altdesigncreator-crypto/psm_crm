@@ -1158,5 +1158,100 @@ begin
 end $$;
 
 -- =============================================================================
+-- 16. SYSTEM BANNER — standalone maintenance/announcement board
+-- =============================================================================
+-- Deliberately NOT tied to auth.users/profiles — a separate, narrow-purpose
+-- login (see supabase/functions/banner-login, supabase/functions/banner-
+-- messages) used only to publish a banner message shown to every visitor
+-- (including on the login screen, before any CRM account is involved).
+-- Every read/write of banner_admins/banner_sessions and every WRITE of
+-- system_messages goes through those two service-role edge functions —
+-- there is no RLS policy granting the client direct access to them at all.
+
+do $$ begin
+  create type system_message_type as enum ('info', 'warning', 'maintenance', 'critical');
+exception when duplicate_object then null; end $$;
+
+create table if not exists public.banner_admins (
+  id             uuid primary key default gen_random_uuid(),
+  username       text not null unique,
+  password_hash  text not null,
+  created_at     timestamptz not null default now()
+);
+
+create table if not exists public.banner_sessions (
+  token       uuid primary key default gen_random_uuid(),
+  admin_id    uuid not null references public.banner_admins(id) on delete cascade,
+  created_at  timestamptz not null default now(),
+  expires_at  timestamptz not null default (now() + interval '12 hours')
+);
+
+-- Only called by the banner-login edge function via the service-role key —
+-- lets it check a password against the pgcrypto hash without the client (or
+-- any RLS-bound role) ever touching banner_admins directly.
+-- search_path includes `extensions` (not just `public`) because Supabase
+-- installs pgcrypto's crypt()/gen_salt() there, not into public.
+create or replace function public.verify_banner_admin(p_username text, p_password text)
+returns table (id uuid)
+language sql security definer set search_path = public, extensions as $$
+  select id from public.banner_admins
+  where username = p_username and password_hash = crypt(p_password, password_hash);
+$$;
+
+-- Only called by the banner-messages edge function to check a session token
+-- is real and unexpired before allowing any write to system_messages.
+create or replace function public.verify_banner_session(p_token uuid)
+returns boolean
+language sql security definer set search_path = public, extensions as $$
+  select exists (
+    select 1 from public.banner_sessions where token = p_token and expires_at > now()
+  );
+$$;
+
+create table if not exists public.system_messages (
+  id          uuid primary key default gen_random_uuid(),
+  message     text not null,
+  type        system_message_type not null default 'maintenance',
+  is_active   boolean not null default true,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create index if not exists idx_system_messages_active on public.system_messages(is_active);
+
+drop trigger if exists trg_system_messages_updated_at on public.system_messages;
+create trigger trg_system_messages_updated_at before update on public.system_messages
+  for each row execute function public.set_updated_at();
+
+alter table public.banner_admins enable row level security;
+alter table public.banner_sessions enable row level security;
+alter table public.system_messages enable row level security;
+
+-- system_messages: anyone — signed in or not — can read the *active*
+-- message(s); there is no insert/update/delete policy at all, since every
+-- write must go through the banner-messages edge function (service role).
+drop policy if exists system_messages_select on public.system_messages;
+create policy system_messages_select on public.system_messages for select
+  to anon, authenticated using (is_active = true);
+
+-- Realtime so the banner appears/updates/disappears live everywhere the
+-- instant an admin edits it, with no page refresh needed.
+do $$ begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'system_messages'
+  ) then
+    execute 'alter publication supabase_realtime add table public.system_messages';
+  end if;
+end $$;
+
+-- Default banner-admin login — CHANGE THIS PASSWORD before going to
+-- production. Documented alongside the other demo credentials in
+-- database/credentials.txt.
+insert into public.banner_admins (username, password_hash)
+values ('sysadmin', crypt('Banner@2026!', gen_salt('bf')))
+on conflict (username) do nothing;
+
+-- =============================================================================
 -- End of database/crm.sql
 -- =============================================================================
