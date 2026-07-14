@@ -3,8 +3,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS, PUT, DELETE',
 };
 
 function json(body: unknown, status = 200) {
@@ -31,7 +31,9 @@ interface CreateStaffPayload {
  * has no INSERT policy on profiles at all).
  */
 serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { status: 200, headers: CORS_HEADERS });
+  }
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -63,8 +65,9 @@ serve(async (req) => {
     if (!payload.email || !payload.password || !payload.name || !payload.role) {
       return json({ error: 'email, password, name, and role are required.' }, 400);
     }
-    if (payload.role !== 'boss' && payload.role !== 'super_admin' && payload.role !== 'admin' && !payload.department) {
-      return json({ error: 'Manager/Sales accounts require a department.' }, 400);
+    // Admin is department-scoped like Manager — only Boss/Super Admin are global.
+    if (payload.role !== 'boss' && payload.role !== 'super_admin' && !payload.department) {
+      return json({ error: 'Admin/Manager/Sales accounts require a department.' }, 400);
     }
 
     const { data: created, error: createErr } = await admin.auth.admin.createUser({

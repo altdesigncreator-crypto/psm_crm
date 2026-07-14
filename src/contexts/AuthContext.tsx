@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/db/supabase';
+import { isBiometricEnabledFor } from '@/lib/biometricAuth';
 import type { RoleTier, Department } from '@/lib/permissions';
 
 export interface StaffUser {
@@ -19,9 +20,24 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<StaffUser>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  /** True only when a "Remember me" session was silently restored on app
+   * start and the user has biometric sign-in enrolled on this device. A
+   * fresh email/password login never sets this — biometrics are an
+   * alternative way in, not a second gate. */
+  needsBiometricUnlock: boolean;
+  completeBiometricUnlock: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+/** Thrown by loadProfile. `definitive` = the account truly can't be used
+ * (missing or deactivated) — as opposed to a transient network/API failure
+ * that should never cost the user their remembered session. */
+class ProfileLoadError extends Error {
+  constructor(message: string, public definitive: boolean) {
+    super(message);
+  }
+}
 
 async function loadProfile(userId: string): Promise<StaffUser> {
   const { data, error } = await supabase
@@ -31,10 +47,13 @@ async function loadProfile(userId: string): Promise<StaffUser> {
     .single();
 
   if (error || !data) {
-    throw new Error('Could not load your staff profile. Contact your administrator.');
+    // PGRST116 = zero rows: the profile genuinely doesn't exist. Anything
+    // else (network drop, timeout, transient API error) is retryable.
+    const missing = (error as { code?: string } | null)?.code === 'PGRST116';
+    throw new ProfileLoadError('Could not load your staff profile. Contact your administrator.', missing);
   }
   if (data.status !== 'active') {
-    throw new Error('Your account has been deactivated. Contact your administrator.');
+    throw new ProfileLoadError('Your account has been deactivated. Contact your administrator.', true);
   }
 
   return {
@@ -47,28 +66,60 @@ async function loadProfile(userId: string): Promise<StaffUser> {
   };
 }
 
+// Set once biometrics (or a password login) verified this browser session —
+// sessionStorage survives refreshes but not closing the browser/app, so the
+// biometric prompt appears once per session instead of on every refresh.
+const BIO_UNLOCKED_FLAG = 'psm_bio_unlocked';
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<StaffUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [needsBiometricUnlock, setNeedsBiometricUnlock] = useState(false);
 
   const hydrate = useCallback(async (sessionUserId: string | null) => {
     if (!sessionUserId) {
       setUser(null);
       return;
     }
-    try {
-      const profile = await loadProfile(sessionUserId);
-      setUser(profile);
-    } catch {
-      setUser(null);
-      await supabase.auth.signOut();
+    // Retry transient failures — a flaky mobile connection on app start used
+    // to hit the catch below and sign the user out, permanently destroying
+    // the "Remember me" session over a hiccup.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const profile = await loadProfile(sessionUserId);
+        setUser(profile);
+        return;
+      } catch (err) {
+        if (err instanceof ProfileLoadError && err.definitive) {
+          // Account is really gone/deactivated — only then drop the session.
+          setUser(null);
+          await supabase.auth.signOut();
+          return;
+        }
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
+      }
     }
+    // Still failing after retries (offline?): show the login screen but KEEP
+    // the stored session so the next launch can restore it.
+    setUser(null);
   }, []);
 
   useEffect(() => {
     let active = true;
     supabase.auth.getSession().then(({ data }) => {
-      hydrate(data.session?.user.id ?? null).finally(() => {
+      const restoredUserId = data.session?.user.id ?? null;
+      // Session came back from storage without the user typing anything —
+      // if they enrolled biometrics, offer the biometric sign-in gate, but
+      // only once per browser session: a plain refresh after unlocking
+      // must not ask again.
+      if (
+        restoredUserId
+        && isBiometricEnabledFor(restoredUserId)
+        && sessionStorage.getItem(BIO_UNLOCKED_FLAG) !== restoredUserId
+      ) {
+        setNeedsBiometricUnlock(true);
+      }
+      hydrate(restoredUserId).finally(() => {
         if (active) setLoading(false);
       });
     });
@@ -92,6 +143,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const profile = await loadProfile(data.user.id);
     setUser(profile);
+    // Signing in with email/password IS the authentication — never stack
+    // the biometric gate on top of it, and count it as this session's unlock.
+    setNeedsBiometricUnlock(false);
+    sessionStorage.setItem(BIO_UNLOCKED_FLAG, profile.id);
     await supabase.from('audit_logs').insert({ action: 'login', performed_by: profile.id });
     return profile;
   }, []);
@@ -102,7 +157,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     await supabase.auth.signOut();
     setUser(null);
+    setNeedsBiometricUnlock(false);
+    sessionStorage.removeItem(BIO_UNLOCKED_FLAG);
   }, [user]);
+
+  const completeBiometricUnlock = useCallback(() => {
+    setNeedsBiometricUnlock(false);
+    if (user?.id) sessionStorage.setItem(BIO_UNLOCKED_FLAG, user.id);
+  }, [user?.id]);
 
   const refreshProfile = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
@@ -111,7 +173,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, role: user?.role ?? null, department: user?.department ?? null, loading, login, logout, refreshProfile }}
+      value={{ user, role: user?.role ?? null, department: user?.department ?? null, loading, login, logout, refreshProfile, needsBiometricUnlock, completeBiometricUnlock }}
     >
       {children}
     </AuthContext.Provider>
@@ -129,6 +191,8 @@ export function useAuth() {
       login: async () => { throw new Error('Auth Context not mounted'); },
       logout: async () => {},
       refreshProfile: async () => {},
+      needsBiometricUnlock: false,
+      completeBiometricUnlock: () => {},
     } as AuthContextType;
   }
   return context;

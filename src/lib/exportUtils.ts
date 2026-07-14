@@ -1,6 +1,5 @@
-import * as XLSX from 'xlsx';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+// xlsx and jspdf are heavy (~1MB+ together) — they are loaded on demand
+// inside each export function so they never weigh down the initial bundle.
 import { type Lead, LEAD_STAGES, LEAD_GRADES } from '@/types';
 import { getDepartmentLabel } from '@/lib/permissions';
 
@@ -57,8 +56,9 @@ function getExportFileName(base: string, count: number, ext: string): string {
   return `PSM_${base}_${count}records_${date}.${ext}`;
 }
 
-export function exportAsExcel(leads: Lead[]) {
+export async function exportAsExcel(leads: Lead[]) {
   if (leads.length === 0) return;
+  const XLSX = await import('xlsx');
   const data = leads.map((l) => {
     const row = getLeadRow(l);
     return Object.fromEntries(EXPORT_HEADERS.map((h, i) => [h, row[i]]));
@@ -71,8 +71,9 @@ export function exportAsExcel(leads: Lead[]) {
   triggerDownload(blob, getExportFileName('Leads', leads.length, 'xlsx'));
 }
 
-export function exportAsPDF(leads: Lead[]) {
+export async function exportAsPDF(leads: Lead[]) {
   if (leads.length === 0) return;
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
   doc.setFontSize(16);
@@ -198,8 +199,9 @@ interface DepartmentStat {
   agentCount: number;
 }
 
-export function exportKPIAsExcel(agentStats: AgentStat[], departmentStats?: DepartmentStat[]) {
+export async function exportKPIAsExcel(agentStats: AgentStat[], departmentStats?: DepartmentStat[]) {
   if (agentStats.length === 0) return;
+  const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
 
   const agentData = agentStats.map((a, idx) => ({
@@ -229,8 +231,9 @@ export function exportKPIAsExcel(agentStats: AgentStat[], departmentStats?: Depa
   triggerDownload(blob, `PSM_KPI_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
 }
 
-export function exportKPIAsPDF(agentStats: AgentStat[], departmentStats?: DepartmentStat[]) {
+export async function exportKPIAsPDF(agentStats: AgentStat[], departmentStats?: DepartmentStat[]) {
   if (agentStats.length === 0) return;
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
   doc.setFontSize(16);
