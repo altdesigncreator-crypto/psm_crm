@@ -20,6 +20,7 @@ import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
+import { useTeams } from '@/hooks/useTeams';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { canEditLead, canAddFollowUp, canAssignLead, canIssueWarning, canMonitorLead, canDeleteLead, isManagerOrAbove } from '@/lib/permissions';
@@ -57,6 +58,7 @@ export default function LeadDetail() {
   const [mapOpen, setMapOpen] = useState(false);
   const { colors: statusColors } = useStatusColors();
   const { profiles, byId, nameOf } = useProfiles();
+  const { membersOf } = useTeams();
 
   const [followUpForm, setFollowUpForm] = useState({ type: 'phone', status: 'interested', notes: '' });
   const [savingFollowUp, setSavingFollowUp] = useState(false);
@@ -83,7 +85,16 @@ export default function LeadDetail() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  const departmentStaff = profiles.filter((p) => p.department_code === lead?.department_code && p.role === 'sale');
+  // Reassignment candidates come from the lead's own team, not a flat
+  // department roster — a manager only ever reaches this block for a lead
+  // filed under a team they run (see canReassign below), and a sales
+  // person's home department can differ from a team's. A team-less lead
+  // (legacy data, or admin/exec working outside any team) falls back to the
+  // department roster, the only case that still reaches this branch.
+  const teamStaff = lead?.team_id ? membersOf(lead.team_id) : null;
+  const departmentStaff = teamStaff
+    ? profiles.filter((p) => teamStaff.includes(p.id) && p.role === 'sale')
+    : profiles.filter((p) => p.department_code === lead?.department_code && p.role === 'sale');
 
   usePageHeader('Lead Profile', lead ? `${lead.name} — ${lead.phone}` : undefined);
 

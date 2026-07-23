@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/db/supabase';
@@ -19,13 +19,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useProfiles } from '@/hooks/useProfiles';
 import { useTeams } from '@/hooks/useTeams';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
-import { isManagerOrAbove } from '@/lib/permissions';
+import { isManagerOrAbove, isAdminOrAbove, getDepartmentLabel } from '@/lib/permissions';
 
 export default function AddLead() {
   const navigate = useNavigate();
   const { user, role, department } = useAuth();
   const { profiles } = useProfiles();
-  const { teams, teamsOf } = useTeams();
+  const { teams, teamsOf, membersOf } = useTeams();
   usePageHeader('Add New Lead', 'Capture comprehensive lead information');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -65,20 +65,49 @@ export default function AddLead() {
   const [aiScoreReason, setAiScoreReason] = useState('');
 
   const canAssign = isManagerOrAbove(role);
-  const departmentStaff = profiles.filter((p) => p.department_code === department && p.role === 'sale');
 
-  // A lead is filed under a team so only that team's manager (plus Admin/
-  // exec) can see it. Most sales people belong to exactly one team, so this
-  // auto-selects silently; it only becomes a visible choice when the owner
-  // belongs to more than one.
-  const ownerTeamIds = ownerId ? teamsOf(ownerId) : [];
-  const ownerTeams = teams.filter((t) => ownerTeamIds.includes(t.id));
+  // Team comes first, then who on that team owns the lead — a manager can
+  // run more than one team (in more than one department) and a salesperson
+  // can sit on more than one team, so "team" can never be reliably inferred
+  // from a flat department roster. Each tier only ever sees teams it's
+  // actually entitled to assign into; RLS enforces the same boundary
+  // server-side regardless of what this list shows.
+  const teamOptions = useMemo(() => {
+    const active = teams.filter((t) => t.is_active !== false);
+    if (role === 'manager') return active.filter((t) => t.manager_id === user?.id);
+    if (isAdminOrAbove(role)) return active; // admin: own department only (RLS-scoped); exec: all
+    return user ? active.filter((t) => teamsOf(user.id).includes(t.id)) : []; // sale: teams they're on
+  }, [teams, role, user, teamsOf]);
 
+  // Auto-select when there's only one possible team so it's zero extra taps
+  // for the common case; only becomes a visible choice when genuinely
+  // ambiguous.
   useEffect(() => {
-    if (ownerTeamIds.length === 1) setTeamId(ownerTeamIds[0]);
-    else if (!ownerTeamIds.includes(teamId)) setTeamId('');
+    if (teamOptions.length === 1) setTeamId(teamOptions[0].id);
+    else if (!teamOptions.some((t) => t.id === teamId)) setTeamId('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ownerId, ownerTeamIds.join(',')]);
+  }, [teamOptions.map((t) => t.id).join(',')]);
+
+  const selectedTeam = teamOptions.find((t) => t.id === teamId) || null;
+  const teamMemberIds = teamId ? membersOf(teamId) : [];
+  const teamMemberProfiles = profiles.filter((p) => teamMemberIds.includes(p.id) && p.role === 'sale');
+
+  // If the chosen team changes and the previously-picked owner isn't on it
+  // (and isn't "myself"), drop the stale pick rather than silently submit a
+  // lead whose owner doesn't belong to its own team.
+  useEffect(() => {
+    if (ownerId && ownerId !== user?.id && !teamMemberIds.includes(ownerId)) setOwnerId('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId]);
+
+  // Nearest-agent search is scoped to people this creator could actually
+  // assign into one of the teams above — never a random org-wide match,
+  // which would bypass the same team hierarchy the rest of this form
+  // enforces.
+  const assignableMemberIds = useMemo(
+    () => new Set(teamOptions.flatMap((t) => membersOf(t.id))),
+    [teamOptions, membersOf]
+  );
 
   const handleCaptureLeadGPS = () => {
     if (!navigator.geolocation) { toast.error('GPS is not supported on this device.'); return; }
@@ -103,6 +132,7 @@ export default function AddLead() {
         }
       });
       const agents = Array.from(latest.entries())
+        .filter(([id]) => assignableMemberIds.has(id))
         .map(([id, coords]) => ({
           id,
           name: profiles.find((p) => p.id === id)?.name || 'Unknown',
@@ -120,6 +150,11 @@ export default function AddLead() {
 
   const selectNearestAgent = (agent: { id: string; name: string }) => {
     setOwnerId(agent.id);
+    // Auto-resolve which team this puts the lead under — if the agent sits
+    // on more than one team this creator can assign into, leave it for the
+    // Team selector above rather than guessing.
+    const candidateTeamIds = teamOptions.filter((t) => membersOf(t.id).includes(agent.id)).map((t) => t.id);
+    if (candidateTeamIds.length === 1) setTeamId(candidateTeamIds[0]);
     setAgentPickerOpen(false);
     toast.success(`Auto-assigned: ${agent.name}`);
   };
@@ -136,7 +171,10 @@ export default function AddLead() {
     purpose: purpose || null,
     lead_source: leadSource || null,
     lead_grade: leadGrade || null,
-    department_code: department || 'house',
+    // A team can belong to a different department than the creator's own —
+    // the lead's department always follows the team it's filed under, not
+    // whoever happens to be creating it.
+    department_code: selectedTeam?.department_code || department || 'house',
     team_id: teamId || null,
     owner_id: ownerId || user?.id,
     created_by: user?.id,
@@ -194,6 +232,10 @@ export default function AddLead() {
 
     if (!name.trim() || !phone.trim() || !preferredProject.trim() || !leadGrade) {
       setError('Name, phone, project, and lead grade are required.');
+      return;
+    }
+    if (teamOptions.length > 1 && !teamId) {
+      setError('Please select which team this lead is for.');
       return;
     }
 
@@ -334,15 +376,43 @@ export default function AddLead() {
                   {aiScoreReason && <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-2 py-1.5">{aiScoreReason}</p>}
                   <p className="text-[11px] text-muted-foreground">This is the starting grade. Once follow-ups are recorded, the grade updates automatically based on each follow-up's outcome.</p>
                 </div>
+                {/* Team first, then who on that team owns the lead — since a
+                    manager can run more than one team and a salesperson can
+                    sit on more than one, "team" can never be reliably
+                    guessed from a name alone. */}
+                {teamOptions.length > 1 && (
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Team <span className="text-destructive">*</span></Label>
+                    <Select value={teamId} onValueChange={setTeamId}>
+                      <SelectTrigger className="h-12"><SelectValue placeholder="Select team" /></SelectTrigger>
+                      <SelectContent>
+                        {teamOptions.map((t) => (
+                          <SelectItem key={t.id} value={t.id}>
+                            {t.name}{isAdminOrAbove(role) ? ` · ${getDepartmentLabel(t.department_code)}` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">Only this team's manager (plus Admin/exec) will be able to see this lead.</p>
+                  </div>
+                )}
+                {teamOptions.length === 1 && (
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Team</Label>
+                    <div className="h-12 flex items-center px-4 rounded-xl border border-border bg-muted/30 text-sm text-foreground">
+                      {teamOptions[0].name}
+                    </div>
+                  </div>
+                )}
                 {canAssign ? (
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Assign to Sales Person</Label>
                     <div className="flex items-center gap-2">
-                      <Select value={ownerId} onValueChange={setOwnerId}>
-                        <SelectTrigger className="h-12 flex-1"><SelectValue placeholder="Assign to…" /></SelectTrigger>
+                      <Select value={ownerId} onValueChange={setOwnerId} disabled={!teamId && teamOptions.length > 0}>
+                        <SelectTrigger className="h-12 flex-1"><SelectValue placeholder={!teamId && teamOptions.length > 0 ? 'Select a team first' : 'Assign to…'} /></SelectTrigger>
                         <SelectContent>
                           {user && <SelectItem value={user.id}>Myself</SelectItem>}
-                          {departmentStaff.map((p) => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>))}
+                          {teamMemberProfiles.map((p) => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>))}
                         </SelectContent>
                       </Select>
                       <button
@@ -352,21 +422,14 @@ export default function AddLead() {
                         <LocateFixed className="w-4 h-4" /> <span className="hidden md:inline">Nearest</span>
                       </button>
                     </div>
+                    {teamId && teamMemberProfiles.length === 0 && (
+                      <p className="text-[11px] text-muted-foreground">This team has no sales people yet — you can still assign the lead to yourself.</p>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Owner</Label>
                     <Input value="This lead will be assigned to you" disabled className="h-12 text-sm" />
-                  </div>
-                )}
-                {ownerTeams.length > 1 && (
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">Which Team is this for?</Label>
-                    <Select value={teamId} onValueChange={setTeamId}>
-                      <SelectTrigger className="h-12"><SelectValue placeholder="Select team" /></SelectTrigger>
-                      <SelectContent>{ownerTeams.map((t) => (<SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>))}</SelectContent>
-                    </Select>
-                    <p className="text-[11px] text-muted-foreground">This sales person is on more than one team — only that team's manager will be able to see this lead.</p>
                   </div>
                 )}
                 <div className="space-y-2">

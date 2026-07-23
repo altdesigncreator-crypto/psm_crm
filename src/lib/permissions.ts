@@ -70,12 +70,13 @@ interface LeadRecord {
 }
 
 /** Manager's team-scoped check shared by canViewLead/canMonitorLead — a
- * lead filed under a team is visible only to that team's manager; a lead
- * with no team yet (pre-team-launch data) falls back to whole-department
- * visibility, exactly mirroring manager_scoped_lead() in database/crm.sql. */
+ * lead filed under a team is visible only to that team's manager. A lead
+ * with no team_id is invisible to every manager (only Admin/exec and the
+ * lead's own owner can still see it) — no whole-department fallback,
+ * exactly mirroring manager_scoped_lead() in database/crm.sql. */
 function managerCanSeeLead(user: CurrentUser, lead: LeadRecord): boolean {
-  if (lead.teamId) return (user.managedTeamIds || []).includes(lead.teamId);
-  return lead.departmentCode === user.department;
+  if (!lead.teamId) return false;
+  return (user.managedTeamIds || []).includes(lead.teamId);
 }
 
 /** Mirrors the `leads_select` RLS policy in database/crm.sql. */

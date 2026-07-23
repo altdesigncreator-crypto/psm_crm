@@ -508,18 +508,17 @@ language sql stable security definer set search_path = public as $$
   );
 $$;
 
--- Legacy fallback baked in: a lead with no team_id yet is still visible to
--- whichever manager covers its whole department, exactly like before teams
--- existed.
+-- Strictly team-scoped: a manager only sees a lead filed under a team they
+-- run. A lead with no team_id is invisible to every manager (only Admin/exec
+-- and the lead's own owner can still see it) — there is no whole-department
+-- fallback.
 create or replace function public.manager_scoped_lead(p_lead_id uuid) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (
     select 1 from public.leads l
     where l.id = p_lead_id
-      and (
-        (l.team_id is not null and public.manages_team(l.team_id))
-        or (l.team_id is null and l.department_code = public.current_department())
-      )
+      and l.team_id is not null
+      and public.manages_team(l.team_id)
   );
 $$;
 
@@ -943,10 +942,7 @@ create policy leads_select on public.leads for select
   to authenticated using (
     public.is_exec()
     or (public.current_role() = 'admin' and department_code = public.current_department())
-    or (public.current_role() = 'manager' and (
-          (team_id is not null and public.manages_team(team_id))
-          or (team_id is null and department_code = public.current_department())
-        ))
+    or (public.current_role() = 'manager' and team_id is not null and public.manages_team(team_id))
     or owner_id = auth.uid()
   );
 
@@ -1012,10 +1008,7 @@ begin
   if not (
     public.is_exec()
     or (public.current_role() = 'admin' and v_dept = public.current_department())
-    or (public.current_role() = 'manager' and (
-          (v_team is not null and public.manages_team(v_team))
-          or (v_team is null and v_dept = public.current_department())
-        ))
+    or (public.current_role() = 'manager' and v_team is not null and public.manages_team(v_team))
   ) then
     raise exception 'Not authorized to reassign this lead';
   end if;
