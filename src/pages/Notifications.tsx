@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useNotifications } from '@/contexts/NotificationsContext';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -30,6 +31,7 @@ function formatNotifDate(iso?: string) {
 export default function Notifications() {
   const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
   const navigate = useNavigate();
+  usePageHeader('Notifications', 'Real-time updates and follow-up reminders');
 
   const overdue = notifications.filter((n) => n.type === 'overdue');
   const dueToday = notifications.filter((n) => n.type === 'due-today');
@@ -40,7 +42,7 @@ export default function Notifications() {
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-5 h-5" /></Button>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 md:hidden">
             <h1 className="text-xl md:text-2xl font-bold text-foreground">Notifications</h1>
             <p className="text-sm text-muted-foreground mt-0.5">Real-time updates and follow-up reminders</p>
           </div>
@@ -54,28 +56,29 @@ export default function Notifications() {
         <Card className="shadow-card rounded-xl border-0 min-w-[150px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-4 flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0"><AlertTriangle className="w-5 h-5 text-destructive" /></div>
-            <div><p className="text-2xl font-bold text-foreground">{overdue.length}</p><p className="text-xs text-muted-foreground">Overdue</p></div>
+            <div><p className="text-2xl font-bold text-foreground tabular-nums">{overdue.length}</p><p className="text-xs text-muted-foreground">Overdue</p></div>
           </CardContent>
         </Card>
         <Card className="shadow-card rounded-xl border-0 min-w-[150px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-4 flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-warning/10 flex items-center justify-center shrink-0"><Clock className="w-5 h-5 text-warning" /></div>
-            <div><p className="text-2xl font-bold text-foreground">{dueToday.length}</p><p className="text-xs text-muted-foreground">Due today</p></div>
+            <div><p className="text-2xl font-bold text-foreground tabular-nums">{dueToday.length}</p><p className="text-xs text-muted-foreground">Due today</p></div>
           </CardContent>
         </Card>
         <Card className="shadow-card rounded-xl border-0 min-w-[150px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-4 flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-success/10 flex items-center justify-center shrink-0"><Calendar className="w-5 h-5 text-success" /></div>
-            <div><p className="text-2xl font-bold text-foreground">{upcoming.length}</p><p className="text-xs text-muted-foreground">Upcoming</p></div>
+            <div><p className="text-2xl font-bold text-foreground tabular-nums">{upcoming.length}</p><p className="text-xs text-muted-foreground">Upcoming</p></div>
           </CardContent>
         </Card>
       </div>
 
-      <Card className="shadow-card rounded-xl border-0">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Bell className="w-4 h-4 text-primary" /></div>
+      <Card className="shadow-card rounded-xl border-0 overflow-hidden">
+        <CardHeader className="px-6 py-4 border-b border-border/40 bg-muted/10">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground/90">
+            <Bell className="w-4 h-4 text-muted-foreground/80" />
             All Notifications
+            <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2 py-0.5 rounded-full ml-1 tabular-nums">{notifications.length}</span>
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -89,7 +92,7 @@ export default function Notifications() {
                 {notifications.map((n) => {
                   const style = TYPE_STYLES[n.type] || TYPE_STYLES.appointment_reminder;
                   return (
-                    <div key={n.id} className={`flex items-start gap-3 p-4 min-h-[72px] transition-colors ${n.isRead ? 'bg-transparent' : 'bg-primary/5'} hover:bg-muted/40`}>
+                    <div key={n.id} className={`table-row-zebra flex items-start gap-3 p-4 min-h-[72px] transition-colors ${n.isRead ? '' : 'bg-primary/5'} hover:bg-muted/40`}>
                       <div className={`mt-0.5 w-11 h-11 rounded-full flex items-center justify-center shrink-0 ${style.bg}`}><span className={style.text}>{style.icon}</span></div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
@@ -99,7 +102,7 @@ export default function Notifications() {
                         <p className="text-xs text-muted-foreground mb-1.5 line-clamp-2">{n.message}</p>
                         <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
                           {n.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{n.phone}</span>}
-                          <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{n.timestamp ? formatNotifDate(n.timestamp) : n.date}</span>
+                          <span className="flex items-center gap-1 tabular-nums"><Clock className="w-3 h-3" />{n.timestamp ? formatNotifDate(n.timestamp) : n.date}</span>
                         </div>
                       </div>
                       <div className="flex flex-col gap-1.5 shrink-0">

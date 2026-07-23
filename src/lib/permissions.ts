@@ -30,6 +30,11 @@ export interface CurrentUser {
   id: string;
   role: RoleTier | null;
   department: Department | null;
+  /** Ids of teams this user manages (role 'manager' only) — used to narrow
+   * lead/staff visibility from "whole department" to "my team(s)" while
+   * Admin/exec stay department-wide/global. See src/contexts/AuthContext's
+   * myTeamIds, which this is populated from for the signed-in user. */
+  managedTeamIds?: string[];
 }
 
 export function isExec(role: RoleTier | null | undefined): boolean {
@@ -61,13 +66,24 @@ export function isDepartmentScoped(role: RoleTier | null | undefined): boolean {
 interface LeadRecord {
   ownerId?: string | null;
   departmentCode?: string | null;
+  teamId?: string | null;
+}
+
+/** Manager's team-scoped check shared by canViewLead/canMonitorLead — a
+ * lead filed under a team is visible only to that team's manager; a lead
+ * with no team yet (pre-team-launch data) falls back to whole-department
+ * visibility, exactly mirroring manager_scoped_lead() in database/crm.sql. */
+function managerCanSeeLead(user: CurrentUser, lead: LeadRecord): boolean {
+  if (lead.teamId) return (user.managedTeamIds || []).includes(lead.teamId);
+  return lead.departmentCode === user.department;
 }
 
 /** Mirrors the `leads_select` RLS policy in database/crm.sql. */
 export function canViewLead(user: CurrentUser | null, lead: LeadRecord): boolean {
   if (!user) return false;
   if (isExec(user.role)) return true;
-  if (user.role === 'admin' || user.role === 'manager') return lead.departmentCode === user.department;
+  if (user.role === 'admin') return lead.departmentCode === user.department;
+  if (user.role === 'manager') return managerCanSeeLead(user, lead);
   return lead.ownerId === user.id;
 }
 
@@ -82,20 +98,29 @@ export function canEditLead(user: CurrentUser | null, lead: LeadRecord): boolean
   return lead.ownerId === user.id;
 }
 
-export function canDeleteLead(user: CurrentUser | null): boolean {
-  return isExec(user?.role);
+/** Mirrors the `leads_delete` RLS policy — Boss/Super Admin can delete any
+ * lead; a Manager or Sales Person may only delete a lead they currently own
+ * (not the rest of their department/team). Admin has no delete rights,
+ * unchanged from the original FRD rule. */
+export function canDeleteLead(user: CurrentUser | null, lead: LeadRecord): boolean {
+  if (!user) return false;
+  if (isExec(user.role)) return true;
+  if (user.role === 'manager' || user.role === 'sale') return lead.ownerId === user.id;
+  return false;
 }
 
 export function canAssignLead(user: CurrentUser | null): boolean {
   return isManagerOrAbove(user?.role);
 }
 
-/** Admins and managers can view/monitor + warn/reassign leads in their own
- * department, even ones they don't own. */
+/** Admins can view/monitor + warn/reassign any lead in their own department;
+ * Managers are narrowed to leads filed under a team they run (see
+ * managerCanSeeLead). */
 export function canMonitorLead(user: CurrentUser | null, lead: LeadRecord): boolean {
   if (!user) return false;
   if (isExec(user.role)) return true;
-  if (user.role === 'admin' || user.role === 'manager') return lead.departmentCode === user.department;
+  if (user.role === 'admin') return lead.departmentCode === user.department;
+  if (user.role === 'manager') return managerCanSeeLead(user, lead);
   return lead.ownerId === user.id;
 }
 
@@ -113,11 +138,17 @@ export function canIssueWarning(user: CurrentUser | null): boolean {
 
 /** Mirrors the `warnings_insert` RLS policy for a general (not lead-tied)
  * staff warning — e.g. Admin warning a Manager directly from the Staff
- * page, rather than through a specific lead's follow-up trail. */
-export function canWarnStaff(user: CurrentUser | null, target: { departmentCode?: string | null }): boolean {
+ * page, rather than through a specific lead's follow-up trail. Manager is
+ * narrowed to people on a team they run (`managedPersonIds`, computed by
+ * the caller from useTeams()) rather than the whole department. */
+export function canWarnStaff(
+  user: CurrentUser | null,
+  target: { id: string; departmentCode?: string | null },
+  managedPersonIds?: string[]
+): boolean {
   if (!user) return false;
   if (isAdminOrAbove(user.role)) return true;
-  if (user.role === 'manager') return target.departmentCode === user.department;
+  if (user.role === 'manager') return (managedPersonIds || []).includes(target.id);
   return false;
 }
 
@@ -126,8 +157,8 @@ export type RouteKey =
   | 'dashboard' | 'add-lead' | 'leads' | 'lead-detail' | 'pipeline' | 'follow-ups'
   | 'check-in' | 'check-in-gallery' | 'check-in-map'
   | 'notifications' | 'settings'
-  | 'user-management' | 'role-management'
-  | 'kpi-board' | 'agent-detail' | 'analytics' | 'team-activity';
+  | 'user-management' | 'role-management' | 'team-management'
+  | 'kpi-board' | 'profile' | 'analytics' | 'team-activity';
 
 /** Central route-level access map — the piece that was completely missing
  * before (routes.tsx only checked "is logged in", never role). */
@@ -156,11 +187,19 @@ export function canAccessRoute(role: RoleTier | null | undefined, routeKey: Rout
       return isAdminOrAbove(role);
     case 'role-management':
       return isExec(role);
+    case 'team-management':
+      // Admin manages their own department's team structure (RLS scopes the
+      // writes); exec can manage any department. Manager/Sales don't get
+      // this page — they see their team membership reflected elsewhere.
+      return isAdminOrAbove(role);
     case 'kpi-board':
     case 'analytics':
       return isExec(role);
-    case 'agent-detail':
-      return isManagerOrAbove(role);
+    case 'profile':
+      // Open to every signed-in tier — RLS on profiles/leads/check_ins/
+      // follow_ups is the real gate (exec: all, admin: department, manager:
+      // their team, sale: self), same pattern as 'lead-detail' above.
+      return true;
     case 'team-activity':
       // Daily staff-activity monitor — management tool; RLS scopes what each
       // tier sees (exec: all, admin/manager: own department).

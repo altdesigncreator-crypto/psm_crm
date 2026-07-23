@@ -1,15 +1,27 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Megaphone, Eye, EyeOff, LogOut, Plus, Trash2, Edit2, Loader2, Info, AlertTriangle, Wrench, Siren } from 'lucide-react';
+import { Megaphone, Eye, EyeOff, LogOut, Plus, Trash2, Edit2, Loader2, Info, AlertTriangle, Wrench, Siren, Camera, X } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   getBannerToken, bannerLogin, bannerLogout, listMessages, createMessage, updateMessage, deleteMessage,
+  fetchMaintenanceSettings, saveMaintenanceSettings,
 } from '@/lib/bannerAdmin';
-import { SYSTEM_MESSAGE_TYPES, type SystemMessage, type SystemMessageType } from '@/types';
+import { SYSTEM_MESSAGE_TYPES, type SystemMessage, type SystemMessageType, type MaintenanceSettings } from '@/types';
+
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2MB — this goes over the wire as base64 JSON, not a raw upload
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 const TYPE_ICON: Record<SystemMessageType, React.ComponentType<{ className?: string }>> = {
   info: Info, warning: AlertTriangle, maintenance: Wrench, critical: Siren,
@@ -129,6 +141,148 @@ function MessageForm({
   );
 }
 
+function MaintenancePanel({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const [settings, setSettings] = useState<MaintenanceSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const [isEnabled, setIsEnabled] = useState(false);
+  const [title, setTitle] = useState('');
+  const [message, setMessage] = useState('');
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [pendingImageBase64, setPendingImageBase64] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  const load = async () => {
+    setLoading(true);
+    const data = await fetchMaintenanceSettings();
+    setSettings(data);
+    setIsEnabled(data?.is_enabled ?? false);
+    setTitle(data?.title || '');
+    setMessage(data?.message || '');
+    setImagePreview(data?.image_url || null);
+    setPendingImageBase64(null);
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const handlePickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast.error('Please choose an image file.'); return; }
+    if (file.size > MAX_IMAGE_BYTES) { toast.error('Image is too large — please use one under 2MB.'); return; }
+    const dataUrl = await readFileAsDataUrl(file);
+    setPendingImageBase64(dataUrl);
+    setImagePreview(dataUrl);
+  };
+
+  const handleRemoveImage = () => {
+    setPendingImageBase64(null);
+    setImagePreview(null);
+    if (imageInputRef.current) imageInputRef.current.value = '';
+  };
+
+  const handleSave = async () => {
+    if (!title.trim() || !message.trim()) { toast.error('Title and message are required.'); return; }
+    setSaving(true);
+    try {
+      const updated = await saveMaintenanceSettings({
+        is_enabled: isEnabled,
+        title,
+        message,
+        imageBase64: pendingImageBase64 || undefined,
+      });
+      setSettings(updated);
+      setPendingImageBase64(null);
+      setImagePreview(updated.image_url);
+      toast.success(isEnabled ? 'Maintenance mode is now ON — the site is blocked for everyone.' : 'Maintenance settings saved.');
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not save maintenance settings.');
+      if (err?.message?.includes('log in')) onSessionExpired();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const dirty = settings
+    ? isEnabled !== settings.is_enabled || title !== settings.title || message !== settings.message || pendingImageBase64 !== null
+    : true;
+
+  return (
+    <div className="bg-white rounded-lg shadow-card p-5 space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${isEnabled ? 'bg-destructive/10 text-destructive border-destructive/20' : 'bg-muted text-muted-foreground border-border'}`}>
+            <Wrench className="w-4 h-4" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Maintenance Mode</h2>
+            <p className="text-xs text-muted-foreground">Blocks the entire site for every visitor — not just a banner</p>
+          </div>
+        </div>
+        {!loading && (
+          <div className="flex items-center gap-2 shrink-0">
+            <Switch checked={isEnabled} onCheckedChange={setIsEnabled} />
+            <span className={`text-xs font-semibold ${isEnabled ? 'text-destructive' : 'text-muted-foreground'}`}>{isEnabled ? 'ON' : 'OFF'}</span>
+          </div>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
+      ) : (
+        <>
+          {isEnabled && (
+            <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded-lg px-3 py-2.5">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>While this is on, nobody can sign in or use the app — only this admin page stays reachable.</span>
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium text-muted-foreground">Logo / Image (optional)</Label>
+            <div className="flex items-center gap-3">
+              <div className="w-16 h-16 rounded-xl border border-border bg-muted/30 flex items-center justify-center overflow-hidden shrink-0">
+                {imagePreview ? <img src={imagePreview} alt="" className="w-full h-full object-contain" /> : <Wrench className="w-6 h-6 text-muted-foreground/50" />}
+              </div>
+              <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handlePickImage} />
+              <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => imageInputRef.current?.click()}>
+                <Camera className="w-3.5 h-3.5" /> {imagePreview ? 'Change' : 'Upload'}
+              </Button>
+              {imagePreview && (
+                <Button type="button" variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" onClick={handleRemoveImage}>
+                  <X className="w-3.5 h-3.5" /> Remove
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium text-muted-foreground">Title</Label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="System Under Maintenance" className="h-10" />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium text-muted-foreground">Message</Label>
+            <textarea
+              value={message} onChange={(e) => setMessage(e.target.value)} rows={4}
+              placeholder={'System is being maintained and cannot be accessed at this time.\nPlease come back at 12 PM on Sunday.\nApologies for the delay — PSM Web Developer Team'}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            />
+          </div>
+
+          <div className="flex justify-end pt-1">
+            <Button type="button" size="sm" disabled={saving || !dirty} onClick={handleSave} className="gap-1.5">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function AdminPanel({ onLogout }: { onLogout: () => void }) {
   const [messages, setMessages] = useState<SystemMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -204,11 +358,13 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
             <div className="w-11 h-11 rounded-xl gradient-primary flex items-center justify-center shadow-card"><Megaphone className="w-5 h-5 text-white" /></div>
             <div>
               <h1 className="text-lg font-semibold text-foreground">System Banner</h1>
-              <p className="text-xs text-muted-foreground">Shown as a bar at the top of every page, to every user</p>
+              <p className="text-xs text-muted-foreground">Site-wide banner and maintenance mode</p>
             </div>
           </div>
           <Button variant="outline" size="sm" onClick={onLogout} className="gap-1.5"><LogOut className="w-4 h-4" /> Log Out</Button>
         </div>
+
+        <MaintenancePanel onSessionExpired={onLogout} />
 
         <div className="bg-white rounded-lg shadow-card p-5 space-y-4">
           <div className="flex items-center justify-between">

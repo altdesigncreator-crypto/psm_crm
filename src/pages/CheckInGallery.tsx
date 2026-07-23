@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
+import NameLink from '@/components/NameLink';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MapPin, Clock, CalendarDays, User, ImageOff, Eye, X, Filter, Trash2, LayoutGrid, List, ChevronLeft, ChevronRight, Calendar, AlertTriangle, UserX, CheckCircle2 } from 'lucide-react';
@@ -11,6 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { isExec, isManagerOrAbove, isDepartmentScoped, getDepartmentLabel } from '@/lib/permissions';
 import { useDepartments } from '@/hooks/useDepartments';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
 import type { CheckIn as CheckInRecord } from '@/types';
 
 function formatDateTime(iso: string): string {
@@ -113,6 +116,14 @@ export default function CheckInGallery() {
     else toast.success('Deleted.');
   };
 
+  usePageHeader(
+    'Check-in Records',
+    (allDays ? 'All days' : new Date(`${selectedDay}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }))
+      + ` · ${filteredCheckins.length} record${filteredCheckins.length === 1 ? '' : 's'}`
+      + (agentFilter !== 'all' ? ` · ${agentFilter}` : '')
+      + (deptFilter !== 'all' ? ` · ${getDepartmentLabel(deptFilter)}` : '')
+  );
+
   if (loading) {
     return <div className="flex items-center justify-center min-h-[50vh]"><div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>;
   }
@@ -129,7 +140,7 @@ export default function CheckInGallery() {
   return (
     <div className="space-y-6 animate-fade-in-up">
       <div className="flex flex-col gap-3">
-        <div>
+        <div className="md:hidden">
           <h1 className="text-xl md:text-2xl font-bold text-foreground leading-snug">Check-in Records</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {allDays ? 'All days' : new Date(`${selectedDay}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
@@ -202,7 +213,7 @@ export default function CheckInGallery() {
                   {lateCheckins.map((c) => (
                     <div key={c.id} className="flex items-center gap-3 p-2.5 rounded-lg border border-border/60">
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-foreground truncate">{nameOf(c.employee_id)}</p>
+                        <NameLink id={c.employee_id} name={nameOf(c.employee_id)} showAvatar={false} />
                         <p className="text-xs text-muted-foreground">
                           {new Date(c.check_in_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
                           {' · '}{getDepartmentLabel(c.department_code)}
@@ -241,7 +252,7 @@ export default function CheckInGallery() {
                     <div key={p.id} className="flex items-center gap-3 p-2.5 rounded-lg border border-border/60">
                       <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0"><User className="w-4 h-4 text-muted-foreground" /></div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
+                        <NameLink id={p.id} name={p.name} showAvatar={false} />
                         <p className="text-xs text-muted-foreground">{p.department_code ? getDepartmentLabel(p.department_code) : '—'}</p>
                       </div>
                     </div>
@@ -282,7 +293,7 @@ export default function CheckInGallery() {
               <CardContent className="p-3 md:p-5 flex flex-col flex-1">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0"><User className="w-4 h-4 text-primary" /></div>
-                  <p className="text-sm font-semibold text-foreground truncate">{nameOf(c.employee_id)}</p>
+                  <NameLink id={c.employee_id} name={nameOf(c.employee_id)} showAvatar={false} className="text-sm font-semibold" />
                 </div>
                 <p className="text-xs md:text-sm text-foreground leading-relaxed line-clamp-2 flex-1">{c.notes || 'Field check-in'}</p>
                 <div className="flex items-center gap-1.5 mt-2 text-xs text-muted-foreground">
@@ -302,31 +313,31 @@ export default function CheckInGallery() {
           <div className="w-full max-w-full overflow-x-auto">
             <table className="w-full text-sm min-w-max">
               <thead>
-                <tr className="bg-muted border-b border-border">
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground whitespace-nowrap">Photo</th>
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground whitespace-nowrap">Employee</th>
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground whitespace-nowrap">Department</th>
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground whitespace-nowrap">Notes</th>
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground whitespace-nowrap">Date</th>
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground whitespace-nowrap">Status</th>
-                  <th className="text-left px-4 py-3 font-semibold text-muted-foreground whitespace-nowrap">Actions</th>
+                <tr className="bg-muted/30 border-b border-border">
+                  <th className="text-left px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Photo</th>
+                  <th className="text-left px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Employee</th>
+                  <th className="text-left px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Department</th>
+                  <th className="text-left px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Notes</th>
+                  <th className="text-left px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Date</th>
+                  <th className="text-left px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Status</th>
+                  <th className="text-left px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
+              <tbody className="divide-y divide-border/60">
                 {filteredCheckins.map((c) => (
-                  <tr key={c.id} className="hover:bg-muted/40 transition-colors">
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <button type="button" onClick={() => openLightbox(c)} className="w-14 h-14 rounded-lg overflow-hidden border border-border bg-muted block active:opacity-80">
+                  <tr key={c.id} className="table-row-interactive table-row-zebra">
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <button type="button" onClick={() => openLightbox(c)} className="w-12 h-12 rounded-lg overflow-hidden border border-border bg-muted block active:opacity-80">
                         {c.photo_url ? <img src={c.photo_url} alt={nameOf(c.employee_id)} className="w-full h-full object-cover" loading="lazy" /> : <div className="w-full h-full flex items-center justify-center"><ImageOff className="w-4 h-4 text-muted-foreground" /></div>}
                       </button>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="flex items-center gap-2"><div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0"><User className="w-4 h-4 text-primary" /></div><span className="font-medium text-foreground">{nameOf(c.employee_id)}</span></div>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <div className="flex items-center gap-2"><div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0"><User className="w-4 h-4 text-primary" /></div><NameLink id={c.employee_id} name={nameOf(c.employee_id)} showAvatar={false} /></div>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap"><span className="text-xs font-medium px-2 py-1 rounded-full bg-muted text-muted-foreground border border-border">{getDepartmentLabel(c.department_code)}</span></td>
-                    <td className="px-4 py-3 whitespace-nowrap text-foreground">{c.notes || '—'}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-muted-foreground text-xs">{formatDateTime(c.check_in_time)}</td>
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-4 py-2.5 whitespace-nowrap"><span className="text-xs font-medium px-2 py-1 rounded-full bg-muted text-muted-foreground border border-border">{getDepartmentLabel(c.department_code)}</span></td>
+                    <td className="px-4 py-2.5 whitespace-nowrap text-foreground max-w-[220px] truncate">{c.notes || '—'}</td>
+                    <td className="px-4 py-2.5 whitespace-nowrap text-muted-foreground text-xs tabular-nums">{formatDateTime(c.check_in_time)}</td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
                       {c.is_late ? (
                         c.approved_by ? (
                           <span className="text-xs font-medium px-2 py-1 rounded-full bg-success/10 text-success">Late · Approved</span>
@@ -337,7 +348,7 @@ export default function CheckInGallery() {
                         <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted text-muted-foreground">On time</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
+                    <td className="px-4 py-2.5 whitespace-nowrap">
                       <div className="flex items-center gap-2">
                         {canApprove && c.is_late && !c.approved_by && (
                           <button type="button" onClick={() => handleApprove(c)} className="flex items-center gap-1.5 text-xs font-medium text-success hover:bg-success/10 active:bg-success/20 rounded-md px-2.5 py-1.5 transition-colors">
@@ -390,7 +401,9 @@ export default function CheckInGallery() {
               <div className="bg-black/80 text-white px-5 py-3 flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">{lightboxPhoto.notes || 'Field check-in'}</p>
-                  <p className="text-xs text-white/70 mt-0.5">{nameOf(lightboxPhoto.employee_id)} · {formatDateTime(lightboxPhoto.check_in_time)}</p>
+                  <p className="text-xs text-white/70 mt-0.5">
+                    <Link to={`/profile/${lightboxPhoto.employee_id}`} className="hover:underline underline-offset-2 text-white/90">{nameOf(lightboxPhoto.employee_id)}</Link> · {formatDateTime(lightboxPhoto.check_in_time)}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="text-[10px] text-white/50">{lightboxIndex + 1} / {filteredCheckins.length}</span>

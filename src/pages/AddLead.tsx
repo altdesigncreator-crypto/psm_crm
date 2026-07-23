@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/db/supabase';
@@ -17,12 +17,16 @@ import { BudgetStepperInput } from '@/components/ui/budget-stepper-input';
 import { haversineDistance, formatDistance } from '@/lib/distance';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useProfiles } from '@/hooks/useProfiles';
+import { useTeams } from '@/hooks/useTeams';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { isManagerOrAbove } from '@/lib/permissions';
 
 export default function AddLead() {
   const navigate = useNavigate();
   const { user, role, department } = useAuth();
   const { profiles } = useProfiles();
+  const { teams, teamsOf } = useTeams();
+  usePageHeader('Add New Lead', 'Capture comprehensive lead information');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -42,6 +46,7 @@ export default function AddLead() {
   const [leadSource, setLeadSource] = useState('');
   const [leadGrade, setLeadGrade] = useState('');
   const [ownerId, setOwnerId] = useState(user?.id || '');
+  const [teamId, setTeamId] = useState('');
   const [nextFollowUpDate, setNextFollowUpDate] = useState('');
   const [remarks, setRemarks] = useState('');
 
@@ -61,6 +66,19 @@ export default function AddLead() {
 
   const canAssign = isManagerOrAbove(role);
   const departmentStaff = profiles.filter((p) => p.department_code === department && p.role === 'sale');
+
+  // A lead is filed under a team so only that team's manager (plus Admin/
+  // exec) can see it. Most sales people belong to exactly one team, so this
+  // auto-selects silently; it only becomes a visible choice when the owner
+  // belongs to more than one.
+  const ownerTeamIds = ownerId ? teamsOf(ownerId) : [];
+  const ownerTeams = teams.filter((t) => ownerTeamIds.includes(t.id));
+
+  useEffect(() => {
+    if (ownerTeamIds.length === 1) setTeamId(ownerTeamIds[0]);
+    else if (!ownerTeamIds.includes(teamId)) setTeamId('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownerId, ownerTeamIds.join(',')]);
 
   const handleCaptureLeadGPS = () => {
     if (!navigator.geolocation) { toast.error('GPS is not supported on this device.'); return; }
@@ -119,6 +137,7 @@ export default function AddLead() {
     lead_source: leadSource || null,
     lead_grade: leadGrade || null,
     department_code: department || 'house',
+    team_id: teamId || null,
     owner_id: ownerId || user?.id,
     created_by: user?.id,
     next_follow_up_at: nextFollowUpDate || null,
@@ -221,7 +240,7 @@ export default function AddLead() {
 
   return (
     <div className="max-w-4xl mx-auto animate-fade-in-up">
-      <div className="mb-5">
+      <div className="mb-5 md:hidden">
         <h1 className="text-xl md:text-2xl font-semibold text-foreground">Add New Lead</h1>
         <p className="text-sm text-muted-foreground mt-1">Capture comprehensive lead information</p>
       </div>
@@ -338,6 +357,16 @@ export default function AddLead() {
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Owner</Label>
                     <Input value="This lead will be assigned to you" disabled className="h-12 text-sm" />
+                  </div>
+                )}
+                {ownerTeams.length > 1 && (
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Which Team is this for?</Label>
+                    <Select value={teamId} onValueChange={setTeamId}>
+                      <SelectTrigger className="h-12"><SelectValue placeholder="Select team" /></SelectTrigger>
+                      <SelectContent>{ownerTeams.map((t) => (<SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>))}</SelectContent>
+                    </Select>
+                    <p className="text-[11px] text-muted-foreground">This sales person is on more than one team — only that team's manager will be able to see this lead.</p>
                   </div>
                 )}
                 <div className="space-y-2">

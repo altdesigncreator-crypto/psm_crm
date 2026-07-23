@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 const LOAD_STAGES = [
   { at: 0, label: 'Connecting…' },
   { at: 25, label: 'Restoring your session…' },
   { at: 55, label: 'Loading your workspace…' },
-  { at: 82, label: 'Almost ready…' },
+  { at: 90, label: 'Almost ready…' },
+  { at: 100, label: 'Ready' },
 ];
 
 function getIsDarkMode() {
@@ -12,15 +13,20 @@ function getIsDarkMode() {
   return window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
-/** Branded loading screen. Progress eases toward ~92% like a real task and
- * completes only when the app is ready: with `onFinish` it self-dismisses
- * after its animation; without it, the parent unmounts it once the auth
- * session has settled (see App.tsx). */
-const SplashScreen: React.FC<{ onFinish?: () => void }> = ({ onFinish }) => {
+/** Branded loading screen, driven by the real `loading` signal from the app
+ * (auth session restore + maintenance check) rather than a guessed timer:
+ * while `loading` is true the bar eases toward ~90% — fast at first, never
+ * fully stalling — and the instant it flips to `false` the bar races the
+ * rest of the way to exactly 100%, holds briefly, then fades and calls
+ * `onFinish`. A quick load never gets stuck mid-animation waiting on a fixed
+ * timeout, and a slow load never stalls short of 100% — either way it always
+ * completes exactly when the real work does. */
+const SplashScreen: React.FC<{ loading: boolean; onFinish?: () => void }> = ({ loading, onFinish }) => {
   const [fadeOut, setFadeOut] = useState(false);
   const [entered, setEntered] = useState(false);
   const [progress, setProgress] = useState(4);
   const [isDark, setIsDark] = useState(() => getIsDarkMode());
+  const finishedRef = useRef(false);
 
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -35,39 +41,64 @@ const SplashScreen: React.FC<{ onFinish?: () => void }> = ({ onFinish }) => {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // Ease toward 92% with decaying increments — fast at first, slowing as it
-  // climbs, the way real loading feels. The final jump to 100% only happens
-  // when the app is actually ready (fade-out / unmount).
+  // Ease toward a 96% ceiling on a real wall-clock curve (not a fixed tick
+  // count) — a fast load and a slow load both approach the ceiling on the
+  // same exponential curve, so a load that takes 10s still visibly climbs
+  // the whole time instead of hitting a hard stop after ~3s and sitting
+  // frozen for however much longer the real work takes. It never reaches
+  // 100% on its own; that only happens once the real work is actually done
+  // (below).
   useEffect(() => {
+    if (!loading) return;
+    const start = Date.now();
+    const CEILING = 96;
+    const TAU_MS = 3500;
     const tick = setInterval(() => {
-      setProgress((p) => {
-        if (p >= 92) return p;
-        const step = (92 - p) * 0.06 + Math.random() * 1.4;
-        return Math.min(92, p + step);
-      });
-    }, 160);
+      const elapsed = Date.now() - start;
+      const eased = CEILING * (1 - Math.exp(-elapsed / TAU_MS));
+      setProgress((p) => Math.max(p, Math.min(CEILING, eased)));
+    }, 120);
     return () => clearInterval(tick);
-  }, []);
+  }, [loading]);
 
+  // Parent components (context providers etc.) can re-render often, which
+  // would hand this component a brand-new `onFinish` function identity each
+  // time. Reading it through a ref — instead of depending on it directly —
+  // keeps the finishing effect below from tearing down and resetting on
+  // every unrelated re-render, which used to clear its pending timer before
+  // it fired and leave the screen stuck at 100%, never handing control back.
+  const onFinishRef = useRef(onFinish);
+  useEffect(() => { onFinishRef.current = onFinish; }, [onFinish]);
+
+  // The moment real loading finishes, race to 100%. The CSS width
+  // transition below animates the jump in a fixed 300ms regardless of how
+  // far progress has to travel — so a fast load (still near 4%) covers more
+  // distance in that same window and reads as "rapidly to 100%", while a
+  // slow load (already near 90%) finishes with a short, gentle final step.
+  // Either way it lands on exactly 100% right when loading actually ends.
   useEffect(() => {
-    if (!onFinish) return;
-    const fadeTimer = setTimeout(() => { setProgress(100); setFadeOut(true); }, 2600);
-    const finishTimer = setTimeout(() => onFinish(), 3200);
+    if (loading || finishedRef.current) return;
+    finishedRef.current = true;
+    setProgress(100);
+    const fadeTimer = setTimeout(() => setFadeOut(true), 350);
+    const finishTimer = setTimeout(() => onFinishRef.current?.(), 850);
     return () => {
       clearTimeout(fadeTimer);
       clearTimeout(finishTimer);
     };
-  }, [onFinish]);
+  }, [loading]);
 
   const stage = [...LOAD_STAGES].reverse().find((s) => progress >= s.at) || LOAD_STAGES[0];
 
-  const bgClass = isDark ? 'bg-[#0A2540]' : 'bg-[#F8FAFC]';
+  const bgClass = isDark ? 'bg-[#0A2540]' : 'bg-white';
   const textClass = isDark ? 'text-white' : 'text-[#0A2540]';
   const subTextClass = isDark ? 'text-white/50' : 'text-[#0A2540]/50';
   const trackClass = isDark ? 'bg-white/10' : 'bg-[#0A2540]/10';
+  // Gold is the PSM accent in both themes now (matching the sidebar's gold
+  // active-state accent) so the brand mark reads the same everywhere.
   const fillClass = isDark
     ? 'bg-gradient-to-r from-[#D4AF37] to-[#F0D878]'
-    : 'bg-gradient-to-r from-[#0463CA] to-[#0487E2]';
+    : 'bg-gradient-to-r from-[#C99A2E] to-[#E4C468]';
 
   return (
     <div
@@ -82,7 +113,7 @@ const SplashScreen: React.FC<{ onFinish?: () => void }> = ({ onFinish }) => {
       >
         {/* Brand wordmark with a soft breathing glow */}
         <div className="relative">
-          <div className={`absolute inset-4 rounded-full blur-2xl opacity-30 animate-pulse ${isDark ? 'bg-[#5AA4E4]/50' : 'bg-[#0463CA]/30'}`} />
+          <div className={`absolute inset-4 rounded-full blur-2xl opacity-30 animate-pulse ${isDark ? 'bg-[#D4AF37]/40' : 'bg-[#D4AF37]/25'}`} />
           <img
             src={isDark ? '/logo-dark.png' : '/logo.png'}
             alt="PSM Properties"

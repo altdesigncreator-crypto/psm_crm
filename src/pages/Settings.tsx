@@ -1,12 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { getRoleLabel, getDepartmentLabel, isExec } from '@/lib/permissions';
 import { useDepartments } from '@/hooks/useDepartments';
 import {
   isPlatformAuthenticatorAvailable, isBiometricEnabledFor, registerBiometric, disableBiometric,
 } from '@/lib/biometricAuth';
+import { processCapturedImage } from '@/lib/cameraUtils';
+import AvatarCropDialog from '@/components/AvatarCropDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +18,7 @@ import { Separator } from '@/components/ui/separator';
 import {
   ArrowLeft, User, Mail, Shield, Building2, Moon, Bell, Info, ChevronDown, Phone, MapPin,
   HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern, KeyRound, Eye, EyeOff, Trash2, Edit2,
+  Camera,
 } from 'lucide-react';
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -28,10 +32,14 @@ export default function Settings() {
   const { lang, setLang, t } = useTranslation();
   const { user, role, department, refreshProfile } = useAuth();
   const { departments, createDepartment, updateDepartment, deleteDepartment, deactivateDepartment } = useDepartments();
+  usePageHeader('Settings', 'Profile and system preferences');
 
   const [name, setName] = useState(user?.name || '');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
   const [darkMode, setDarkMode] = useState(document.documentElement.classList.contains('dark'));
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [openSection, setOpenSection] = useState<'profile' | 'preferences' | 'system' | null>('profile');
@@ -94,6 +102,44 @@ export default function Settings() {
     if (error) { toast.error('Could not update profile.'); return; }
     await refreshProfile();
     toast.success('Profile updated.');
+  };
+
+  // Picking a photo only opens the crop dialog (handleAvatarCropped does the
+  // actual upload) — orientation-corrected first so the crop preview isn't
+  // sideways on photos straight from a phone camera.
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user?.id) return;
+    if (!file.type.startsWith('image/')) { toast.error('Please choose an image file.'); if (avatarInputRef.current) avatarInputRef.current.value = ''; return; }
+    try {
+      const { previewUrl } = await processCapturedImage(file);
+      setCropImageSrc(previewUrl);
+    } catch {
+      setCropImageSrc(URL.createObjectURL(file));
+    }
+  };
+
+  const handleAvatarCropped = async (blob: Blob) => {
+    if (!user?.id) return;
+    setUploadingAvatar(true);
+    try {
+      const path = `${user.id}/${Date.now()}.jpg`;
+      const { error: uploadErr } = await supabase.storage.from('avatars').upload(path, blob);
+      if (uploadErr) throw uploadErr;
+      const avatarUrl = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl;
+
+      const { error } = await supabase.from('profiles').update({ avatar_url: avatarUrl }).eq('id', user.id);
+      if (error) throw error;
+
+      await refreshProfile();
+      toast.success('Profile photo updated.');
+      setCropImageSrc(null);
+    } catch {
+      toast.error('Could not update your profile photo.');
+    } finally {
+      setUploadingAvatar(false);
+      if (avatarInputRef.current) avatarInputRef.current.value = '';
+    }
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -252,7 +298,7 @@ export default function Settings() {
     <div className="max-w-2xl mx-auto animate-fade-in-up space-y-5">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 active:bg-muted/50" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-5 h-5" /></Button>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 md:hidden">
           <h1 className="text-xl md:text-2xl font-bold text-foreground">Settings</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Profile and system preferences</p>
         </div>
@@ -274,7 +320,28 @@ export default function Settings() {
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center shrink-0"><User className="w-7 h-7 text-primary" /></div>
+            <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
+            <button
+              type="button"
+              onClick={() => avatarInputRef.current?.click()}
+              disabled={uploadingAvatar}
+              className="relative w-14 h-14 rounded-full shrink-0 group"
+              aria-label="Change profile photo"
+            >
+              {user?.avatar_url ? (
+                <img src={user.avatar_url} alt={user.name} className="w-14 h-14 rounded-full object-cover" />
+              ) : (
+                <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center"><User className="w-7 h-7 text-primary" /></div>
+              )}
+              <div className="absolute inset-0 rounded-full bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+                {uploadingAvatar && <Loader2 className="w-5 h-5 text-white animate-spin" />}
+              </div>
+              {!uploadingAvatar && (
+                <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-primary text-white flex items-center justify-center border-2 border-card">
+                  <Camera className="w-2.5 h-2.5" />
+                </div>
+              )}
+            </button>
             <div className="min-w-0 flex-1">
               <p className="text-base font-semibold text-foreground truncate">{user?.name || '—'}</p>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -598,6 +665,12 @@ export default function Settings() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AvatarCropDialog
+        imageSrc={cropImageSrc}
+        onCancel={() => { setCropImageSrc(null); if (avatarInputRef.current) avatarInputRef.current.value = ''; }}
+        onCropped={handleAvatarCropped}
+      />
     </div>
   );
 }

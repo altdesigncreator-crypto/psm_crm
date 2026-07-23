@@ -245,6 +245,7 @@ export const translations: Record<string, Record<Lang, string>> = {
   'nav.teamActivity': { mm: 'နေ့စဉ် လုပ်ဆောင်ချက်', en: 'Daily Activity' },
   'nav.kpiBoard': { mm: 'KPI ဘုတ်', en: 'KPI Board' },
   'nav.staff': { mm: 'ဝန်ထမ်းများ', en: 'Staff' },
+  'nav.teamManagement': { mm: 'အသင်းအဖွဲ့ စီမံခန့်ခွဲမှု', en: 'Team Management' },
   'nav.roles': { mm: 'ရာထူးနှင့် ခွင့်ပြုချက်များ', en: 'Roles & Permissions' },
   'nav.section.core': { mm: 'အဓိက လုပ်ငန်းများ', en: 'Core Operations' },
   'nav.section.staff': { mm: 'ဝန်ထမ်းနှင့် စွမ်းဆောင်ရည်', en: 'Staff & Performance' },

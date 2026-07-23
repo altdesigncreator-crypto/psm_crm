@@ -6,10 +6,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { LEAD_STAGES, type Lead, type LeadStage } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
 import { canEditLead } from '@/lib/permissions';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
+import NameLink from '@/components/NameLink';
 import { Phone, MapPin, DollarSign, User, ArrowRight, ArrowLeft, Eye, MoveRight, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -32,6 +34,7 @@ export default function PipelineBoard() {
   const { user, role, department } = useAuth();
   const { colors: statusColors } = useStatusColors();
   const { nameOf } = useProfiles();
+  usePageHeader('Lead Pipeline', 'Stage-based lead tracking board');
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,12 +106,12 @@ export default function PipelineBoard() {
 
   return (
     <div className="animate-fade-in-up space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center justify-between md:justify-end">
+        <div className="md:hidden">
           <h1 className="text-xl md:text-2xl font-semibold text-foreground">Lead Pipeline</h1>
           <p className="text-sm text-muted-foreground mt-1">Stage-based lead tracking board</p>
         </div>
-        <span className="text-sm text-muted-foreground shrink-0">Total: {leads.length} leads</span>
+        <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2.5 py-1 rounded-full shrink-0 tabular-nums">{leads.length} total leads</span>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-start">
@@ -126,7 +129,7 @@ export default function PipelineBoard() {
                   <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: columnColor }} />
                   <span className="text-sm font-semibold truncate" style={{ color: columnColor }}>{col.label}</span>
                 </div>
-                <span className="text-xs font-medium text-muted-foreground bg-background px-2 py-0.5 rounded-full border shadow-sm shrink-0">{col.leads.length}</span>
+                <span className="text-xs font-medium text-muted-foreground bg-background px-2 py-0.5 rounded-full border shadow-sm shrink-0 tabular-nums">{col.leads.length}</span>
               </div>
 
               <div className="flex flex-col gap-2.5 max-h-[70vh] overflow-y-auto pr-0.5 custom-scrollbar">
@@ -164,7 +167,8 @@ export default function PipelineBoard() {
                           </div>
                         )}
                         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <User className="w-3 h-3 shrink-0" /> <span className="truncate">{nameOf(lead.owner_id)}</span>
+                          <User className="w-3 h-3 shrink-0" />
+                          {lead.owner_id ? <NameLink id={lead.owner_id} name={nameOf(lead.owner_id)} showAvatar={false} className="text-xs" /> : <span className="truncate">Unassigned</span>}
                         </div>
 
                         <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/40">

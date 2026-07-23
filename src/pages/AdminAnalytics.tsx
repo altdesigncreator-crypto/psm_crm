@@ -4,6 +4,7 @@ import { supabase } from '@/db/supabase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { isExec } from '@/lib/permissions';
 import { ArrowLeft, BarChart3, TrendingUp, Users, DollarSign, Target, Activity, FileSpreadsheet, FileText, File as FilePdf } from 'lucide-react';
@@ -23,6 +24,7 @@ export default function AdminAnalytics() {
   const { nameOf } = useProfiles();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
+  usePageHeader('Analytics', 'Company-wide lead and revenue analytics');
 
   useEffect(() => {
     if (!isExec(role)) { setLoading(false); return; }
@@ -139,8 +141,8 @@ export default function AdminAnalytics() {
 
   return (
     <div className="space-y-5 animate-fade-in-up">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between md:justify-end gap-3">
+        <div className="md:hidden">
           <h1 className="text-xl md:text-2xl font-bold text-foreground leading-snug flex items-center gap-2"><BarChart3 className="w-6 h-6 text-primary" /> Analytics</h1>
           <p className="text-sm text-muted-foreground mt-1">Company-wide lead and revenue analytics</p>
         </div>
@@ -152,10 +154,10 @@ export default function AdminAnalytics() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-        <Card className="shadow-card rounded-xl border-0 h-full flex flex-col"><CardContent className="p-4 flex flex-col flex-1"><div className="flex items-center gap-2 mb-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Users className="w-4 h-4 text-primary" /></div><p className="text-xs text-muted-foreground">Total Leads</p></div><p className="text-2xl font-bold text-foreground">{totalLeads}</p></CardContent></Card>
-        <Card className="shadow-card rounded-xl border-0 h-full flex flex-col"><CardContent className="p-4 flex flex-col flex-1"><div className="flex items-center gap-2 mb-2"><div className="w-8 h-8 rounded-lg bg-success/10 flex items-center justify-center"><Target className="w-4 h-4 text-success" /></div><p className="text-xs text-muted-foreground">Conversion Rate</p></div><p className="text-2xl font-bold text-foreground">{conversionRate}%</p></CardContent></Card>
-        <Card className="shadow-card rounded-xl border-0 h-full flex flex-col"><CardContent className="p-4 flex flex-col flex-1"><div className="flex items-center gap-2 mb-2"><div className="w-8 h-8 rounded-lg bg-warning/10 flex items-center justify-center"><DollarSign className="w-4 h-4 text-warning" /></div><p className="text-xs text-muted-foreground">Avg Deal Size</p></div><p className="text-2xl font-bold text-foreground">{avgDealSize.toLocaleString()}</p></CardContent></Card>
-        <Card className="shadow-card rounded-xl border-0 h-full flex flex-col"><CardContent className="p-4 flex flex-col flex-1"><div className="flex items-center gap-2 mb-2"><div className="w-8 h-8 rounded-lg bg-info/10 flex items-center justify-center"><TrendingUp className="w-4 h-4 text-info" /></div><p className="text-xs text-muted-foreground">Sold</p></div><p className="text-2xl font-bold text-foreground">{soldCount}</p></CardContent></Card>
+        <Card className="shadow-card rounded-xl border-0 h-full flex flex-col"><CardContent className="p-4 flex flex-col flex-1"><div className="flex items-center gap-2 mb-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Users className="w-4 h-4 text-primary" /></div><p className="text-xs text-muted-foreground">Total Leads</p></div><p className="text-2xl font-bold text-foreground tabular-nums">{totalLeads}</p></CardContent></Card>
+        <Card className="shadow-card rounded-xl border-0 h-full flex flex-col"><CardContent className="p-4 flex flex-col flex-1"><div className="flex items-center gap-2 mb-2"><div className="w-8 h-8 rounded-lg bg-success/10 flex items-center justify-center"><Target className="w-4 h-4 text-success" /></div><p className="text-xs text-muted-foreground">Conversion Rate</p></div><p className="text-2xl font-bold text-foreground tabular-nums">{conversionRate}%</p></CardContent></Card>
+        <Card className="shadow-card rounded-xl border-0 h-full flex flex-col"><CardContent className="p-4 flex flex-col flex-1"><div className="flex items-center gap-2 mb-2"><div className="w-8 h-8 rounded-lg bg-warning/10 flex items-center justify-center"><DollarSign className="w-4 h-4 text-warning" /></div><p className="text-xs text-muted-foreground">Avg Deal Size</p></div><p className="text-2xl font-bold text-foreground tabular-nums">{avgDealSize.toLocaleString()}</p></CardContent></Card>
+        <Card className="shadow-card rounded-xl border-0 h-full flex flex-col"><CardContent className="p-4 flex flex-col flex-1"><div className="flex items-center gap-2 mb-2"><div className="w-8 h-8 rounded-lg bg-info/10 flex items-center justify-center"><TrendingUp className="w-4 h-4 text-info" /></div><p className="text-xs text-muted-foreground">Sold</p></div><p className="text-2xl font-bold text-foreground tabular-nums">{soldCount}</p></CardContent></Card>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">

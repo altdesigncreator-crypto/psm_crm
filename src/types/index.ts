@@ -19,6 +19,18 @@ export interface SystemMessage {
   updated_at: string;
 }
 
+/** Site-wide, blocking maintenance gate — distinct from SystemMessage, which
+ * is just a dismissible banner alongside the still-working app. Singleton
+ * row (id is always 1). */
+export interface MaintenanceSettings {
+  id: number;
+  is_enabled: boolean;
+  title: string;
+  message: string;
+  image_url: string | null;
+  updated_at: string;
+}
+
 export interface Profile {
   id: string;
   email: string;
@@ -29,6 +41,21 @@ export interface Profile {
   status: 'active' | 'inactive';
   avatar_url?: string | null;
   created_at: string;
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  department_code: Department;
+  manager_id: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface TeamMember {
+  team_id: string;
+  sale_person_id: string;
+  added_at: string;
 }
 
 export interface Lead {
@@ -44,6 +71,7 @@ export interface Lead {
   purpose?: string | null;
   lead_source?: string | null;
   department_code: Department;
+  team_id?: string | null;
   status: LeadStage;
   lead_grade?: LeadGrade | null;
   lead_grade_reason?: string | null;

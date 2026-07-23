@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useDepartments } from '@/hooks/useDepartments';
 import { isDepartmentScoped, getDepartmentLabel, getRoleLabel, ROLE_TIERS } from '@/lib/permissions';
@@ -85,6 +86,7 @@ export default function TeamActivity() {
   const { t } = useTranslation();
   const { profiles } = useProfiles();
   const { departments } = useDepartments();
+  usePageHeader(t('activity.title'), t('activity.subtitle'));
 
   const [day, setDay] = useState<string>(todayStr());
   const [userFilter, setUserFilter] = useState('all');
@@ -173,7 +175,7 @@ export default function TeamActivity() {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
-      <div>
+      <div className="md:hidden">
         <h1 className="text-xl md:text-2xl font-semibold text-foreground flex items-center gap-2">
           <Activity className="w-5 h-5 text-primary" /> {t('activity.title')}
         </h1>
@@ -238,7 +240,7 @@ export default function TeamActivity() {
             <CardContent className="p-3.5 flex items-center gap-2.5">
               <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${tile.tint}`}><tile.icon className="w-4 h-4" /></div>
               <div>
-                <p className="text-lg font-bold text-foreground leading-tight">{tile.value}</p>
+                <p className="text-lg font-bold text-foreground leading-tight tabular-nums">{tile.value}</p>
                 <p className="text-[11px] text-muted-foreground">{tile.label}</p>
               </div>
             </CardContent>
@@ -268,20 +270,26 @@ export default function TeamActivity() {
                 <CardContent className="p-0">
                   {/* User header */}
                   <div className="flex items-center gap-3 px-4 md:px-5 py-3.5 border-b border-border/50 bg-muted/20">
-                    <div className="w-10 h-10 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
-                      {initialsOf(a.profile.name)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-foreground truncate">{a.profile.name}</p>
-                      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border border-primary/20 bg-primary/5 text-primary">{getRoleLabel(a.profile.role)}</span>
-                        {a.profile.department_code && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{getDepartmentLabel(a.profile.department_code)}</span>
-                        )}
+                    <Link to={`/profile/${a.profile.id}`} className="flex items-center gap-3 min-w-0 flex-1 hover:opacity-80 transition-opacity">
+                      {a.profile.avatar_url ? (
+                        <img src={a.profile.avatar_url} alt={a.profile.name} className="w-10 h-10 rounded-full object-cover shrink-0" />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
+                          {initialsOf(a.profile.name)}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-foreground truncate hover:underline underline-offset-2">{a.profile.name}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border border-primary/20 bg-primary/5 text-primary">{getRoleLabel(a.profile.role)}</span>
+                          {a.profile.department_code && (
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{getDepartmentLabel(a.profile.department_code)}</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    </Link>
                     <div className="flex items-center gap-3 shrink-0 text-xs text-muted-foreground">
-                      <span className="hidden sm:inline">{total} activit{total === 1 ? 'y' : 'ies'}</span>
+                      <span className="hidden sm:inline tabular-nums">{total} activit{total === 1 ? 'y' : 'ies'}</span>
                       {a.checkin ? (
                         <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full ${a.checkin.is_late ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'}`}>
                           <Footprints className="w-3 h-3" /> {a.checkin.is_late ? 'Late' : 'Checked in'} · {timeOf(a.checkin.check_in_time)}

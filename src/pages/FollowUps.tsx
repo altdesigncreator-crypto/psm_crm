@@ -3,10 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useDepartments } from '@/hooks/useDepartments';
 import { canAddFollowUp, isAdminOrAbove, isDepartmentScoped } from '@/lib/permissions';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react';
 import { FOLLOWUP_TYPES, FOLLOWUP_STATUSES, getGradeForFollowUpStatus, type Lead, type FollowUp, type FollowUpStatus, type FollowUpType, type LeadGrade } from '@/types';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
+import NameLink from '@/components/NameLink';
 import { toast } from 'sonner';
 
 function followUpTypeLabel(type: string) {
@@ -100,6 +102,7 @@ export default function FollowUps() {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const { user, role, department } = useAuth();
+  usePageHeader(t('followups.title'), t('followups.subtitle'));
   const { nameOf, profiles } = useProfiles();
   const { departments } = useDepartments();
 
@@ -348,8 +351,8 @@ export default function FollowUps() {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between md:justify-end gap-4">
+        <div className="md:hidden">
           <h1 className="text-xl md:text-2xl font-semibold text-foreground flex items-center gap-2"><ListChecks className="w-5 h-5 text-primary" /> {t('followups.title')}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t('followups.subtitle')}</p>
         </div>
@@ -444,10 +447,17 @@ export default function FollowUps() {
       </Card>
 
       <Card className="shadow-card rounded-xl border-0 overflow-hidden">
+        <CardHeader className="px-6 py-4 border-b border-border/40 bg-muted/10">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground/90">
+            <ListChecks className="w-4 h-4 text-muted-foreground/80" />
+            Leads
+            <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2 py-0.5 rounded-full ml-1 tabular-nums">{filteredRows.length}</span>
+          </CardTitle>
+        </CardHeader>
         <CardContent className="p-0">
           {filteredRows.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
-              <ListChecks className="w-8 h-8 mb-2 opacity-50" />
+            <div className="flex flex-col items-center justify-center h-56 text-muted-foreground bg-muted/5">
+              <ListChecks className="w-9 h-9 mb-2 opacity-40" />
               <p className="text-sm font-medium">No leads match your filters</p>
             </div>
           ) : (
@@ -472,8 +482,8 @@ export default function FollowUps() {
                       const latest = row.followUps[0];
                       const date = latest?.created_at || row.created_at;
                       return (
-                        <TableRow key={row.id} className="cursor-pointer border-border/50 transition-colors hover:bg-muted/40" onClick={() => openLead(row)}>
-                          <TableCell className="pl-5 pr-4 py-3">
+                        <TableRow key={row.id} className="table-row-interactive table-row-zebra cursor-pointer border-border/40" onClick={() => openLead(row)}>
+                          <TableCell className="pl-5 pr-4 py-2.5">
                             <div className="flex items-center gap-3">
                               <div className="w-9 h-9 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
                                 {initialsOf(row.name)}
@@ -484,18 +494,20 @@ export default function FollowUps() {
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="px-4 py-3 whitespace-nowrap text-sm text-muted-foreground">{nameOf(row.owner_id)}</TableCell>
-                          <TableCell className="px-4 py-3 whitespace-nowrap text-sm text-muted-foreground">
+                          <TableCell className="px-4 py-2.5 whitespace-nowrap text-sm text-muted-foreground">
+                            {row.owner_id ? <NameLink id={row.owner_id} name={nameOf(row.owner_id)} showAvatar={false} /> : '—'}
+                          </TableCell>
+                          <TableCell className="px-4 py-2.5 whitespace-nowrap text-sm text-muted-foreground tabular-nums">
                             <span className="inline-flex items-center gap-1.5">
                               <Calendar className="w-3.5 h-3.5 opacity-60" />
                               {new Date(date).toLocaleDateString()}
                             </span>
                           </TableCell>
-                          <TableCell className="px-4 py-3 whitespace-nowrap text-sm max-w-[140px] truncate" title={row.current_location || ''}>{row.current_location || '—'}</TableCell>
-                          <TableCell className="px-4 py-3 whitespace-nowrap text-sm">{row.budget_range || '—'}</TableCell>
-                          <TableCell className="px-4 py-3 whitespace-nowrap"><LeadLevelBadge grade={row.lead_grade} /></TableCell>
-                          <TableCell className="px-4 py-3 text-sm max-w-[200px] truncate" title={row.interest_type || ''}>{row.interest_type || '—'}</TableCell>
-                          <TableCell className="pl-4 pr-5 py-3 max-w-[240px]">
+                          <TableCell className="px-4 py-2.5 whitespace-nowrap text-sm max-w-[140px] truncate" title={row.current_location || ''}>{row.current_location || '—'}</TableCell>
+                          <TableCell className="px-4 py-2.5 whitespace-nowrap text-sm tabular-nums">{row.budget_range || '—'}</TableCell>
+                          <TableCell className="px-4 py-2.5 whitespace-nowrap"><LeadLevelBadge grade={row.lead_grade} /></TableCell>
+                          <TableCell className="px-4 py-2.5 text-sm max-w-[200px] truncate" title={row.interest_type || ''}>{row.interest_type || '—'}</TableCell>
+                          <TableCell className="pl-4 pr-5 py-2.5 max-w-[240px]">
                             {latest ? (
                               <div className="space-y-1">
                                 <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${STATUS_STYLE[latest.status] || 'bg-muted text-muted-foreground border-border'}`}>
@@ -523,14 +535,14 @@ export default function FollowUps() {
                   const latest = row.followUps[0];
                   const date = latest?.created_at || row.created_at;
                   return (
-                    <button key={row.id} type="button" onClick={() => openLead(row)} className="w-full text-left p-4 hover:bg-muted/30 active:bg-muted/50 transition-colors space-y-2">
+                    <div key={row.id} role="button" tabIndex={0} onClick={() => openLead(row)} onKeyDown={(e) => { if (e.key === 'Enter') openLead(row); }} className="w-full text-left p-4 hover:bg-muted/30 active:bg-muted/50 transition-colors space-y-2 cursor-pointer">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-semibold text-foreground truncate">{row.name}</span>
                         <LeadLevelBadge grade={row.lead_grade} />
                       </div>
                       <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
                         <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{row.phone}</span>
-                        <span className="flex items-center gap-1"><User className="w-3 h-3" />{nameOf(row.owner_id)}</span>
+                        {row.owner_id ? <NameLink id={row.owner_id} name={nameOf(row.owner_id)} showAvatar={false} /> : <span className="flex items-center gap-1"><User className="w-3 h-3" />Unassigned</span>}
                       </div>
                       {row.current_location && <div className="flex items-center gap-1 text-xs text-muted-foreground"><MapPin className="w-3 h-3" />{row.current_location}</div>}
                       <div className="flex items-center justify-between gap-2 pt-1">
@@ -546,7 +558,7 @@ export default function FollowUps() {
                         )}
                         <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Calendar className="w-3 h-3" />{new Date(date).toLocaleDateString()}</span>
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -563,7 +575,7 @@ export default function FollowUps() {
                 <DialogTitle className="text-base font-semibold truncate pr-2">{activeLead.name}</DialogTitle>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
                   <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{activeLead.phone}</span>
-                  <span className="flex items-center gap-1"><User className="w-3 h-3" />{nameOf(activeLead.owner_id)}</span>
+                  {activeLead.owner_id ? <NameLink id={activeLead.owner_id} name={nameOf(activeLead.owner_id)} showAvatar={false} /> : <span className="flex items-center gap-1"><User className="w-3 h-3" />Unassigned</span>}
                   {activeLead.budget_range && <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{activeLead.budget_range}</span>}
                 </div>
                 <button type="button" onClick={() => navigate(`/lead/${activeLead.id}`)} className="w-fit -ml-2 flex items-center gap-1 text-xs font-medium text-primary hover:bg-primary/10 rounded-md px-2 py-1 transition-colors">

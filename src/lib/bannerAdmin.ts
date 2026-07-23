@@ -1,5 +1,5 @@
 import { supabase } from '@/db/supabase';
-import type { SystemMessage, SystemMessageType } from '@/types';
+import type { SystemMessage, SystemMessageType, MaintenanceSettings } from '@/types';
 
 const TOKEN_KEY = 'psm_banner_admin_token';
 
@@ -61,4 +61,32 @@ export async function updateMessage(id: string, patch: Partial<Pick<SystemMessag
 
 export async function deleteMessage(id: string): Promise<void> {
   await callMessages({ action: 'delete', id });
+}
+
+/** Public read of the maintenance gate's current state — readable by
+ * anyone via RLS (see database/crm.sql section 16b), same query
+ * src/hooks/useMaintenanceStatus.ts uses for the gate itself. Used here so
+ * the admin panel can populate its edit form. */
+export async function fetchMaintenanceSettings(): Promise<MaintenanceSettings | null> {
+  const { data } = await supabase.from('maintenance_settings').select('*').eq('id', 1).maybeSingle();
+  return (data as MaintenanceSettings) || null;
+}
+
+/** Saving requires the banner-admin session — maintenance_settings has no
+ * client-facing write policy at all (see the edge function). `imageBase64`
+ * is only sent when the admin picked a new image file. */
+export async function saveMaintenanceSettings(patch: {
+  is_enabled?: boolean;
+  title?: string;
+  message?: string;
+  imageBase64?: string;
+}): Promise<MaintenanceSettings> {
+  const data = await callMessages({
+    action: 'update_maintenance',
+    is_enabled: patch.is_enabled,
+    title: patch.title,
+    message: patch.message,
+    image_base64: patch.imageBase64,
+  });
+  return data.settings as MaintenanceSettings;
 }

@@ -17,7 +17,7 @@ const CheckIn = lazy(() => import('./pages/CheckIn'));
 const CheckInGallery = lazy(() => import('./pages/CheckInGallery'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const KPIBoard = lazy(() => import('./pages/KPIBoard'));
-const AgentDetail = lazy(() => import('./pages/AgentDetail'));
+const Profile = lazy(() => import('./pages/Profile'));
 const Settings = lazy(() => import('./pages/Settings'));
 const PipelineBoard = lazy(() => import('./pages/PipelineBoard'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
@@ -25,6 +25,7 @@ const CheckInMap = lazy(() => import('./pages/CheckInMap'));
 const RoleManagement = lazy(() => import('./pages/RoleManagement'));
 const SystemBannerAdmin = lazy(() => import('./pages/SystemBannerAdmin'));
 const TeamActivity = lazy(() => import('./pages/TeamActivity'));
+const TeamManagement = lazy(() => import('./pages/TeamManagement'));
 
 export interface RouteConfig {
   name: string;
@@ -149,6 +150,16 @@ export const routes: RouteConfig[] = [
     ),
   },
   {
+    name: 'Team Management',
+    path: '/team-management',
+    routeKey: 'team-management',
+    element: (
+      <ProtectedRoute>
+        <TeamManagement />
+      </ProtectedRoute>
+    ),
+  },
+  {
     name: 'Role Reference',
     path: '/role-management',
     routeKey: 'role-management',
@@ -179,12 +190,12 @@ export const routes: RouteConfig[] = [
     ),
   },
   {
-    name: 'Agent Detail',
-    path: '/agent/:id',
-    routeKey: 'agent-detail',
+    name: 'Profile',
+    path: '/profile/:id',
+    routeKey: 'profile',
     element: (
       <ProtectedRoute>
-        <AgentDetail />
+        <Profile />
       </ProtectedRoute>
     ),
   },

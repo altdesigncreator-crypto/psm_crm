@@ -17,10 +17,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import { FOLLOWUP_TYPES, FOLLOWUP_STATUSES, LEAD_STAGES, WARNING_REASONS, getGradeForFollowUpStatus, type Lead, type FollowUp, type Warning as WarningRecord } from '@/types';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
+import NameLink from '@/components/NameLink';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useAuth } from '@/contexts/AuthContext';
-import { canEditLead, canAddFollowUp, canAssignLead, canIssueWarning, canMonitorLead, isManagerOrAbove, isExec } from '@/lib/permissions';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
+import { canEditLead, canAddFollowUp, canAssignLead, canIssueWarning, canMonitorLead, canDeleteLead, isManagerOrAbove } from '@/lib/permissions';
 import { supabase } from '@/db/supabase';
 import { toast } from 'sonner';
 import StatusBadge from '@/components/StatusBadge';
@@ -47,14 +49,14 @@ function stageLabel(status: string) {
 export default function LeadDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user, role } = useAuth();
+  const { user, role, myTeamIds } = useAuth();
   const [lead, setLead] = useState<Lead | null>(null);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [warnings, setWarnings] = useState<WarningRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [mapOpen, setMapOpen] = useState(false);
   const { colors: statusColors } = useStatusColors();
-  const { profiles, nameOf } = useProfiles();
+  const { profiles, byId, nameOf } = useProfiles();
 
   const [followUpForm, setFollowUpForm] = useState({ type: 'phone', status: 'interested', notes: '' });
   const [savingFollowUp, setSavingFollowUp] = useState(false);
@@ -64,7 +66,7 @@ export default function LeadDetail() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const currentUser = user ? { id: user.id, role, department: user.department } : null;
+  const currentUser = user ? { id: user.id, role, department: user.department, managedTeamIds: myTeamIds } : null;
 
   const loadAll = useCallback(async () => {
     if (!id) return;
@@ -82,6 +84,8 @@ export default function LeadDetail() {
   useEffect(() => { loadAll(); }, [loadAll]);
 
   const departmentStaff = profiles.filter((p) => p.department_code === lead?.department_code && p.role === 'sale');
+
+  usePageHeader('Lead Profile', lead ? `${lead.name} — ${lead.phone}` : undefined);
 
   if (loading) {
     return (
@@ -103,12 +107,13 @@ export default function LeadDetail() {
     );
   }
 
-  const editable = canEditLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code }) && lead.status !== 'sold';
-  const canFollowUp = canAddFollowUp(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code });
-  const canWarn = canIssueWarning(currentUser) && canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code });
-  const canReassign = canAssignLead(currentUser) && canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code });
-  // Exec-only (boss / super admin), matching the leads_delete RLS policy.
-  const canDelete = isExec(role);
+  const editable = canEditLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id }) && lead.status !== 'sold';
+  const canFollowUp = canAddFollowUp(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
+  const canWarn = canIssueWarning(currentUser) && canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
+  const canReassign = canAssignLead(currentUser) && canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
+  // Exec can delete any lead; Manager/Sale only a lead they currently own —
+  // matches the leads_delete RLS policy.
+  const canDelete = canDeleteLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
 
   const handleDeleteLead = async () => {
     setDeleting(true);
@@ -188,7 +193,7 @@ export default function LeadDetail() {
         <Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 active:bg-muted/50" onClick={() => navigate('/leads')}>
           <ArrowLeft className="w-5 h-5" />
         </Button>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 md:hidden">
           <h1 className="text-xl md:text-2xl font-bold text-foreground">Lead Profile</h1>
           <p className="text-sm text-muted-foreground mt-0.5 truncate">{lead.name} — {lead.phone}</p>
         </div>
@@ -212,7 +217,7 @@ export default function LeadDetail() {
         </div>
       </div>
 
-      {/* Delete confirmation (exec only) */}
+      {/* Delete confirmation (exec, or Manager/Sale deleting a lead they own) */}
       <AlertDialog open={deleteOpen} onOpenChange={(open) => !deleting && setDeleteOpen(open)}>
         <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
           <AlertDialogHeader>
@@ -281,7 +286,15 @@ export default function LeadDetail() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-0 space-y-3">
-                <DetailRow label="Currently owned by" value={nameOf(lead.owner_id)} icon={<User className="w-4 h-4" />} />
+                <div className="flex items-start gap-3 py-2.5 min-h-[48px]">
+                  <div className="mt-0.5 text-muted-foreground shrink-0"><User className="w-4 h-4" /></div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Currently owned by</p>
+                    <div className="mt-1">
+                      {lead.owner_id ? <NameLink id={lead.owner_id} name={nameOf(lead.owner_id)} avatarUrl={byId[lead.owner_id]?.avatar_url} size="sm" /> : <p className="text-sm font-medium text-foreground">Unassigned</p>}
+                    </div>
+                  </div>
+                </div>
                 <div className="flex gap-2">
                   <Select value={reassignTo} onValueChange={setReassignTo}>
                     <SelectTrigger className="h-11 flex-1"><SelectValue placeholder="Assign to…" /></SelectTrigger>
@@ -395,7 +408,7 @@ export default function LeadDetail() {
                           <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{FOLLOWUP_STATUSES.find((s) => s.value === f.status)?.label}</span>
                         </div>
                         {f.notes && <p className="text-sm text-muted-foreground mt-1">{f.notes}</p>}
-                        <p className="text-xs text-muted-foreground mt-1">{new Date(f.created_at).toLocaleString()}</p>
+                        <p className="text-xs text-muted-foreground mt-1 tabular-nums">{new Date(f.created_at).toLocaleString()}</p>
                       </div>
                     </div>
                   ))}
@@ -436,7 +449,7 @@ export default function LeadDetail() {
                     <div className="min-w-0 flex-1">
                       <span className="text-sm font-semibold text-destructive">{WARNING_REASONS.find((r) => r.value === w.reason)?.label}</span>
                       {w.message && <p className="text-sm text-muted-foreground mt-1">{w.message}</p>}
-                      <p className="text-xs text-muted-foreground mt-1">{new Date(w.created_at).toLocaleString()}</p>
+                      <p className="text-xs text-muted-foreground mt-1 tabular-nums">{new Date(w.created_at).toLocaleString()}</p>
                     </div>
                   </div>
                 ))}

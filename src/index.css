@@ -35,13 +35,13 @@
     --chart-3: 45 80% 52%;
     --chart-4: 0 72% 51%;
     --chart-5: 220 14% 46%;
-    --sidebar-background: 210 73% 14%;
-    --sidebar-foreground: 0 0% 100%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 20% 12%;
     --sidebar-primary: 45 80% 52%;
     --sidebar-primary-foreground: 220 20% 12%;
-    --sidebar-accent: 210 60% 22%;
-    --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 210 50% 22%;
+    --sidebar-accent: 220 14% 95%;
+    --sidebar-accent-foreground: 220 20% 12%;
+    --sidebar-border: 220 14% 91%;
     --sidebar-ring: 45 80% 52%;
     --destructive-foreground: 0 0% 100%;
     --success: 142 76% 36%;
@@ -80,13 +80,13 @@
     --chart-3: 0 72% 51%;
     --chart-4: 220 14% 60%;
     --chart-5: 210 73% 14%;
-    --sidebar-background: 210 50% 10%;
-    --sidebar-foreground: 0 0% 100%;
+    --sidebar-background: 220 20% 11%;
+    --sidebar-foreground: 220 14% 96%;
     --sidebar-primary: 45 80% 52%;
     --sidebar-primary-foreground: 220 20% 12%;
-    --sidebar-accent: 210 40% 18%;
-    --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 210 30% 18%;
+    --sidebar-accent: 220 18% 18%;
+    --sidebar-accent-foreground: 220 14% 96%;
+    --sidebar-border: 220 15% 20%;
     --sidebar-ring: 45 80% 52%;
     --destructive-foreground: 0 0% 100%;
     --success: 142 70% 45%;
@@ -200,6 +200,36 @@
 
   .pt-safe {
     padding-top: max(0.5rem, env(safe-area-inset-top));
+  }
+
+  /* ---- Data-table conventions (large lists: leads, follow-ups, staff) ----
+   * One class each so every table-heavy page reads the same way instead of
+   * hand-rolling this per page. Purely presentational. */
+
+  /* Keeps column headers visible while scrolling long lists. */
+  .table-sticky-head {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: hsl(var(--muted) / 0.92);
+    backdrop-filter: blur(4px);
+  }
+
+  /* Subtle banding so the eye can track a row across many columns at scale —
+   * intentionally faint, not the loud striping of a spreadsheet. */
+  .table-row-zebra:nth-child(even) {
+    background-color: hsl(var(--muted) / 0.25);
+  }
+
+  /* Consistent row hover/press feedback for dense, clickable table rows. */
+  .table-row-interactive {
+    transition: background-color 150ms ease;
+  }
+  .table-row-interactive:hover {
+    background-color: hsl(var(--primary) / 0.05);
+  }
+  .table-row-interactive:active {
+    background-color: hsl(var(--primary) / 0.08);
   }
 }
 

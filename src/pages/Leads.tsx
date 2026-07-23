@@ -13,12 +13,13 @@ import {
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetClose,
 } from '@/components/ui/sheet';
-import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode, Trash2 } from 'lucide-react';
+import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode, Trash2, CheckCircle2, XCircle, ListPlus } from 'lucide-react';
 import { LEAD_STAGES, type Lead } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
-import { isManagerOrAbove, isExec, isDepartmentScoped, getDepartmentLabel } from '@/lib/permissions';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
+import { isManagerOrAbove, isDepartmentScoped, getDepartmentLabel, canDeleteLead } from '@/lib/permissions';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -26,8 +27,10 @@ import {
 import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useDepartments } from '@/hooks/useDepartments';
+import { useTeams } from '@/hooks/useTeams';
 import StatusBadge from '@/components/StatusBadge';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
+import NameLink from '@/components/NameLink';
 
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -45,13 +48,52 @@ function initialsOf(name: string) {
 
 const TH_STYLE = 'px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap';
 
+/** The complete, explicit set of spreadsheet columns the bulk-import flow
+ * ever reads — every other column in an uploaded file (extra notes,
+ * internal ids, whatever else a sales team's export happens to carry) is
+ * ignored by construction: the insert payload below is built field-by-field
+ * from this list, never by spreading a row, so there's no path for an
+ * unrecognized column to end up in the database. Recognize a new column by
+ * adding one entry here, not by touching the import logic itself. */
+type ImportField = 'name' | 'phone' | 'email' | 'preferred_project' | 'budget_range';
+const IMPORT_COLUMNS: { key: ImportField; label: string; aliases: string[] }[] = [
+  { key: 'name', label: 'Name', aliases: ['name', 'customer', 'client'] },
+  { key: 'phone', label: 'Phone', aliases: ['phone', 'mobile', 'tel'] },
+  { key: 'email', label: 'Email', aliases: ['email', 'mail'] },
+  { key: 'preferred_project', label: 'Preferred Project', aliases: ['project', 'preferred'] },
+  { key: 'budget_range', label: 'Budget', aliases: ['budget', 'price'] },
+];
+
+/** Exact header match wins over a loose substring match, so an exact
+ * "Name" column is never shadowed by, say, an unrelated "Customer Name
+ * Notes" column earlier in the sheet. */
+function findImportColumn(headers: string[], aliases: string[]): number {
+  for (const alias of aliases) {
+    const idx = headers.findIndex((h) => h === alias);
+    if (idx >= 0) return idx;
+  }
+  for (const alias of aliases) {
+    const idx = headers.findIndex((h) => h.includes(alias));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+interface ImportPreview {
+  columnMap: { key: ImportField; label: string; header: string | null }[];
+  rows: Record<string, unknown>[];
+  skippedCount: number;
+}
+
 export default function Leads() {
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { user, role, department } = useAuth();
+  usePageHeader(t('leads.title'), t('leads.subtitle'));
+  const { user, role, department, myTeamIds } = useAuth();
   const { colors: statusColors } = useStatusColors();
   const { nameOf, profiles } = useProfiles();
   const { departments } = useDepartments();
+  const { teams, membersOf } = useTeams();
   const [rawLeads, setRawLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [mapOpen, setMapOpen] = useState(false);
@@ -59,10 +101,13 @@ export default function Leads() {
   const [actionSheetLead, setActionSheetLead] = useState<Lead | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Lead | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
 
-  // Deleting leads is exec-only (boss / super admin) — matches the
-  // leads_delete RLS policy (is_exec()) in database/crm.sql.
-  const canDelete = isExec(role);
+  const currentUser = user ? { id: user.id, role, department, managedTeamIds: myTeamIds } : null;
+  // Exec can delete any lead; Manager/Sale only a lead they currently own —
+  // matches the leads_delete RLS policy. Checked per-row below, not as a
+  // single flag, since ownership varies lead by lead.
+  const canDeleteRow = (lead: Lead) => canDeleteLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
   // Admin/Manager/Sale only ever see their own department (RLS), so the
   // department filter is meaningless noise for them.
   const showDeptFilter = !isDepartmentScoped(role);
@@ -74,6 +119,7 @@ export default function Leads() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [projectFilter, setProjectFilter] = useState('all');
   const [deptFilter, setDeptFilter] = useState('all');
+  const [teamFilter, setTeamFilter] = useState('all');
   const [agentFilter, setAgentFilter] = useState('all');
 
   useEffect(() => {
@@ -111,6 +157,23 @@ export default function Leads() {
     [leads]
   );
 
+  // Narrow the team picker to the selected department (if any) so it never
+  // offers teams that couldn't possibly match.
+  const teamOptions = useMemo(
+    () => teams.filter((t) => deptFilter === 'all' || t.department_code === deptFilter),
+    [teams, deptFilter]
+  );
+
+  // A lead matches a team filter if it was explicitly filed under that team
+  // OR its current owner is a member of that team (or is the team's
+  // manager, for leads a manager assigned to themselves) — this second path
+  // is what makes the filter work for a person's leads created before they
+  // were put on a team, or before team_id was tagged at all, since the
+  // membership lookup always reflects current team assignment rather than a
+  // possibly-stale/absent field on the lead itself.
+  const teamMemberIds = useMemo(() => (teamFilter === 'all' ? [] : membersOf(teamFilter)), [teamFilter, membersOf]);
+  const teamManagerId = useMemo(() => (teamFilter === 'all' ? null : teams.find((t) => t.id === teamFilter)?.manager_id ?? null), [teamFilter, teams]);
+
   const filteredLeads = useMemo(() => {
     return leads.filter((lead) => {
       const name = lead.name?.toLowerCase() || '';
@@ -121,11 +184,15 @@ export default function Leads() {
       const matchesStatus = statusFilter === 'all' || lead.status === statusFilter;
       const matchesProject = projectFilter === 'all' || lead.preferred_project === projectFilter;
       const matchesDept = deptFilter === 'all' || lead.department_code === deptFilter;
+      const matchesTeam = teamFilter === 'all'
+        || lead.team_id === teamFilter
+        || (!!lead.owner_id && teamMemberIds.includes(lead.owner_id))
+        || (!!lead.owner_id && lead.owner_id === teamManagerId);
       const matchesAgent = agentFilter === 'all' || lead.owner_name === agentFilter;
 
-      return matchesSearch && matchesStatus && matchesProject && matchesDept && matchesAgent;
+      return matchesSearch && matchesStatus && matchesProject && matchesDept && matchesTeam && matchesAgent;
     });
-  }, [leads, searchQuery, statusFilter, projectFilter, deptFilter, agentFilter]);
+  }, [leads, searchQuery, statusFilter, projectFilter, deptFilter, teamFilter, teamMemberIds, teamManagerId, agentFilter]);
 
   const openMap = (lead: Lead) => {
     setSelectedLead(lead);
@@ -156,6 +223,10 @@ export default function Leads() {
     }
   };
 
+  // Reads the file, maps ONLY the columns in IMPORT_COLUMNS (anything else
+  // in the spreadsheet is never looked at), and stops at a preview — the
+  // actual insert only happens if the user confirms it in confirmImport()
+  // below, so a wrong column mapping never silently writes bad leads.
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user?.id) return;
@@ -168,36 +239,35 @@ export default function Leads() {
       const rows: any[] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
       if (rows.length < 2) {
         toast.error('No data found in the spreadsheet.');
-        setImporting(false);
         return;
       }
-      const headers: string[] = rows[0].map((h: any) => String(h).trim().toLowerCase());
-      const findCol = (names: string[]) => {
-        for (const n of names) {
-          const idx = headers.findIndex((h) => h.includes(n));
-          if (idx >= 0) return idx;
-        }
-        return -1;
-      };
-      const nameIdx = findCol(['name', 'customer']);
-      const phoneIdx = findCol(['phone', 'mobile', 'tel']);
-      const emailIdx = findCol(['email', 'mail']);
-      const projectIdx = findCol(['project', 'preferred']);
-      const budgetIdx = findCol(['budget', 'price']);
 
+      const rawHeaders: string[] = rows[0].map((h: any) => String(h).trim());
+      const headers = rawHeaders.map((h) => h.toLowerCase());
+      const colIndex = Object.fromEntries(
+        IMPORT_COLUMNS.map((col) => [col.key, findImportColumn(headers, col.aliases)])
+      ) as Record<ImportField, number>;
+
+      if (colIndex.name < 0 && colIndex.phone < 0) {
+        toast.error('Could not find a Name or Phone column in this file — nothing was imported. Recognized columns: Name, Phone, Email, Preferred Project, Budget.');
+        return;
+      }
+
+      const cell = (row: any[], idx: number) => (idx >= 0 ? String(row[idx] ?? '').trim() : '');
       const rowsToInsert: Record<string, unknown>[] = [];
+      let skippedCount = 0;
       for (let i = 1; i < rows.length; i++) {
         const row = rows[i];
-        const nameVal = nameIdx >= 0 ? String(row[nameIdx]).trim() : '';
-        const phoneVal = phoneIdx >= 0 ? String(row[phoneIdx]).trim() : '';
-        if (!nameVal && !phoneVal) continue;
+        const nameVal = cell(row, colIndex.name);
+        const phoneVal = cell(row, colIndex.phone);
+        if (!nameVal && !phoneVal) { skippedCount += 1; continue; }
 
         rowsToInsert.push({
           name: nameVal || 'Unknown',
           phone: phoneVal || '',
-          email: emailIdx >= 0 ? String(row[emailIdx]).trim() || null : null,
-          preferred_project: projectIdx >= 0 ? String(row[projectIdx]).trim() || null : null,
-          budget_range: budgetIdx >= 0 ? String(row[budgetIdx]).trim() || null : null,
+          email: cell(row, colIndex.email) || null,
+          preferred_project: cell(row, colIndex.preferred_project) || null,
+          budget_range: cell(row, colIndex.budget_range) || null,
           status: 'new',
           department_code: department || 'house',
           owner_id: user.id,
@@ -206,24 +276,42 @@ export default function Leads() {
       }
 
       if (rowsToInsert.length === 0) {
-        toast.error('No valid rows found to import.');
-      } else {
-        const { error } = await supabase.from('leads').insert(rowsToInsert);
-        if (error) throw error;
-        toast.success(`${rowsToInsert.length} leads imported.`);
+        toast.error('No valid rows found to import — every row was missing both Name and Phone.');
+        return;
       }
+
+      setImportPreview({
+        columnMap: IMPORT_COLUMNS.map((col) => ({ key: col.key, label: col.label, header: colIndex[col.key] >= 0 ? rawHeaders[colIndex[col.key]] : null })),
+        rows: rowsToInsert,
+        skippedCount,
+      });
     } catch {
-      toast.error('Import failed.');
+      toast.error('Could not read this file — please check it\'s a valid Excel/CSV export.');
     } finally {
       setImporting(false);
       if (importFileRef.current) importFileRef.current.value = '';
     }
   };
 
+  const confirmImport = async () => {
+    if (!importPreview) return;
+    setImporting(true);
+    try {
+      const { error } = await supabase.from('leads').insert(importPreview.rows);
+      if (error) throw error;
+      toast.success(`${importPreview.rows.length} lead${importPreview.rows.length === 1 ? '' : 's'} imported.`);
+      setImportPreview(null);
+    } catch {
+      toast.error('Import failed.');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in-up">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between md:justify-end gap-4">
+        <div className="md:hidden">
           <h1 className="text-xl md:text-2xl font-semibold text-foreground">{t('leads.title')}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t('leads.subtitle')}</p>
         </div>
@@ -290,9 +378,9 @@ export default function Leads() {
                   >
                     <SlidersHorizontal className="w-4 h-4" />
                     <span className="hidden sm:inline">Filters</span>
-                    {(statusFilter !== 'all' || projectFilter !== 'all' || deptFilter !== 'all' || agentFilter !== 'all') && (
+                    {(statusFilter !== 'all' || projectFilter !== 'all' || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all') && (
                       <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
-                        {[statusFilter, projectFilter, deptFilter, agentFilter].filter((f) => f !== 'all').length}
+                        {[statusFilter, projectFilter, deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length}
                       </span>
                     )}
                   </button>
@@ -308,8 +396,9 @@ export default function Leads() {
                       statusFilter={statusFilter} setStatusFilter={setStatusFilter}
                       projectFilter={projectFilter} setProjectFilter={setProjectFilter}
                       deptFilter={deptFilter} setDeptFilter={setDeptFilter}
+                      teamFilter={teamFilter} setTeamFilter={setTeamFilter}
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
-                      leads={leads} uniqueAgents={uniqueAgents} departments={departments}
+                      leads={leads} uniqueAgents={uniqueAgents} departments={departments} teamOptions={teamOptions}
                       showDept={showDeptFilter}
                     />
                     <SheetClose asChild>
@@ -358,6 +447,18 @@ export default function Leads() {
                   </SelectContent>
                 </Select>
               )}
+              {teamOptions.length > 0 && (
+                <Select value={teamFilter} onValueChange={setTeamFilter}>
+                  <SelectTrigger className="w-[160px] h-11">
+                    <Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
+                    <SelectValue placeholder="Team" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All teams</SelectItem>
+                    {teamOptions.map((tm) => (<SelectItem key={tm.id} value={tm.id}>{tm.name}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              )}
               <Select value={agentFilter} onValueChange={setAgentFilter}>
                 <SelectTrigger className="w-[180px] h-11">
                   <UserIcon className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
@@ -375,6 +476,7 @@ export default function Leads() {
                 ['status', statusFilter, setStatusFilter, statusFilter !== 'all' ? stageLabel(statusFilter) : ''],
                 ['project', projectFilter, setProjectFilter, projectFilter],
                 ['dept', deptFilter, setDeptFilter, deptFilter !== 'all' ? getDepartmentLabel(deptFilter) : ''],
+                ['team', teamFilter, setTeamFilter, teamFilter !== 'all' ? (teamOptions.find((tm) => tm.id === teamFilter)?.name || '') : ''],
                 ['agent', agentFilter, setAgentFilter, agentFilter],
               ].map(([key, value, setter, label]) =>
                 value !== 'all' ? (
@@ -396,22 +498,22 @@ export default function Leads() {
 
       {/* Mobile: Card List | Desktop: Table */}
       <Card className="shadow-card rounded-xl border-0 overflow-hidden">
-        <CardHeader className="pb-0">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <FileText className="w-4 h-4 text-muted-foreground" />
+        <CardHeader className="px-6 py-4 border-b border-border/40 bg-muted/10">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground/90">
+            <FileText className="w-4 h-4 text-muted-foreground/80" />
             All Leads
-            <span className="text-xs font-normal text-muted-foreground ml-1">({filteredLeads.length})</span>
+            <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2 py-0.5 rounded-full ml-1 tabular-nums">{filteredLeads.length}</span>
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <div className="w-full max-w-full overflow-x-auto bg-card">
             {loading ? (
-              <div className="flex items-center justify-center h-48">
-                <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <div className="flex flex-col items-center justify-center h-52 gap-2.5 text-muted-foreground">
+                <Loader2 className="w-7 h-7 animate-spin text-primary" />
               </div>
             ) : filteredLeads.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
-                <FileText className="w-8 h-8 mb-2 opacity-50" />
+              <div className="flex flex-col items-center justify-center h-56 text-muted-foreground bg-muted/5">
+                <FileText className="w-9 h-9 mb-2 opacity-40" />
                 <p className="text-sm font-medium">No leads found</p>
                 <p className="text-xs mt-1">Try adjusting your search or filters</p>
               </div>
@@ -433,8 +535,8 @@ export default function Leads() {
                     </TableHeader>
                     <TableBody>
                       {filteredLeads.map((lead) => (
-                        <TableRow key={lead.id} className="cursor-pointer border-border/50 transition-colors hover:bg-muted/40" onClick={() => navigate(`/lead/${lead.id}`)}>
-                          <TableCell className="pl-5 pr-4 py-3">
+                        <TableRow key={lead.id} className="table-row-interactive table-row-zebra cursor-pointer border-border/40" onClick={() => navigate(`/lead/${lead.id}`)}>
+                          <TableCell className="pl-5 pr-4 py-2.5">
                             <div className="flex items-center gap-3">
                               <div className="w-9 h-9 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
                                 {initialsOf(lead.name)}
@@ -445,14 +547,16 @@ export default function Leads() {
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="px-4 py-3">
+                          <TableCell className="px-4 py-2.5">
                             <p className="text-sm text-foreground truncate max-w-[170px]">{lead.preferred_project || '—'}</p>
-                            {lead.budget_range && <p className="text-xs text-muted-foreground truncate max-w-[170px]">{lead.budget_range}</p>}
+                            {lead.budget_range && <p className="text-xs text-muted-foreground truncate max-w-[170px] tabular-nums">{lead.budget_range}</p>}
                           </TableCell>
-                          <TableCell className="px-4 py-3 whitespace-nowrap"><LeadLevelBadge grade={lead.lead_grade} /></TableCell>
-                          <TableCell className="px-4 py-3 whitespace-nowrap"><StatusBadge status={stageLabel(lead.status)} color={statusColors?.[lead.status] || '#8FA3BF'} /></TableCell>
-                          <TableCell className="px-4 py-3 whitespace-nowrap text-sm text-muted-foreground">{lead.owner_name || '—'}</TableCell>
-                          <TableCell className="px-4 py-3 whitespace-nowrap text-sm text-muted-foreground">
+                          <TableCell className="px-4 py-2.5 whitespace-nowrap"><LeadLevelBadge grade={lead.lead_grade} /></TableCell>
+                          <TableCell className="px-4 py-2.5 whitespace-nowrap"><StatusBadge status={stageLabel(lead.status)} color={statusColors?.[lead.status] || '#8FA3BF'} /></TableCell>
+                          <TableCell className="px-4 py-2.5 whitespace-nowrap text-sm text-muted-foreground">
+                            {lead.owner_id ? <NameLink id={lead.owner_id} name={lead.owner_name || '—'} showAvatar={false} /> : '—'}
+                          </TableCell>
+                          <TableCell className="px-4 py-2.5 whitespace-nowrap text-sm text-muted-foreground tabular-nums">
                             {lead.next_follow_up_at ? (
                               <span className="inline-flex items-center gap-1.5">
                                 <Calendar className="w-3.5 h-3.5 opacity-60" />
@@ -460,7 +564,7 @@ export default function Leads() {
                               </span>
                             ) : '—'}
                           </TableCell>
-                          <TableCell className="pl-4 pr-5 py-3 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+                          <TableCell className="pl-4 pr-5 py-2.5 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
                             <div className="inline-flex items-center gap-0.5">
                               {lead.latitude && lead.longitude && (
                                 <Button variant="ghost" size="icon" title="View map" aria-label="View map" className="h-8 w-8 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => openMap(lead)}>
@@ -470,7 +574,7 @@ export default function Leads() {
                               <Button variant="ghost" size="icon" title="View details" aria-label="View details" className="h-8 w-8 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => navigate(`/lead/${lead.id}`)}>
                                 <Eye className="w-4 h-4" />
                               </Button>
-                              {canDelete && (
+                              {canDeleteRow(lead) && (
                                 <Button variant="ghost" size="icon" title="Delete lead" aria-label="Delete lead" className="h-8 w-8 min-h-0 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteTarget(lead)}>
                                   <Trash2 className="w-4 h-4" />
                                 </Button>
@@ -487,7 +591,11 @@ export default function Leads() {
                 <div className="md:hidden divide-y divide-border">
                   {filteredLeads.map((lead) => (
                     <div key={lead.id} className="flex items-start gap-3 p-4 min-h-[72px] transition-colors hover:bg-muted/30 active:bg-muted/50">
-                      <button type="button" onClick={() => navigate(`/lead/${lead.id}`)} className="flex-1 min-w-0 space-y-2 text-left">
+                      {/* A plain div (not <button>) — it needs to contain the
+                          NameLink's <a> and the "View map" <button> below,
+                          and interactive elements can't nest inside a
+                          <button> per HTML semantics. */}
+                      <div role="button" tabIndex={0} onClick={() => navigate(`/lead/${lead.id}`)} onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/lead/${lead.id}`); }} className="flex-1 min-w-0 space-y-2 text-left cursor-pointer">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-semibold text-foreground truncate">{lead.name}</span>
                           <StatusBadge status={stageLabel(lead.status)} color={statusColors?.[lead.status] || '#8FA3BF'} />
@@ -498,7 +606,11 @@ export default function Leads() {
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <LeadLevelBadge grade={lead.lead_grade} />
-                          {lead.owner_name && (<span className="flex items-center gap-1 text-xs text-muted-foreground"><UserIcon className="w-3 h-3" />{lead.owner_name}</span>)}
+                          {lead.owner_id ? (
+                            <NameLink id={lead.owner_id} name={lead.owner_name || '—'} size="sm" showAvatar={false} className="text-xs text-muted-foreground" />
+                          ) : lead.owner_name && (
+                            <span className="flex items-center gap-1 text-xs text-muted-foreground"><UserIcon className="w-3 h-3" />{lead.owner_name}</span>
+                          )}
                         </div>
                         {lead.next_follow_up_at && (
                           <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -510,7 +622,7 @@ export default function Leads() {
                             <MapPin className="w-3 h-3" /> View map
                           </button>
                         )}
-                      </button>
+                      </div>
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); setActionSheetLead(lead); }}
@@ -527,6 +639,46 @@ export default function Leads() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Import preview — confirms the column mapping before anything is
+          written, so an oddly-named or reordered spreadsheet column never
+          silently lands in the wrong field. */}
+      <Dialog open={!!importPreview} onOpenChange={(open) => !open && !importing && setImportPreview(null)}>
+        <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md rounded-xl p-6 border border-border/60 shadow-xl bg-card gap-0">
+          <DialogHeader className="pb-4 border-b border-border/60">
+            <DialogTitle className="text-base font-semibold flex items-center gap-2"><ListPlus className="w-5 h-5 text-primary" /> Import Preview</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-5">
+            <p className="text-sm text-muted-foreground">
+              Only these columns are ever read from your file — anything else in the spreadsheet is ignored.
+            </p>
+            <div className="space-y-1.5">
+              {importPreview?.columnMap.map((col) => (
+                <div key={col.key} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-border bg-muted/20">
+                  <span className="text-sm font-medium text-foreground">{col.label}</span>
+                  {col.header ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> "{col.header}"</span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><XCircle className="w-3.5 h-3.5 shrink-0" /> Not found — skipped</span>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="text-sm bg-primary/5 border border-primary/20 rounded-lg px-3.5 py-2.5">
+              <span className="font-semibold text-foreground">{importPreview?.rows.length}</span> lead{importPreview?.rows.length === 1 ? '' : 's'} ready to import
+              {!!importPreview?.skippedCount && (
+                <span className="text-muted-foreground"> · {importPreview.skippedCount} row{importPreview.skippedCount === 1 ? '' : 's'} skipped (no name or phone)</span>
+              )}
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Button type="button" variant="outline" className="flex-1 h-11" disabled={importing} onClick={() => setImportPreview(null)}>Cancel</Button>
+              <Button type="button" className="flex-1 h-11 gradient-primary text-white font-medium" disabled={importing} onClick={confirmImport}>
+                {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : `Import ${importPreview?.rows.length ?? ''} Lead${importPreview?.rows.length === 1 ? '' : 's'}`}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Map Modal */}
       <Dialog open={mapOpen} onOpenChange={setMapOpen}>
@@ -581,7 +733,7 @@ export default function Leads() {
                     View location
                   </button>
                 )}
-                {canDelete && (
+                {canDeleteRow(actionSheetLead) && (
                   <button type="button" onClick={() => { setDeleteTarget(actionSheetLead); setActionSheetLead(null); }} className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium text-destructive hover:bg-destructive/5 active:bg-destructive/10 transition-colors">
                     <div className="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0"><Trash2 className="w-4 h-4 text-destructive" /></div>
                     Delete lead
@@ -623,7 +775,7 @@ export default function Leads() {
   );
 }
 
-function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProjectFilter, deptFilter, setDeptFilter, agentFilter, setAgentFilter, leads, uniqueAgents, departments, showDept = true }: any) {
+function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProjectFilter, deptFilter, setDeptFilter, teamFilter, setTeamFilter, agentFilter, setAgentFilter, leads, uniqueAgents, departments, teamOptions, showDept = true }: any) {
   return (
     <>
       <div className="space-y-2">
@@ -656,6 +808,18 @@ function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProject
             <SelectContent>
               <SelectItem value="all">All departments</SelectItem>
               {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      {teamOptions.length > 0 && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">Team</label>
+          <Select value={teamFilter} onValueChange={setTeamFilter}>
+            <SelectTrigger className="h-12 w-full"><SelectValue placeholder="Select team" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All teams</SelectItem>
+              {teamOptions.map((tm: { id: string; name: string }) => (<SelectItem key={tm.id} value={tm.id}>{tm.name}</SelectItem>))}
             </SelectContent>
           </Select>
         </div>

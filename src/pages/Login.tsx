@@ -44,7 +44,7 @@ export default function Login() {
       <SystemBanner />
       <div className="flex-1 flex items-center justify-center px-4">
       <div className="w-full max-w-md animate-fade-in-up space-y-3">
-        <div className="bg-white rounded-lg shadow-card p-6 sm:p-8">
+        <div className="bg-white rounded-2xl shadow-elevated border border-border/40 p-6 sm:p-8">
           <div className="flex flex-col items-center mb-8">
             <img src="/logo.png" alt="PSM Properties" className="h-20 w-auto mb-4" draggable={false} />
             <h1 className="text-xl font-semibold text-foreground">Welcome Back</h1>

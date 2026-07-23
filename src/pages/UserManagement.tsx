@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetClose } from '@/components/ui/sheet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogClose } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import NameLink from '@/components/NameLink';
 import {
   User as UserIcon, Search, Filter, SlidersHorizontal, Download, FileSpreadsheet, FileText,
   Briefcase, Phone, Mail, ShieldAlert, UserPlus, Loader2, Edit2, AlertTriangle, KeyRound, Trash2,
@@ -18,9 +19,11 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { exportAsExcel, exportAsCSV } from '@/lib/exportUtils';
 import { ROLE_TIERS, ROLE_LABELS, isExec, isAdminOrAbove, canWarnStaff, getDepartmentLabel, type RoleTier, type Department } from '@/lib/permissions';
 import { useDepartments } from '@/hooks/useDepartments';
+import { useTeams } from '@/hooks/useTeams';
 import { WARNING_REASONS, type WarningReason } from '@/types';
 import type { Profile } from '@/types';
 import { toast } from 'sonner';
@@ -28,6 +31,8 @@ import { toast } from 'sonner';
 export default function UserManagement() {
   const { user, role } = useAuth();
   const { departments } = useDepartments();
+  const { teams, teamsOf, teamsManagedBy, membersOf } = useTeams();
+  usePageHeader('Staff', 'Manage and track your active staff');
   const [staff, setStaff] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -68,6 +73,18 @@ export default function UserManagement() {
   // warnings — not to manage accounts.
   const canManageStaff = isExec(role);
   const canView = isAdminOrAbove(role);
+
+  // Teams this Manager runs, and everyone on those teams — narrows "Warn"
+  // from whole-department to just the people they actually manage.
+  const managedPersonIds = useMemo(() => {
+    if (role !== 'manager' || !user) return [];
+    return teamsManagedBy(user.id).flatMap((t) => membersOf(t.id));
+  }, [role, user, teamsManagedBy, membersOf]);
+
+  const teamNamesFor = (s: Profile): string[] => {
+    const ids = s.role === 'manager' ? teamsManagedBy(s.id).map((t) => t.id) : teamsOf(s.id);
+    return ids.map((id) => teams.find((t) => t.id === id)?.name).filter(Boolean) as string[];
+  };
 
   useEffect(() => {
     if (!newDept && departments.length > 0) setNewDept(departments[0].code);
@@ -230,8 +247,8 @@ export default function UserManagement() {
 
   return (
     <div className="space-y-6 animate-fade-in-up pb-12">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border/60 pb-5">
-        <div>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between md:justify-end gap-4 border-b border-border/60 pb-5">
+        <div className="md:hidden">
           <h1 className="text-xl md:text-2xl font-semibold tracking-tight text-foreground">Staff</h1>
           <p className="text-sm text-muted-foreground mt-0.5">Manage and track your active staff</p>
         </div>
@@ -255,7 +272,7 @@ export default function UserManagement() {
                 <UserPlus className="w-4 h-4" /> Add Staff
               </Button>
             </DialogTrigger>
-            <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md rounded-xl p-6 border border-border/60 shadow-xl bg-card gap-0">
+            <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md rounded-xl p-6 border border-border/60 shadow-xl bg-card gap-0 max-h-[85dvh] overflow-y-auto">
               <DialogHeader className="pb-4 border-b border-border/60">
                 <DialogTitle className="text-base font-semibold flex items-center gap-2"><UserPlus className="w-5 h-5 text-primary" /> Add New Staff</DialogTitle>
               </DialogHeader>
@@ -295,7 +312,7 @@ export default function UserManagement() {
       </div>
 
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md rounded-xl p-6 border border-border/60 shadow-xl bg-card gap-0">
+        <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md rounded-xl p-6 border border-border/60 shadow-xl bg-card gap-0 max-h-[85dvh] overflow-y-auto">
           <DialogHeader className="pb-4 border-b border-border/60">
             <DialogTitle className="text-base font-semibold flex items-center gap-2"><Edit2 className="w-4 h-4 text-primary" /> Edit Staff Profile</DialogTitle>
           </DialogHeader>
@@ -479,6 +496,7 @@ export default function UserManagement() {
                     <TableHead className="whitespace-nowrap px-6 h-11 text-xs font-semibold text-muted-foreground">Phone</TableHead>
                     <TableHead className="whitespace-nowrap px-6 h-11 text-xs font-semibold text-muted-foreground">Email</TableHead>
                     <TableHead className="whitespace-nowrap px-6 h-11 text-xs font-semibold text-muted-foreground">Department</TableHead>
+                    <TableHead className="whitespace-nowrap px-6 h-11 text-xs font-semibold text-muted-foreground">Teams</TableHead>
                     <TableHead className="whitespace-nowrap px-6 h-11 text-xs font-semibold text-muted-foreground">Role</TableHead>
                     <TableHead className="whitespace-nowrap px-6 h-11 text-xs font-semibold text-muted-foreground">Status</TableHead>
                     <TableHead className="whitespace-nowrap px-6 h-11 text-xs font-semibold text-muted-foreground text-right">Actions</TableHead>
@@ -486,19 +504,28 @@ export default function UserManagement() {
                 </TableHeader>
                 <TableBody>
                   {filteredStaff.map((s) => (
-                    <TableRow key={s.id} className={`border-b border-border/40 transition-colors duration-150 hover:bg-muted/30 ${canManageStaff ? 'cursor-pointer' : ''}`} onClick={() => handleRowClick(s)}>
-                      <TableCell className="whitespace-nowrap px-6 py-3.5 text-sm font-medium text-foreground">{s.name}</TableCell>
-                      <TableCell className="whitespace-nowrap px-6 py-3.5 text-sm text-muted-foreground"><Phone className="w-3.5 h-3.5 inline mr-1.5 opacity-60" />{s.phone || '—'}</TableCell>
-                      <TableCell className="whitespace-nowrap px-6 py-3.5 text-sm text-muted-foreground"><Mail className="w-3.5 h-3.5 inline mr-1.5 opacity-60" />{s.email}</TableCell>
-                      <TableCell className="whitespace-nowrap px-6 py-3.5 text-sm text-foreground/80">{getDepartmentLabel(s.department_code)}</TableCell>
-                      <TableCell className="whitespace-nowrap px-6 py-3.5 text-sm font-medium"><span className="text-xs px-2 py-0.5 font-semibold uppercase tracking-wider rounded border border-primary/20 bg-primary/5 text-primary">{ROLE_LABELS[s.role]}</span></TableCell>
-                      <TableCell className="whitespace-nowrap px-6 py-3.5">
+                    <TableRow key={s.id} className={`table-row-zebra border-b border-border/40 transition-colors duration-150 hover:bg-primary/5 ${canManageStaff ? 'cursor-pointer' : ''}`} onClick={() => handleRowClick(s)}>
+                      <TableCell className="whitespace-nowrap px-6 py-2.5 text-sm font-medium text-foreground"><NameLink id={s.id} name={s.name} avatarUrl={s.avatar_url} /></TableCell>
+                      <TableCell className="whitespace-nowrap px-6 py-2.5 text-sm text-muted-foreground tabular-nums"><Phone className="w-3.5 h-3.5 inline mr-1.5 opacity-60" />{s.phone || '—'}</TableCell>
+                      <TableCell className="whitespace-nowrap px-6 py-2.5 text-sm text-muted-foreground"><Mail className="w-3.5 h-3.5 inline mr-1.5 opacity-60" />{s.email}</TableCell>
+                      <TableCell className="whitespace-nowrap px-6 py-2.5 text-sm text-foreground/80">{getDepartmentLabel(s.department_code)}</TableCell>
+                      <TableCell className="px-6 py-2.5 text-sm text-foreground/80">
+                        {teamNamesFor(s).length === 0 ? '—' : (
+                          <div className="flex flex-wrap gap-1 max-w-[180px]">
+                            {teamNamesFor(s).map((name) => (
+                              <span key={name} className="text-[11px] px-1.5 py-0.5 rounded-full bg-muted border border-border text-muted-foreground whitespace-nowrap">{name}</span>
+                            ))}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap px-6 py-2.5 text-sm font-medium"><span className="text-xs px-2 py-0.5 font-semibold uppercase tracking-wider rounded border border-primary/20 bg-primary/5 text-primary">{ROLE_LABELS[s.role]}</span></TableCell>
+                      <TableCell className="whitespace-nowrap px-6 py-2.5">
                         <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium border ${s.status === 'active' ? 'bg-emerald-500/5 text-emerald-600 border-emerald-500/20' : 'bg-destructive/5 text-destructive border-destructive/20'}`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${s.status === 'active' ? 'bg-emerald-500' : 'bg-destructive'}`} /> {s.status === 'active' ? 'Active' : 'Inactive'}
                         </span>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap px-6 py-3.5 text-right">
-                        {canWarnStaff({ id: user?.id || '', role, department: user?.department ?? null }, { departmentCode: s.department_code }) && s.id !== user?.id && (
+                      <TableCell className="whitespace-nowrap px-6 py-2.5 text-right">
+                        {canWarnStaff({ id: user?.id || '', role, department: user?.department ?? null }, { id: s.id, departmentCode: s.department_code }, managedPersonIds) && s.id !== user?.id && (
                           <Button
                             variant="ghost" size="sm"
                             className="h-8 gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-500/10"
@@ -518,7 +545,7 @@ export default function UserManagement() {
       </Card>
 
       <Dialog open={!!warnTarget} onOpenChange={(open) => !open && setWarnTarget(null)}>
-        <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md rounded-xl p-6 border border-border/60 shadow-xl bg-card gap-0">
+        <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md rounded-xl p-6 border border-border/60 shadow-xl bg-card gap-0 max-h-[85dvh] overflow-y-auto">
           <DialogHeader className="pb-4 border-b border-border/60">
             <DialogTitle className="text-base font-semibold flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-amber-600" /> Warn {warnTarget?.name}

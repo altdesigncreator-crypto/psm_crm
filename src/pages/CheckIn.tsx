@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { getDepartmentLabel } from '@/lib/permissions';
 import { processCapturedImage } from '@/lib/cameraUtils';
 import { watermarkFromFile } from '@/lib/watermark';
@@ -18,6 +19,7 @@ import type { CheckIn as CheckInRecord } from '@/types';
 export default function CheckIn() {
   const { user, department } = useAuth();
   const { t } = useTranslation();
+  usePageHeader(t('checkin.title'), t('checkin.subtitle'));
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
@@ -141,7 +143,7 @@ export default function CheckIn() {
 
   return (
     <div className="max-w-lg mx-auto space-y-5 animate-fade-in-up px-1 pb-6">
-      <div>
+      <div className="md:hidden">
         <h1 className="text-xl md:text-2xl font-semibold text-foreground leading-snug">{t('checkin.title')}</h1>
         <p className="text-sm text-muted-foreground mt-1">{t('checkin.subtitle')}</p>
       </div>

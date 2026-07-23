@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { useNotifications, type Notification } from '@/contexts/NotificationsContext';
+import { usePageHeaderValue } from '@/contexts/PageHeaderContext';
 import { canAccessRoute, getRoleLabel, getDepartmentLabel, type RouteKey } from '@/lib/permissions';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
 import SystemBanner from '@/components/SystemBanner';
@@ -12,6 +13,7 @@ import {
   Settings as SettingsIcon, BarChart3 as AnalyticsIcon, Thermometer, Kanban, Briefcase, ListChecks,
   Download,
   Activity as ActivityIcon,
+  UsersRound,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -46,6 +48,7 @@ const NAV_SECTIONS: { tKey: string; items: NavItem[] }[] = [
       { tKey: 'nav.teamActivity', path: '/team-activity', routeKey: 'team-activity', icon: ActivityIcon },
       { tKey: 'nav.kpiBoard', path: '/kpi-board', routeKey: 'kpi-board', icon: BarChart3 },
       { tKey: 'nav.staff', path: '/user-management', routeKey: 'user-management', icon: Briefcase },
+      { tKey: 'nav.teamManagement', path: '/team-management', routeKey: 'team-management', icon: UsersRound },
     ],
   },
   {
@@ -66,6 +69,10 @@ const TAB_ITEMS = [
   { tKey: 'tab.checkin', path: '/check-in', icon: MapPin },
   { tKey: 'tab.gallery', path: '/check-in-gallery', icon: Image },
 ];
+
+function initialsOf(name: string): string {
+  return name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('') || '?';
+}
 
 function formatNotifTime(iso?: string) {
   if (!iso) return '';
@@ -98,9 +105,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { t } = useTranslation();
   const { notifications, unreadCount, markAllAsRead } = useNotifications();
   const { canInstall, promptInstall } = usePwaInstall();
+  const pageHeader = usePageHeaderValue();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Desktop-only sidebar show/hide (mobile always uses the overlay Sheet
+  // above instead) — remembered across sessions so it doesn't reset on
+  // every reload.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('psm_sidebar_collapsed') === '1');
+  const toggleSidebar = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem('psm_sidebar_collapsed', next ? '1' : '0');
+      return next;
+    });
+  };
   // Separate open state per breakpoint: the mobile and desktop headers each
   // render their own Popover (only one is visible at a time via CSS, but
   // both stay mounted), so sharing one boolean made Radix position the
@@ -154,16 +173,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // scrolling the main content never scrolls the nav, and vice versa.
   const sidebarContent = (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-3 px-5 py-4 border-b border-white/10 shrink-0">
-        <img src="/logo-dark.png" alt="PSM Properties" className="h-12 w-auto" draggable={false} />
+      <div className="flex items-center gap-3 px-5 h-16 border-b border-sidebar-border shrink-0">
+        <img src="/logo.png" alt="PSM Properties" className="h-10 w-auto dark:hidden" draggable={false} />
+        <img src="/logo-dark.png" alt="PSM Properties" className="h-10 w-auto hidden dark:block" draggable={false} />
       </div>
 
-      <ScrollArea className="flex-1 min-h-0 px-3 py-4">
-        <div className="space-y-6 pb-4">
+      <ScrollArea className="flex-1 min-h-0 px-3 py-5">
+        <div className="space-y-7 pb-4">
           {visibleSections.map((section) => (
             <div key={section.tKey}>
-              <p className="px-4 text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-2">{t(section.tKey)}</p>
-              <div className="space-y-1">
+              <p className="px-4 text-[10px] font-semibold text-sidebar-foreground/40 uppercase tracking-widest mb-2.5">{t(section.tKey)}</p>
+              <div className="space-y-0.5">
                 {section.items.map((item) => {
                   const isActive = location.pathname === item.path;
                   const Icon = item.icon;
@@ -172,19 +192,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                       key={item.path}
                       to={item.path}
                       onClick={() => setMobileOpen(false)}
-                      className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 min-h-11 ${
-                        isActive ? 'bg-accent text-accent-foreground shadow-sm' : 'text-white/70 hover:bg-white/10 hover:text-white'
+                      className={`group flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 min-h-11 ${
+                        isActive
+                          ? 'bg-sidebar-accent text-sidebar-foreground'
+                          : 'text-sidebar-foreground/65 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
                       }`}
                     >
                       <div className="relative shrink-0">
-                        <Icon className="w-[18px] h-[18px]" strokeWidth={2} />
+                        <Icon
+                          className={`w-[18px] h-[18px] transition-colors duration-150 ${isActive ? 'text-primary' : 'text-sidebar-foreground/50 group-hover:text-sidebar-foreground/80'}`}
+                          strokeWidth={isActive ? 2.25 : 2}
+                        />
                         {item.path === '/notifications' && unreadCount > 0 && (
                           <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-sidebar-background">
                             {unreadCount > 9 ? '9+' : unreadCount}
                           </span>
                         )}
                       </div>
-                      <span>{t(item.tKey)}</span>
+                      <span className="truncate">{t(item.tKey)}</span>
+                      {isActive && <span className="ml-auto w-1 h-1 rounded-full bg-sidebar-primary shrink-0" />}
                     </Link>
                   );
                 })}
@@ -194,19 +220,44 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </ScrollArea>
 
-      <div className="px-3 py-4 border-t border-white/10 space-y-3 shrink-0 bg-gradient-to-t from-black/10 to-transparent">
-        <div className="px-4 py-1">
-          <p className="text-white/50 text-[10px] font-medium">{t('nav.signedInAs')}</p>
-          <p className="text-white/90 text-sm font-medium truncate">{user?.name}</p>
-          {role && <p className="text-white/40 text-[10px] mt-0.5">{department ? `${getDepartmentLabel(department)} · ` : ''}{getRoleLabel(role)}</p>}
-        </div>
+      <div className="px-3 py-3 border-t border-sidebar-border space-y-1.5 shrink-0">
+        {(() => {
+          const avatar = user?.avatar_url ? (
+            <img src={user.avatar_url} alt={user.name} className="w-10 h-10 rounded-full object-cover shrink-0 ring-2 ring-sidebar-border" />
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-sidebar-accent text-sidebar-foreground text-sm font-semibold flex items-center justify-center shrink-0 ring-2 ring-sidebar-border">
+              {user ? initialsOf(user.name) : ''}
+            </div>
+          );
+          const details = (
+            <div className="min-w-0 flex-1 text-left">
+              <p className="text-sidebar-foreground text-sm font-semibold truncate leading-snug">{user?.name}</p>
+              {role && <p className="text-sidebar-foreground/50 text-xs truncate leading-snug mt-0.5">{department ? `${getDepartmentLabel(department)} · ` : ''}{getRoleLabel(role)}</p>}
+            </div>
+          );
+          return user?.id ? (
+            <Link
+              to={`/profile/${user.id}`}
+              onClick={() => setMobileOpen(false)}
+              className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-sidebar-accent transition-colors"
+            >
+              {avatar}
+              {details}
+            </Link>
+          ) : (
+            <div className="flex items-center gap-3 px-2 py-2">
+              {avatar}
+              {details}
+            </div>
+          );
+        })()}
         <Button
           variant="ghost"
-          className="w-full justify-start gap-3 text-white/70 hover:text-white hover:bg-white/10 border border-white/15 h-11 rounded-xl px-4"
+          className="w-full justify-start gap-3 text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent border border-sidebar-border h-11 rounded-lg px-4 font-medium"
           onClick={handleLogout}
         >
           <LogOut className="w-[18px] h-[18px] shrink-0" strokeWidth={2} />
-          <span className="text-sm font-medium">{t('nav.logout')}</span>
+          <span className="text-sm">{t('nav.logout')}</span>
         </Button>
       </div>
     </div>
@@ -214,16 +265,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
-      {/* Desktop/tablet sidebar — full labels from md up, its own scroll region */}
-      <aside className="hidden md:flex flex-col w-64 shrink-0 gradient-primary h-full overflow-hidden">
+      {/* Desktop/tablet sidebar — full labels from md up, its own scroll region.
+          Toggled by the hamburger button in the desktop top bar below. */}
+      <aside className={`${sidebarCollapsed ? 'hidden' : 'hidden md:flex'} flex-col w-64 shrink-0 bg-sidebar border-r border-sidebar-border h-full overflow-hidden`}>
         {sidebarContent}
       </aside>
 
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetContent
           side="left"
-          className="w-[280px] p-0 gradient-primary border-none"
-          closeClassName="text-white/70 hover:bg-white/10 hover:text-white active:bg-white/15"
+          className="w-[280px] p-0 bg-sidebar border-r border-sidebar-border"
+          closeClassName="text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground active:bg-sidebar-accent/80"
         >
           {sidebarContent}
         </SheetContent>
@@ -231,31 +283,31 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Right column scrolls independently of the sidebar */}
       <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
-        <header className="md:hidden flex items-center justify-between px-4 py-3 bg-card shadow-sm border-b border-border shrink-0">
+        <header className="md:hidden flex items-center justify-between px-4 h-16 bg-card/95 backdrop-blur-sm shadow-sm border-b border-border shrink-0">
           <div className="flex items-center gap-3">
             <Sheet>
               <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="text-foreground h-10 w-10" onClick={() => setMobileOpen(true)}><Menu className="w-5 h-5" /></Button>
+                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground h-10 w-10 rounded-lg" onClick={() => setMobileOpen(true)}><Menu className="w-5 h-5" /></Button>
               </SheetTrigger>
             </Sheet>
             {/* Light/dark wordmark swap follows the app's class-based theme */}
-            <img src="/logo.png" alt="PSM Properties" className="h-9 w-auto dark:hidden" draggable={false} />
-            <img src="/logo-dark.png" alt="PSM Properties" className="h-9 w-auto hidden dark:block" draggable={false} />
+            <img src="/logo.png" alt="PSM Properties" className="h-8 w-auto dark:hidden" draggable={false} />
+            <img src="/logo-dark.png" alt="PSM Properties" className="h-8 w-auto hidden dark:block" draggable={false} />
           </div>
           <div className="flex items-center gap-1">
             {canInstall && (
-              <Button variant="ghost" size="icon" className="h-10 w-10 text-primary" onClick={promptInstall} aria-label="Install app" title="Install app">
+              <Button variant="ghost" size="icon" className="h-10 w-10 text-primary rounded-lg" onClick={promptInstall} aria-label="Install app" title="Install app">
                 <Download className="w-5 h-5" />
               </Button>
             )}
             <Popover open={notifOpenMobile} onOpenChange={setNotifOpenMobile}>
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon" className="relative h-10 w-10" onClick={() => handleOpenNotifs(setNotifOpenMobile)}>
-                  <Bell className="w-5 h-5 text-foreground" />
+                <Button variant="ghost" size="icon" className="relative h-10 w-10 text-muted-foreground hover:text-foreground rounded-lg" onClick={() => handleOpenNotifs(setNotifOpenMobile)}>
+                  <Bell className="w-5 h-5" />
                   {unreadCount > 0 && (
                     <>
-                      <span className="absolute top-0.5 right-0.5 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center">{unreadCount > 9 ? '9+' : unreadCount}</span>
-                      <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-destructive rounded-full animate-ping" />
+                      <span className="absolute top-1 right-1 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center ring-2 ring-card">{unreadCount > 9 ? '9+' : unreadCount}</span>
+                      <span className="absolute top-1 right-1 w-4 h-4 bg-destructive rounded-full animate-ping opacity-75" />
                     </>
                   )}
                 </Button>
@@ -265,22 +317,47 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        {/* Tablet/desktop top bar with notification bell */}
-        <header className="hidden md:flex items-center justify-end gap-2 px-6 py-3 border-b border-border shrink-0">
+        {/* Tablet/desktop top bar — hamburger to show/hide the sidebar, the
+            current page's title (published via usePageHeader), and the
+            notification bell */}
+        <header className="hidden md:flex items-center justify-between gap-2 px-5 h-16 bg-card/80 backdrop-blur-sm border-b border-border shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 text-muted-foreground hover:text-foreground shrink-0 rounded-lg"
+              onClick={toggleSidebar}
+              aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+              title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+            >
+              <Menu className="w-[18px] h-[18px]" />
+            </Button>
+            {pageHeader && (
+              <>
+                <span className="w-px h-6 bg-border shrink-0" aria-hidden="true" />
+                <div className="min-w-0">
+                  <h1 className="text-[15px] font-semibold text-foreground truncate leading-tight tracking-tight">{pageHeader.title}</h1>
+                  {pageHeader.subtitle && <p className="text-xs text-muted-foreground truncate mt-0.5">{pageHeader.subtitle}</p>}
+                </div>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
           {canInstall && (
-            <Button variant="outline" size="sm" className="h-9 gap-2 text-primary border-primary/30 hover:bg-primary/5" onClick={promptInstall}>
-              <Download className="w-4 h-4" /> Install App
+            <Button variant="outline" size="sm" className="h-9 gap-2 text-primary border-primary/25 hover:bg-primary/5 hover:border-primary/40 rounded-lg font-medium" onClick={promptInstall}>
+              <Download className="w-3.5 h-3.5" /> Install App
             </Button>
           )}
           <Popover open={notifOpenDesktop} onOpenChange={setNotifOpenDesktop}>
             <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon" className="relative h-10 w-10" onClick={() => handleOpenNotifs(setNotifOpenDesktop)}>
-                <Bell className="w-5 h-5 text-foreground" />
-                {unreadCount > 0 && <span className="absolute top-0.5 right-0.5 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center">{unreadCount > 9 ? '9+' : unreadCount}</span>}
+              <Button variant="ghost" size="icon" className="relative h-9 w-9 text-muted-foreground hover:text-foreground rounded-lg" onClick={() => handleOpenNotifs(setNotifOpenDesktop)}>
+                <Bell className="w-[18px] h-[18px]" />
+                {unreadCount > 0 && <span className="absolute top-1 right-1 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center ring-2 ring-card">{unreadCount > 9 ? '9+' : unreadCount}</span>}
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-3" align="end">{renderNotifDropdown(setNotifOpenDesktop)}</PopoverContent>
           </Popover>
+          </div>
         </header>
 
         <SystemBanner />

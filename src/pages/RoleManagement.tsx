@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Shield, ShieldAlert, Check, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { ROLE_TIERS, ROLE_LABELS, isExec } from '@/lib/permissions';
 
 type Access = 'yes' | 'no' | 'own' | 'branch' | 'view';
@@ -22,7 +23,7 @@ const ACCESS_STYLE: Record<Access, string> = {
 const MATRIX: { feature: string; access: Record<string, Access> }[] = [
   { feature: 'Dashboard', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'branch', sale: 'own' } },
   { feature: 'Lead Management', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'branch', sale: 'own' } },
-  { feature: 'Delete Lead', access: { boss: 'yes', super_admin: 'yes', admin: 'no', manager: 'no', sale: 'no' } },
+  { feature: 'Delete Lead', access: { boss: 'yes', super_admin: 'yes', admin: 'no', manager: 'own', sale: 'own' } },
   { feature: 'Assign / Reassign Lead', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'yes', sale: 'no' } },
   { feature: 'Follow-up', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'view', sale: 'own' } },
   { feature: 'Pipeline', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'branch', sale: 'own' } },
@@ -47,6 +48,7 @@ function AccessBadge({ value }: { value: Access }) {
 
 export default function RoleManagement() {
   const { role } = useAuth();
+  usePageHeader('Role & Permission Reference', 'Access levels are fixed by role tier and enforced at the database level.');
 
   if (!isExec(role)) {
     return (
@@ -60,7 +62,7 @@ export default function RoleManagement() {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
-      <div>
+      <div className="md:hidden">
         <h1 className="text-xl md:text-2xl font-semibold text-foreground flex items-center gap-2"><Shield className="w-5 h-5 text-primary" /> Role & Permission Reference</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Access levels are fixed by role tier and enforced at the database level (Postgres row-level security) — this page is a reference, not an editor.
@@ -76,14 +78,14 @@ export default function RoleManagement() {
           <div className="w-full overflow-x-auto">
             <Table>
               <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead className="whitespace-nowrap text-xs font-semibold">Feature</TableHead>
-                  {ROLE_TIERS.map((r) => (<TableHead key={r} className="whitespace-nowrap text-xs font-semibold">{ROLE_LABELS[r]}</TableHead>))}
+                <TableRow className="hover:bg-transparent bg-muted/30">
+                  <TableHead className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Feature</TableHead>
+                  {ROLE_TIERS.map((r) => (<TableHead key={r} className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{ROLE_LABELS[r]}</TableHead>))}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {MATRIX.map((row) => (
-                  <TableRow key={row.feature} className="hover:bg-muted/30">
+                  <TableRow key={row.feature} className="table-row-zebra hover:bg-primary/5">
                     <TableCell className="whitespace-nowrap text-sm font-medium">{row.feature}</TableCell>
                     {ROLE_TIERS.map((r) => (<TableCell key={r} className="whitespace-nowrap"><AccessBadge value={row.access[r]} /></TableCell>))}
                   </TableRow>

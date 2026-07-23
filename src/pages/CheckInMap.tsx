@@ -4,6 +4,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MapPin, Search, Navigation, Filter, Calendar, Footprints, X, Thermometer } from 'lucide-react';
 import { useProfiles } from '@/hooks/useProfiles';
+import { usePageHeader } from '@/contexts/PageHeaderContext';
+import NameLink from '@/components/NameLink';
 import { CHECKIN_STATUSES, type CheckIn as CheckInRecord } from '@/types';
 
 const STATUS_COLOR: Record<string, string> = {
@@ -75,10 +77,12 @@ export default function CheckInMap() {
     return 'bg-success/60';
   };
 
+  usePageHeader('Check-In Map', `Total ${filteredCheckins.length} · GPS ${checkinsWithGPS.length} · Clusters ${heatmapClusters.length}`);
+
   return (
     <div className="flex flex-col md:flex-row gap-4 md:gap-5 h-[calc(100dvh-64px)] animate-fade-in-up">
       <div className="w-full md:w-80 lg:w-96 flex flex-col gap-3 shrink-0">
-        <div>
+        <div className="md:hidden">
           <h1 className="text-xl md:text-2xl font-bold text-foreground leading-snug flex items-center gap-2">
             <Thermometer className="w-6 h-6 text-primary" /> Check-In Map
           </h1>
@@ -129,11 +133,11 @@ export default function CheckInMap() {
             <div className="flex flex-col items-center justify-center py-10 text-muted-foreground"><Footprints className="w-8 h-8 mb-2 opacity-40" /><p className="text-sm font-medium">No records</p></div>
           ) : (
             filteredCheckins.map((c) => (
-              <button key={c.id} type="button" onClick={() => setSelectedCheckin(c)} className={`w-full text-left p-3 rounded-xl border transition-all active:scale-[0.99] ${selectedCheckin?.id === c.id ? 'border-primary bg-primary/5' : 'border-border bg-card hover:border-primary/30 hover:bg-primary/5'}`}>
+              <div key={c.id} role="button" tabIndex={0} onClick={() => setSelectedCheckin(c)} onKeyDown={(e) => { if (e.key === 'Enter') setSelectedCheckin(c); }} className={`w-full text-left p-3 rounded-xl border transition-all active:scale-[0.99] cursor-pointer ${selectedCheckin?.id === c.id ? 'border-primary bg-primary/5' : 'border-border bg-card hover:border-primary/30 hover:bg-primary/5'}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-foreground truncate">{nameOf(c.employee_id)}</p>
-                    <div className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground"><Calendar className="w-3 h-3" /><span>{new Date(c.check_in_time).toLocaleDateString('en-GB')}</span></div>
+                    <NameLink id={c.employee_id} name={nameOf(c.employee_id)} showAvatar={false} className="text-sm font-semibold" />
+                    <div className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground"><Calendar className="w-3 h-3" /><span className="tabular-nums">{new Date(c.check_in_time).toLocaleDateString('en-GB')}</span></div>
                   </div>
                   <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full border shrink-0 ${STATUS_COLOR[c.status]}`}>{CHECKIN_STATUSES.find((s) => s.value === c.status)?.label}</span>
                 </div>
@@ -141,7 +145,7 @@ export default function CheckInMap() {
                   <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{c.notes || '—'}</span>
                   {c.latitude != null ? (<span className="flex items-center gap-1 text-success"><Navigation className="w-3 h-3" />GPS</span>) : (<span className="flex items-center gap-1 text-muted-foreground/60"><MapPin className="w-3 h-3" />No GPS</span>)}
                 </div>
-              </button>
+              </div>
             ))
           )}
         </div>
@@ -154,7 +158,7 @@ export default function CheckInMap() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-base font-bold text-foreground">{nameOf(selectedCheckin.employee_id)}</p>
+                    <NameLink id={selectedCheckin.employee_id} name={nameOf(selectedCheckin.employee_id)} showAvatar={false} className="text-base font-bold" />
                     <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${STATUS_COLOR[selectedCheckin.status]}`}>{CHECKIN_STATUSES.find((s) => s.value === selectedCheckin.status)?.label}</span>
                   </div>
                   <div className="flex items-center gap-3 mt-2 text-sm text-muted-foreground flex-wrap">
