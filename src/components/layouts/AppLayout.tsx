@@ -264,7 +264,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="flex h-screen w-full bg-background overflow-hidden">
+    <div className="flex h-dvh w-full bg-background overflow-hidden">
       {/* Desktop/tablet sidebar — full labels from md up, its own scroll region.
           Toggled by the hamburger button in the desktop top bar below. */}
       <aside className={`${sidebarCollapsed ? 'hidden' : 'hidden md:flex'} flex-col w-64 shrink-0 bg-sidebar border-r border-sidebar-border h-full overflow-hidden`}>
