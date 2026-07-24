@@ -9,7 +9,7 @@ import { Pie, Bar } from 'react-chartjs-2';
 import {
   Users, PhoneCall, TrendingUp, Calendar, Trophy, Activity, Clock, ArrowUpRight,
   ChevronRight, Download, FileSpreadsheet, FileText as FileTextIcon, File as FilePdf,
-  Footprints, CheckCircle2,
+  CheckCircle2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -19,7 +19,6 @@ import { useProfiles } from '@/hooks/useProfiles';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import StatusColorDialog from '@/components/StatusColorDialog';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
-import CheckInFeed from '@/components/CheckInFeed';
 import NameLink from '@/components/NameLink';
 import { exportAsExcel, exportAsPDF, exportAsHTML } from '@/lib/exportUtils';
 import { toast } from 'sonner';
@@ -275,17 +274,6 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
-
-      {/* Check-In Feed */}
-      <Card className="shadow-card rounded-xl border-0">
-        <CardContent className="p-5 md:p-6">
-          <div className="flex items-center gap-2 mb-5">
-            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Footprints className="w-4 h-4 text-primary" /></div>
-            <h3 className="text-base font-semibold">Today's Field Activity</h3>
-          </div>
-          <CheckInFeed />
-        </CardContent>
-      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
         <Card className="shadow-card rounded-xl border-0">

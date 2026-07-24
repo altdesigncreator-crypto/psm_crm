@@ -385,7 +385,7 @@ export default function UserManagement() {
                   <Trash2 className="w-3.5 h-3.5 text-destructive" /> Delete Account
                 </Label>
                 <p className="text-[11px] text-muted-foreground">
-                  Permanently removes this staff member's login, check-ins and notifications.
+                  Permanently removes this staff member's login and notifications.
                   Their leads must be reassigned first.
                 </p>
                 <Button
@@ -414,7 +414,7 @@ export default function UserManagement() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {editName}'s account?</AlertDialogTitle>
             <AlertDialogDescription>
-              Their login is removed permanently, along with their check-ins, notifications and
+              Their login is removed permanently, along with their notifications and
               warnings. Leads they created stay (uncredited). This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>

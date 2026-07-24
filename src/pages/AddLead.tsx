@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/db/supabase';
@@ -9,12 +9,11 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
-import { MapPin, User, FileText, TrendingUp, CheckCircle2, Navigation, LocateFixed, Users, X, AlertTriangle, Eye, Phone as PhoneIcon, Loader2, Sparkles } from 'lucide-react';
+import { MapPin, User, FileText, TrendingUp, CheckCircle2, Navigation, X, AlertTriangle, Eye, Phone as PhoneIcon, Loader2, Sparkles, Camera, CalendarClock } from 'lucide-react';
 import {
   INTEREST_TYPES, PROPERTY_TYPES, PURPOSES, LEAD_SOURCES, LEAD_GRADES,
 } from '@/types';
 import { BudgetStepperInput } from '@/components/ui/budget-stepper-input';
-import { haversineDistance, formatDistance } from '@/lib/distance';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useTeams } from '@/hooks/useTeams';
@@ -53,9 +52,17 @@ export default function AddLead() {
   const [leadLat, setLeadLat] = useState<number | null>(null);
   const [leadLng, setLeadLng] = useState<number | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
-  const [nearestAgents, setNearestAgents] = useState<{ id: string; name: string; distance: number }[]>([]);
-  const [agentPickerOpen, setAgentPickerOpen] = useState(false);
-  const [findingAgents, setFindingAgents] = useState(false);
+
+  // Both optional — uploaded (if provided) only after the lead itself is
+  // saved, since storage access is gated by the lead actually existing (see
+  // can_manage_lead_photos in crm.sql). Skipping either here just leaves it
+  // to be added later from the lead's own page.
+  const [visitPhotoFile, setVisitPhotoFile] = useState<File | null>(null);
+  const [visitPhotoPreview, setVisitPhotoPreview] = useState<string | null>(null);
+  const visitPhotoInputRef = useRef<HTMLInputElement>(null);
+  const [appointmentPhotoFile, setAppointmentPhotoFile] = useState<File | null>(null);
+  const [appointmentPhotoPreview, setAppointmentPhotoPreview] = useState<string | null>(null);
+  const appointmentPhotoInputRef = useRef<HTMLInputElement>(null);
 
   const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
   const [duplicateLeads, setDuplicateLeads] = useState<any[]>([]);
@@ -100,15 +107,6 @@ export default function AddLead() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamId]);
 
-  // Nearest-agent search is scoped to people this creator could actually
-  // assign into one of the teams above — never a random org-wide match,
-  // which would bypass the same team hierarchy the rest of this form
-  // enforces.
-  const assignableMemberIds = useMemo(
-    () => new Set(teamOptions.flatMap((t) => membersOf(t.id))),
-    [teamOptions, membersOf]
-  );
-
   const handleCaptureLeadGPS = () => {
     if (!navigator.geolocation) { toast.error('GPS is not supported on this device.'); return; }
     setGpsLoading(true);
@@ -117,46 +115,6 @@ export default function AddLead() {
       () => { setGpsLoading(false); toast.error('Could not get GPS — check permissions.'); },
       { enableHighAccuracy: true, timeout: 15000 }
     );
-  };
-
-  const handleFindNearestAgents = async () => {
-    if (leadLat == null || leadLng == null) { toast.error('Capture lead GPS first.'); return; }
-    setFindingAgents(true);
-    setAgentPickerOpen(true);
-    try {
-      const { data } = await supabase.from('check_ins').select('employee_id, latitude, longitude, check_in_time').order('check_in_time', { ascending: false }).limit(200);
-      const latest = new Map<string, { lat: number; lng: number }>();
-      (data || []).forEach((c) => {
-        if (!latest.has(c.employee_id) && c.latitude && c.longitude) {
-          latest.set(c.employee_id, { lat: c.latitude, lng: c.longitude });
-        }
-      });
-      const agents = Array.from(latest.entries())
-        .filter(([id]) => assignableMemberIds.has(id))
-        .map(([id, coords]) => ({
-          id,
-          name: profiles.find((p) => p.id === id)?.name || 'Unknown',
-          distance: haversineDistance(leadLat, leadLng, coords.lat, coords.lng),
-        }))
-        .sort((a, b) => a.distance - b.distance)
-        .slice(0, 10);
-      setNearestAgents(agents);
-    } catch {
-      toast.error('Could not find nearby agents.');
-    } finally {
-      setFindingAgents(false);
-    }
-  };
-
-  const selectNearestAgent = (agent: { id: string; name: string }) => {
-    setOwnerId(agent.id);
-    // Auto-resolve which team this puts the lead under — if the agent sits
-    // on more than one team this creator can assign into, leave it for the
-    // Team selector above rather than guessing.
-    const candidateTeamIds = teamOptions.filter((t) => membersOf(t.id).includes(agent.id)).map((t) => t.id);
-    if (candidateTeamIds.length === 1) setTeamId(candidateTeamIds[0]);
-    setAgentPickerOpen(false);
-    toast.success(`Auto-assigned: ${agent.name}`);
   };
 
   const buildLeadPayload = () => ({
@@ -220,10 +178,47 @@ export default function AddLead() {
     return data || [];
   };
 
+  const selectPhoto = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    setFile: (f: File | null) => void,
+    setPreview: (u: string | null) => void
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast.error('Please choose an image file.'); return; }
+    setFile(file);
+    setPreview(URL.createObjectURL(file));
+  };
+
+  // Storage access is keyed by lead id (see can_manage_lead_photos in
+  // crm.sql), which only exists once the lead row itself has been inserted —
+  // so photos always upload AFTER the insert below, never before.
+  const uploadLeadPhoto = async (leadId: string, file: File, kind: 'visit' | 'appointment') => {
+    const path = `${leadId}/${kind}-${Date.now()}.jpg`;
+    const { error } = await supabase.storage.from('lead-photos').upload(path, file);
+    if (error) throw error;
+    return supabase.storage.from('lead-photos').getPublicUrl(path).data.publicUrl;
+  };
+
   const insertLead = async (payload: any) => {
     const { data, error } = await supabase.from('leads').insert(payload).select('id').single();
     if (error) throw error;
-    return data.id;
+    const leadId = data.id;
+
+    if (visitPhotoFile || appointmentPhotoFile) {
+      try {
+        const updates: Record<string, string> = {};
+        if (visitPhotoFile) updates.visit_photo_url = await uploadLeadPhoto(leadId, visitPhotoFile, 'visit');
+        if (appointmentPhotoFile) updates.appointment_photo_url = await uploadLeadPhoto(leadId, appointmentPhotoFile, 'appointment');
+        await supabase.from('leads').update(updates).eq('id', leadId);
+      } catch {
+        // The lead itself is already saved — a failed photo upload shouldn't
+        // block the rest of the flow, just needs a retry from the lead's page.
+        toast.error("Lead saved, but the photo upload failed — you can add it later from the lead's page.");
+      }
+    }
+
+    return leadId;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -407,21 +402,13 @@ export default function AddLead() {
                 {canAssign ? (
                   <div className="space-y-2">
                     <Label className="text-sm font-medium">Assign to Sales Person</Label>
-                    <div className="flex items-center gap-2">
-                      <Select value={ownerId} onValueChange={setOwnerId} disabled={!teamId && teamOptions.length > 0}>
-                        <SelectTrigger className="h-12 flex-1"><SelectValue placeholder={!teamId && teamOptions.length > 0 ? 'Select a team first' : 'Assign to…'} /></SelectTrigger>
-                        <SelectContent>
-                          {user && <SelectItem value={user.id}>Myself</SelectItem>}
-                          {teamMemberProfiles.map((p) => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>))}
-                        </SelectContent>
-                      </Select>
-                      <button
-                        type="button" onClick={handleFindNearestAgents} disabled={findingAgents || leadLat == null}
-                        className="h-12 px-3 rounded-xl border border-primary/30 text-primary bg-primary/5 active:bg-primary/10 active:scale-[0.98] transition-all shrink-0 text-xs font-medium flex items-center gap-1.5 disabled:opacity-40"
-                      >
-                        <LocateFixed className="w-4 h-4" /> <span className="hidden md:inline">Nearest</span>
-                      </button>
-                    </div>
+                    <Select value={ownerId} onValueChange={setOwnerId} disabled={!teamId && teamOptions.length > 0}>
+                      <SelectTrigger className="h-12"><SelectValue placeholder={!teamId && teamOptions.length > 0 ? 'Select a team first' : 'Assign to…'} /></SelectTrigger>
+                      <SelectContent>
+                        {user && <SelectItem value={user.id}>Myself</SelectItem>}
+                        {teamMemberProfiles.map((p) => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>))}
+                      </SelectContent>
+                    </Select>
                     {teamId && teamMemberProfiles.length === 0 && (
                       <p className="text-[11px] text-muted-foreground">This team has no sales people yet — you can still assign the lead to yourself.</p>
                     )}
@@ -452,10 +439,72 @@ export default function AddLead() {
                       </div>
                       <div>
                         <p className="text-sm font-semibold text-foreground">{leadLat != null ? 'GPS captured' : 'Capture Lead GPS'}</p>
-                        <p className="text-xs text-muted-foreground">{leadLat != null ? `${leadLat.toFixed(5)}, ${leadLng?.toFixed(5)}` : 'Needed to find the nearest sales person'}</p>
+                        <p className="text-xs text-muted-foreground">{leadLat != null ? `${leadLat.toFixed(5)}, ${leadLng?.toFixed(5)}` : 'Tags this lead\'s location for the map view'}</p>
                       </div>
                     </div>
                   </button>
+                </div>
+
+                {/* Both optional — either can be skipped here and added later
+                    from the lead's own page once it exists. */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:col-span-2">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Site Visit Photo</Label>
+                    <input ref={visitPhotoInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => selectPhoto(e, setVisitPhotoFile, setVisitPhotoPreview)} />
+                    {visitPhotoPreview ? (
+                      <div className="relative rounded-xl overflow-hidden border border-border h-40">
+                        <img src={visitPhotoPreview} alt="Site visit" className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => { setVisitPhotoFile(null); setVisitPhotoPreview(null); if (visitPhotoInputRef.current) visitPhotoInputRef.current.value = ''; }}
+                          className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center active:scale-90 transition-transform"
+                          aria-label="Remove site visit photo"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button" onClick={() => visitPhotoInputRef.current?.click()}
+                        className="w-full h-40 flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card active:bg-muted/50 transition-colors text-center px-4"
+                      >
+                        <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center"><Camera className="w-5 h-5 text-primary" /></div>
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">Upload Site Visit Photo</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">Optional — can add later</p>
+                        </div>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Appointment Photo</Label>
+                    <input ref={appointmentPhotoInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => selectPhoto(e, setAppointmentPhotoFile, setAppointmentPhotoPreview)} />
+                    {appointmentPhotoPreview ? (
+                      <div className="relative rounded-xl overflow-hidden border border-border h-40">
+                        <img src={appointmentPhotoPreview} alt="Appointment" className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => { setAppointmentPhotoFile(null); setAppointmentPhotoPreview(null); if (appointmentPhotoInputRef.current) appointmentPhotoInputRef.current.value = ''; }}
+                          className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center active:scale-90 transition-transform"
+                          aria-label="Remove appointment photo"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button" onClick={() => appointmentPhotoInputRef.current?.click()}
+                        className="w-full h-40 flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card active:bg-muted/50 transition-colors text-center px-4"
+                      >
+                        <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center"><CalendarClock className="w-5 h-5 text-primary" /></div>
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">Upload Appointment Photo</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">Optional — can add later</p>
+                        </div>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </CardContent>
@@ -473,31 +522,6 @@ export default function AddLead() {
           </div>
         </div>
       </form>
-
-      <Dialog open={agentPickerOpen} onOpenChange={setAgentPickerOpen}>
-        <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-md p-0 overflow-hidden">
-          <DialogHeader className="px-6 pt-6 pb-2"><DialogTitle className="flex items-center gap-2"><Users className="w-5 h-5 text-primary" /> Nearest Sales People</DialogTitle></DialogHeader>
-          <div className="px-6 pb-6 space-y-3 max-h-[60vh] overflow-y-auto">
-            {findingAgents ? (
-              <div className="flex items-center justify-center py-8"><Loader2 className="w-6 h-6 text-primary animate-spin" /></div>
-            ) : nearestAgents.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                <MapPin className="w-8 h-8 mb-2 opacity-40" />
-                <p className="text-sm font-medium">No agents found</p>
-                <p className="text-xs mt-1">Searching agents with recent check-in records.</p>
-              </div>
-            ) : (
-              nearestAgents.map((agent, idx) => (
-                <button key={agent.id} type="button" onClick={() => selectNearestAgent(agent)} className="w-full flex items-center gap-3 p-4 rounded-xl border border-border bg-card hover:border-primary/30 hover:bg-primary/5 active:scale-[0.99] transition-all text-left">
-                  <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-sm font-bold text-primary">{idx + 1}</div>
-                  <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground truncate">{agent.name}</p><p className="text-xs text-muted-foreground">{formatDistance(agent.distance)} away</p></div>
-                  <div className="shrink-0 text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">{agent.distance < 1 ? `${(agent.distance * 1000).toFixed(0)} m` : `${agent.distance.toFixed(1)} km`}</div>
-                </button>
-              ))
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={duplicateDialogOpen} onOpenChange={setDuplicateDialogOpen}>
         <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-lg p-0 overflow-hidden">

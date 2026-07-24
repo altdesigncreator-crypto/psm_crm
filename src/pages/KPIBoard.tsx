@@ -10,16 +10,15 @@ import { Button } from '@/components/ui/button';
 import NameLink from '@/components/NameLink';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Trophy, Users, Footprints, TrendingUp, Target, ArrowUpRight, BarChart3, Eye,
+  ArrowLeft, Trophy, Users, TrendingUp, Target, ArrowUpRight, BarChart3, Eye,
   Building2, FileSpreadsheet, FileText,
 } from 'lucide-react';
-import type { Lead, CheckIn } from '@/types';
+import type { Lead } from '@/types';
 
 interface AgentStats {
   id: string;
   name: string;
   totalLeads: number;
-  totalCheckins: number;
   soldCount: number;
   totalRevenue: number;
   gradeA: number;
@@ -31,7 +30,6 @@ interface DeptStats {
   department: Department;
   totalLeads: number;
   gradeACount: number;
-  checkinCount: number;
   agentCount: number;
 }
 
@@ -50,7 +48,6 @@ export default function KPIBoard() {
   const { role } = useAuth();
   const { nameOf } = useProfiles();
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [checkins, setCheckins] = useState<CheckIn[]>([]);
   const [loading, setLoading] = useState(true);
   const [deptFilter, setDeptFilter] = useState<string>('all');
   usePageHeader('KPI Board', 'Sales performance leaderboard');
@@ -58,12 +55,8 @@ export default function KPIBoard() {
   useEffect(() => {
     if (!isExec(role)) return;
     (async () => {
-      const [leadsRes, checkinsRes] = await Promise.all([
-        supabase.from('leads').select('*'),
-        supabase.from('check_ins').select('*'),
-      ]);
-      setLeads((leadsRes.data || []) as Lead[]);
-      setCheckins((checkinsRes.data || []) as CheckIn[]);
+      const { data } = await supabase.from('leads').select('*');
+      setLeads((data || []) as Lead[]);
       setLoading(false);
     })();
   }, [role]);
@@ -82,7 +75,7 @@ export default function KPIBoard() {
     const map: Record<string, DeptStats> = {};
     const agentsInDept: Record<string, Set<string>> = {};
     const ensure = (d: string) => {
-      if (!map[d]) { map[d] = { department: d, totalLeads: 0, gradeACount: 0, checkinCount: 0, agentCount: 0 }; agentsInDept[d] = new Set(); }
+      if (!map[d]) { map[d] = { department: d, totalLeads: 0, gradeACount: 0, agentCount: 0 }; agentsInDept[d] = new Set(); }
       return map[d];
     };
 
@@ -92,19 +85,15 @@ export default function KPIBoard() {
       if (l.lead_grade === 'A') stat.gradeACount += 1;
       if (l.owner_id) agentsInDept[l.department_code].add(l.owner_id);
     });
-    checkins.forEach((c) => {
-      ensure(c.department_code).checkinCount += 1;
-      agentsInDept[c.department_code].add(c.employee_id);
-    });
     Object.keys(map).forEach((d) => { map[d].agentCount = agentsInDept[d].size; });
 
     return Object.values(map).sort((a, b) => a.department.localeCompare(b.department));
-  }, [leads, checkins]);
+  }, [leads]);
 
   const agentStats = useMemo<AgentStats[]>(() => {
     const map: Record<string, AgentStats> = {};
     const ensure = (id: string) => {
-      if (!map[id]) map[id] = { id, name: nameOf(id), totalLeads: 0, totalCheckins: 0, soldCount: 0, totalRevenue: 0, gradeA: 0, gradeB: 0, gradeC: 0 };
+      if (!map[id]) map[id] = { id, name: nameOf(id), totalLeads: 0, soldCount: 0, totalRevenue: 0, gradeA: 0, gradeB: 0, gradeC: 0 };
       return map[id];
     };
 
@@ -118,13 +107,9 @@ export default function KPIBoard() {
       if (l.lead_grade === 'C') s.gradeC += 1;
       if (l.status === 'sold') { s.soldCount += 1; s.totalRevenue += l.sale_amount || 0; }
     });
-    checkins.forEach((c) => {
-      if (deptFilter !== 'all' && c.department_code !== deptFilter) return;
-      ensure(c.employee_id).totalCheckins += 1;
-    });
 
-    return Object.values(map).sort((a, b) => (b.gradeA - a.gradeA) || (b.totalLeads - a.totalLeads) || (b.totalCheckins - a.totalCheckins));
-  }, [leads, checkins, deptFilter, nameOf]);
+    return Object.values(map).sort((a, b) => (b.gradeA - a.gradeA) || (b.totalLeads - a.totalLeads));
+  }, [leads, deptFilter, nameOf]);
 
   const topAgent = agentStats[0];
 
@@ -143,16 +128,16 @@ export default function KPIBoard() {
               <Trophy className="w-4 h-4 text-warning" /><span className="text-xs font-medium text-warning">Top performer — <NameLink id={topAgent.id} name={topAgent.name} showAvatar={false} className="text-warning" /> (Grade A: {topAgent.gradeA})</span>
             </div>
           )}
-          <Button variant="outline" size="sm" className="h-12 gap-2 text-sm font-medium active:bg-muted/30" onClick={() => exportKPIAsExcel(agentStats, departmentStats.map((d) => ({ displayName: getDepartmentLabel(d.department), totalLeads: d.totalLeads, soldCount: 0, checkinCount: d.checkinCount, agentCount: d.agentCount })))} disabled={agentStats.length === 0}>
+          <Button variant="outline" size="sm" className="h-12 gap-2 text-sm font-medium active:bg-muted/30" onClick={() => exportKPIAsExcel(agentStats, departmentStats.map((d) => ({ displayName: getDepartmentLabel(d.department), totalLeads: d.totalLeads, soldCount: 0, agentCount: d.agentCount })))} disabled={agentStats.length === 0}>
             <FileSpreadsheet className="w-5 h-5" /> Excel
           </Button>
-          <Button variant="outline" size="sm" className="h-12 gap-2 text-sm font-medium active:bg-muted/30" onClick={() => exportKPIAsPDF(agentStats, departmentStats.map((d) => ({ displayName: getDepartmentLabel(d.department), totalLeads: d.totalLeads, soldCount: 0, checkinCount: d.checkinCount, agentCount: d.agentCount })))} disabled={agentStats.length === 0}>
+          <Button variant="outline" size="sm" className="h-12 gap-2 text-sm font-medium active:bg-muted/30" onClick={() => exportKPIAsPDF(agentStats, departmentStats.map((d) => ({ displayName: getDepartmentLabel(d.department), totalLeads: d.totalLeads, soldCount: 0, agentCount: d.agentCount })))} disabled={agentStats.length === 0}>
             <FileText className="w-5 h-5" /> PDF
           </Button>
         </div>
       </div>
 
-      <div className="flex md:grid md:grid-cols-3 gap-3 overflow-x-auto md:overflow-visible pb-2 md:pb-0 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
+      <div className="flex md:grid md:grid-cols-2 gap-3 overflow-x-auto md:overflow-visible pb-2 md:pb-0 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
         <Card className="shadow-card rounded-xl border-0 min-w-[150px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-4 flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Users className="w-5 h-5 text-primary" /></div>
@@ -163,12 +148,6 @@ export default function KPIBoard() {
           <CardContent className="p-4 flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0"><Target className="w-5 h-5 text-destructive" /></div>
             <div><p className="text-2xl font-bold text-foreground tabular-nums">{leads.filter((l) => l.lead_grade === 'A').length}</p><p className="text-xs text-muted-foreground">Grade A Leads</p></div>
-          </CardContent>
-        </Card>
-        <Card className="shadow-card rounded-xl border-0 min-w-[150px] md:min-w-0 snap-start flex-1">
-          <CardContent className="p-4 flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-success/10 flex items-center justify-center shrink-0"><Footprints className="w-5 h-5 text-success" /></div>
-            <div><p className="text-2xl font-bold text-foreground tabular-nums">{checkins.length}</p><p className="text-xs text-muted-foreground">Total Check-ins</p></div>
           </CardContent>
         </Card>
       </div>
@@ -187,10 +166,9 @@ export default function KPIBoard() {
                     <p className="text-sm font-semibold text-foreground">{getDepartmentLabel(dept.department)}</p>
                     {deptFilter === dept.department && <span className="ml-auto text-[10px] font-medium px-2 py-0.5 rounded-full bg-primary text-white">Filtered</span>}
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     <div><p className="text-lg font-bold text-foreground tabular-nums">{dept.totalLeads}</p><p className="text-[10px] text-muted-foreground">Leads</p></div>
                     <div><p className="text-lg font-bold text-foreground tabular-nums">{dept.gradeACount}</p><p className="text-[10px] text-muted-foreground">Grade A</p></div>
-                    <div><p className="text-lg font-bold text-foreground tabular-nums">{dept.checkinCount}</p><p className="text-[10px] text-muted-foreground">Check-ins</p></div>
                     <div><p className="text-lg font-bold text-foreground tabular-nums">{dept.agentCount}</p><p className="text-[10px] text-muted-foreground">Staff</p></div>
                   </div>
                 </button>
@@ -222,9 +200,8 @@ export default function KPIBoard() {
                     <button type="button" onClick={() => navigate(`/profile/${agent.id}`)} className="md:hidden w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center active:bg-primary/20 active:scale-95 transition-all shrink-0" aria-label="View profile"><Eye className="w-4 h-4" /></button>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="grid grid-cols-3 gap-2 md:gap-3">
+                    <div className="grid grid-cols-2 gap-2 md:gap-3">
                       <div className="bg-primary/5 rounded-lg p-2.5 text-center"><div className="flex items-center justify-center gap-1 mb-0.5"><Users className="w-3.5 h-3.5 text-primary" /><span className="text-xs font-medium text-primary">Leads</span></div><p className="text-lg font-bold text-foreground tabular-nums">{agent.totalLeads}</p></div>
-                      <div className="bg-success/5 rounded-lg p-2.5 text-center"><div className="flex items-center justify-center gap-1 mb-0.5"><Footprints className="w-3.5 h-3.5 text-success" /><span className="text-xs font-medium text-success">Check-ins</span></div><p className="text-lg font-bold text-foreground tabular-nums">{agent.totalCheckins}</p></div>
                       <div className="bg-destructive/5 rounded-lg p-2.5 text-center"><div className="flex items-center justify-center gap-1 mb-0.5"><TrendingUp className="w-3.5 h-3.5 text-destructive" /><span className="text-xs font-medium text-destructive">Grade A</span></div><p className="text-lg font-bold text-foreground tabular-nums">{agent.gradeA}</p></div>
                     </div>
                   </div>

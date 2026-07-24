@@ -22,14 +22,6 @@ export const translations: Record<string, Record<Lang, string>> = {
     mm: 'Lead အသစ်ထည့်ရန်',
     en: 'Add Lead',
   },
-  'nav.checkIn': {
-    mm: 'ဆိုက်ရောက်မှတ်တမ်း',
-    en: 'Check-In',
-  },
-  'nav.gallery': {
-    mm: 'ဓာတ်ပုံ မှတ်တမ်းများ',
-    en: 'Photo Gallery',
-  },
   'nav.map': {
     mm: 'မြေပုံ',
     en: 'Map',
@@ -240,8 +232,6 @@ export const translations: Record<string, Record<Lang, string>> = {
   // Sidebar navigation
   'nav.followUps': { mm: 'Follow-up များ', en: 'Follow-ups' },
   'nav.pipeline': { mm: 'Pipeline', en: 'Pipeline' },
-  'nav.checkInGallery': { mm: 'Check-In ဓာတ်ပုံများ', en: 'Check-In Gallery' },
-  'nav.checkInMap': { mm: 'Check-In မြေပုံ', en: 'Check-In Map' },
   'nav.teamActivity': { mm: 'နေ့စဉ် လုပ်ဆောင်ချက်', en: 'Daily Activity' },
   'nav.kpiBoard': { mm: 'KPI ဘုတ်', en: 'KPI Board' },
   'nav.staff': { mm: 'ဝန်ထမ်းများ', en: 'Staff' },
@@ -256,8 +246,8 @@ export const translations: Record<string, Record<Lang, string>> = {
   'tab.dashboard': { mm: 'ပင်မ', en: 'Dashboard' },
   'tab.leads': { mm: 'Lead', en: 'Leads' },
   'tab.add': { mm: 'ထည့်ရန်', en: 'Add' },
-  'tab.checkin': { mm: 'Check-In', en: 'Check-In' },
-  'tab.gallery': { mm: 'ဓာတ်ပုံ', en: 'Gallery' },
+  'tab.followUps': { mm: 'Follow-up များ', en: 'Follow-ups' },
+  'tab.pipeline': { mm: 'Pipeline', en: 'Pipeline' },
   // Page headers
   'leads.title': { mm: 'ဖောက်သည် Lead များ', en: 'Customer Leads' },
   'leads.subtitle': { mm: 'ဖောက်သည် Lead အားလုံးကို စီမံပြီး ခြေရာခံပါ', en: 'Manage and track all customer leads' },
@@ -266,12 +256,10 @@ export const translations: Record<string, Record<Lang, string>> = {
     mm: 'ဖောက်သည်တစ်ဦးချင်း၏ နောက်ဆုံး follow-up အခြေအနေ — မှတ်တမ်းအပြည့်ကြည့်ရန် အတန်းကိုနှိပ်ပါ',
     en: 'Latest follow-up status per customer — click a row for the full history',
   },
-  'checkin.title': { mm: 'နေ့စဉ် Check-in', en: 'Daily Check-in' },
-  'checkin.subtitle': { mm: 'လက်ရှိတည်နေရာမှ check-in လုပ်ရန်', en: 'Live site check-in' },
   'activity.title': { mm: 'နေ့စဉ် လုပ်ဆောင်ချက်များ', en: 'Daily Activity' },
   'activity.subtitle': {
-    mm: 'ဝန်ထမ်းတစ်ဦးချင်း နေ့အလိုက် ထည့်သွင်းသော lead များ၊ follow-up များနှင့် check-in များ',
-    en: 'What each staff member did on a given day — leads added, follow-ups made, check-in status',
+    mm: 'ဝန်ထမ်းတစ်ဦးချင်း နေ့အလိုက် ထည့်သွင်းသော lead များနှင့် follow-up များ',
+    en: 'What each staff member did on a given day — leads added and follow-ups made',
   },
 };
 

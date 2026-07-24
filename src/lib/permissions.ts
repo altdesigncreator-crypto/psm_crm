@@ -156,7 +156,6 @@ export function canWarnStaff(
 /** Route names as used in src/routes.tsx / nav config. */
 export type RouteKey =
   | 'dashboard' | 'add-lead' | 'leads' | 'lead-detail' | 'pipeline' | 'follow-ups'
-  | 'check-in' | 'check-in-gallery' | 'check-in-map'
   | 'notifications' | 'settings'
   | 'user-management' | 'role-management' | 'team-management'
   | 'kpi-board' | 'profile' | 'analytics' | 'team-activity';
@@ -173,9 +172,6 @@ export function canAccessRoute(role: RoleTier | null | undefined, routeKey: Rout
     case 'lead-detail':
     case 'pipeline':
     case 'follow-ups':
-    case 'check-in':
-    case 'check-in-gallery':
-    case 'check-in-map':
     case 'notifications':
       return true; // every authenticated tier has some view of these (own/branch/all, enforced by RLS)
     case 'settings':
@@ -197,9 +193,9 @@ export function canAccessRoute(role: RoleTier | null | undefined, routeKey: Rout
     case 'analytics':
       return isExec(role);
     case 'profile':
-      // Open to every signed-in tier — RLS on profiles/leads/check_ins/
-      // follow_ups is the real gate (exec: all, admin: department, manager:
-      // their team, sale: self), same pattern as 'lead-detail' above.
+      // Open to every signed-in tier — RLS on profiles/leads/follow_ups is
+      // the real gate (exec: all, admin: department, manager: their team,
+      // sale: self), same pattern as 'lead-detail' above.
       return true;
     case 'team-activity':
       // Daily staff-activity monitor — management tool; RLS scopes what each

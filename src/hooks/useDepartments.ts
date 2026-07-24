@@ -34,8 +34,8 @@ export function useDepartments() {
     return error;
   }, [load]);
 
-  /** Hard delete — fails with a FK violation if historical rows (e.g. old
-   * check-ins) still reference the code; callers fall back to deactivate. */
+  /** Hard delete — fails with a FK violation if historical rows still
+   * reference the code; callers fall back to deactivate. */
   const deleteDepartment = useCallback(async (code: string) => {
     const { error } = await supabase.from('departments').delete().eq('code', code);
     if (!error) await load();

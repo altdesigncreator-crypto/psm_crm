@@ -13,15 +13,12 @@ const Leads = lazy(() => import('./pages/Leads'));
 const FollowUps = lazy(() => import('./pages/FollowUps'));
 const LeadDetail = lazy(() => import('./pages/LeadDetail'));
 const Notifications = lazy(() => import('./pages/Notifications'));
-const CheckIn = lazy(() => import('./pages/CheckIn'));
-const CheckInGallery = lazy(() => import('./pages/CheckInGallery'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const KPIBoard = lazy(() => import('./pages/KPIBoard'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Settings = lazy(() => import('./pages/Settings'));
 const PipelineBoard = lazy(() => import('./pages/PipelineBoard'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
-const CheckInMap = lazy(() => import('./pages/CheckInMap'));
 const RoleManagement = lazy(() => import('./pages/RoleManagement'));
 const SystemBannerAdmin = lazy(() => import('./pages/SystemBannerAdmin'));
 const TeamActivity = lazy(() => import('./pages/TeamActivity'));
@@ -106,36 +103,6 @@ export const routes: RouteConfig[] = [
     element: (
       <ProtectedRoute>
         <Notifications />
-      </ProtectedRoute>
-    ),
-  },
-  {
-    name: 'Check-In',
-    path: '/check-in',
-    routeKey: 'check-in',
-    element: (
-      <ProtectedRoute>
-        <CheckIn />
-      </ProtectedRoute>
-    ),
-  },
-  {
-    name: 'Check-In Gallery',
-    path: '/check-in-gallery',
-    routeKey: 'check-in-gallery',
-    element: (
-      <ProtectedRoute>
-        <CheckInGallery />
-      </ProtectedRoute>
-    ),
-  },
-  {
-    name: 'Check-In Map',
-    path: '/check-in-map',
-    routeKey: 'check-in-map',
-    element: (
-      <ProtectedRoute>
-        <CheckInMap />
       </ProtectedRoute>
     ),
   },

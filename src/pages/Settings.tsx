@@ -18,7 +18,7 @@ import { Separator } from '@/components/ui/separator';
 import {
   ArrowLeft, User, Mail, Shield, Building2, Moon, Bell, Info, ChevronDown, Phone, MapPin,
   HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern, KeyRound, Eye, EyeOff, Trash2, Edit2,
-  Camera,
+  Camera, Download,
 } from 'lucide-react';
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -58,12 +58,11 @@ export default function Settings() {
   const [deletePassword, setDeletePassword] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
+  const [downloadingBackup, setDownloadingBackup] = useState(false);
+
   useEffect(() => {
     isPlatformAuthenticatorAvailable().then(setBiometricSupported);
   }, []);
-
-  const [attendanceSettings, setAttendanceSettings] = useState<Record<string, { window_start: string; window_end: string }>>({});
-  const [savingAttendance, setSavingAttendance] = useState(false);
 
   const [newDeptCode, setNewDeptCode] = useState('');
   const [newDeptName, setNewDeptName] = useState('');
@@ -73,16 +72,6 @@ export default function Settings() {
   const [savingDeptEdit, setSavingDeptEdit] = useState(false);
   const [deptDeleteTarget, setDeptDeleteTarget] = useState<{ code: string; name: string } | null>(null);
   const [deletingDept, setDeletingDept] = useState(false);
-
-  useEffect(() => {
-    if (!isExec(role)) return;
-    (async () => {
-      const { data } = await supabase.from('attendance_settings').select('*');
-      const map: Record<string, { window_start: string; window_end: string }> = {};
-      (data || []).forEach((row: any) => { map[row.department_code] = { window_start: row.window_start, window_end: row.window_end }; });
-      setAttendanceSettings(map);
-    })();
-  }, [role]);
 
   const toggleSection = (section: 'profile' | 'preferences' | 'system') => setOpenSection((prev) => (prev === section ? null : section));
 
@@ -197,16 +186,49 @@ export default function Settings() {
     }
   };
 
-  const handleSaveAttendance = async (deptCode: string) => {
-    const settings = attendanceSettings[deptCode];
-    if (!settings) return;
-    setSavingAttendance(true);
-    const { error } = await supabase.from('attendance_settings').update({
-      window_start: settings.window_start, window_end: settings.window_end, updated_by: user?.id,
-    }).eq('department_code', deptCode);
-    setSavingAttendance(false);
-    if (error) { toast.error('Could not save attendance window.'); return; }
-    toast.success(`${getDepartmentLabel(deptCode)} check-in window updated.`);
+  // Edge Functions can't shell out to pg_dump, so this calls a function that
+  // triggers the real db-backup.yml GitHub Actions workflow, waits for it to
+  // finish (~30-90s), and relays the resulting artifact straight back —
+  // fetch() directly (not supabase.functions.invoke) so the zip comes back
+  // as a blob instead of being parsed as JSON.
+  const handleDownloadBackup = async () => {
+    setDownloadingBackup(true);
+    toast.info('Generating backup… this can take up to a minute.');
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/trigger-db-backup`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${sessionData.session?.access_token}`,
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        },
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error || `Backup failed (${res.status}).`);
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+      const filename = filenameMatch?.[1] || `psm_crm_backup_${new Date().toISOString().split('T')[0]}.zip`;
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast.success('Backup downloaded.');
+    } catch (err: any) {
+      toast.error(err.message || 'Could not generate the backup.');
+    } finally {
+      setDownloadingBackup(false);
+    }
   };
 
   const handleToggleBiometric = async () => {
@@ -257,8 +279,8 @@ export default function Settings() {
 
       const error = await deleteDepartment(code);
       if (error) {
-        // FK violation: historical rows (old check-ins etc.) still reference
-        // the code — deactivate instead so history keeps its labels.
+        // FK violation: historical rows still reference the code — deactivate
+        // instead so history keeps its labels.
         if ((error as { code?: string }).code === '23503') {
           const softErr = await deactivateDepartment(code);
           if (softErr) { toast.error(softErr.message || 'Could not remove the department.'); return; }
@@ -415,7 +437,7 @@ export default function Settings() {
                   <Trash2 className="w-4 h-4 text-destructive" /> Delete Account
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Permanently deletes your login, check-ins and notifications. Leads you own must be
+                  Permanently deletes your login and notifications. Leads you own must be
                   reassigned by your manager first. This cannot be undone.
                 </p>
                 <Button
@@ -438,7 +460,7 @@ export default function Settings() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete your account?</AlertDialogTitle>
             <AlertDialogDescription>
-              Your login is removed permanently, along with your check-ins and notifications.
+              Your login is removed permanently, along with your notifications.
               This cannot be undone. Enter your password to confirm.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -537,7 +559,7 @@ export default function Settings() {
             <button type="button" onClick={() => toggleSection('system')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-all text-left">
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center"><SettingsIcon className="w-4 h-4 text-primary" /></div>
-                <div><p className="text-sm font-semibold text-foreground">System Configuration</p><p className="text-xs text-muted-foreground">Check-in windows per department</p></div>
+                <div><p className="text-sm font-semibold text-foreground">System Configuration</p><p className="text-xs text-muted-foreground">Manage departments and backups</p></div>
               </div>
               <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${openSection === 'system' ? 'rotate-180' : ''}`} />
             </button>
@@ -549,7 +571,7 @@ export default function Settings() {
             <CardContent className="space-y-6">
               <div className="space-y-3">
                 <p className="text-sm font-semibold text-foreground">Departments</p>
-                <p className="text-xs text-muted-foreground">Add, rename or delete departments — changes apply immediately to every department picker across the app (leads, staff, check-ins, filters).</p>
+                <p className="text-xs text-muted-foreground">Add, rename or delete departments — changes apply immediately to every department picker across the app (leads, staff, filters).</p>
                 <form onSubmit={handleAddDepartment} className="flex flex-col sm:flex-row gap-2">
                   <Input placeholder="Code (e.g. commercial)" value={newDeptCode} onChange={(e) => setNewDeptCode(e.target.value)} className="h-10 sm:w-40" />
                   <Input placeholder="Display name (e.g. Commercial)" value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="h-10 flex-1" />
@@ -597,17 +619,20 @@ export default function Settings() {
               <Separator />
 
               <div className="space-y-3">
-                <p className="text-sm font-semibold text-foreground">Check-in Windows</p>
-                <p className="text-xs text-muted-foreground">Configure the allowed daily check-in time window per department. Check-ins after the window end are automatically flagged as late.</p>
-                {departments.map((d) => (
-                  <div key={d.code} className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-xl border border-border">
-                    <span className="text-sm font-medium text-foreground w-28 shrink-0 truncate">{d.name}</span>
-                    <Input type="time" value={attendanceSettings[d.code]?.window_start || '07:00'} onChange={(e) => setAttendanceSettings((prev) => ({ ...prev, [d.code]: { window_start: e.target.value, window_end: prev[d.code]?.window_end || '10:00' } }))} className="h-10" />
-                    <span className="text-xs text-muted-foreground shrink-0">to</span>
-                    <Input type="time" value={attendanceSettings[d.code]?.window_end || '10:00'} onChange={(e) => setAttendanceSettings((prev) => ({ ...prev, [d.code]: { window_start: prev[d.code]?.window_start || '07:00', window_end: e.target.value } }))} className="h-10" />
-                    <Button size="sm" disabled={savingAttendance} onClick={() => handleSaveAttendance(d.code)} className="shrink-0">Save</Button>
-                  </div>
-                ))}
+                <p className="text-sm font-semibold text-foreground">Database Backup</p>
+                <p className="text-xs text-muted-foreground">
+                  Runs a full database backup on demand (the same pg_dump job that also runs automatically every
+                  day) and downloads it straight to this device. Takes up to a minute.
+                </p>
+                <Button
+                  variant="outline"
+                  disabled={downloadingBackup}
+                  onClick={handleDownloadBackup}
+                  className="h-11 gap-2"
+                >
+                  {downloadingBackup ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  {downloadingBackup ? 'Generating backup…' : 'Download Backup'}
+                </Button>
               </div>
             </CardContent>
           </Card>
@@ -648,8 +673,8 @@ export default function Settings() {
             <AlertDialogTitle>Delete the {deptDeleteTarget?.name} department?</AlertDialogTitle>
             <AlertDialogDescription>
               Departments with staff or leads cannot be deleted — move them first. If old records
-              (like past check-ins) reference it, the department is deactivated instead of deleted,
-              which removes it from every picker while history keeps its labels.
+              still reference it, the department is deactivated instead of deleted, which removes
+              it from every picker while history keeps its labels.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

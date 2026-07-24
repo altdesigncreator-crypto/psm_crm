@@ -186,7 +186,6 @@ tbody tr:last-child td { border-bottom: none; }
 interface AgentStat {
   name: string;
   totalLeads: number;
-  totalCheckins: number;
   soldCount: number;
   totalRevenue: number;
 }
@@ -195,7 +194,6 @@ interface DepartmentStat {
   displayName: string;
   totalLeads: number;
   soldCount: number;
-  checkinCount: number;
   agentCount: number;
 }
 
@@ -208,7 +206,6 @@ export async function exportKPIAsExcel(agentStats: AgentStat[], departmentStats?
     Rank: idx + 1,
     Agent: a.name,
     'Total Leads': a.totalLeads,
-    'Check-ins': a.totalCheckins,
     Sold: a.soldCount,
     Revenue: a.totalRevenue,
     'Conversion Rate': a.totalLeads > 0 ? `${((a.soldCount / a.totalLeads) * 100).toFixed(1)}%` : '0%',
@@ -220,7 +217,6 @@ export async function exportKPIAsExcel(agentStats: AgentStat[], departmentStats?
       Department: d.displayName,
       'Total Leads': d.totalLeads,
       Sold: d.soldCount,
-      'Check-ins': d.checkinCount,
       Agents: d.agentCount,
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(deptData), 'Department Performance');
@@ -250,8 +246,8 @@ export async function exportKPIAsPDF(agentStats: AgentStat[], departmentStats?: 
     startY += 4;
     autoTable(doc, {
       startY,
-      head: [['Department', 'Leads', 'Sold', 'Check-ins', 'Agents']],
-      body: departmentStats.map((d) => [d.displayName, String(d.totalLeads), String(d.soldCount), String(d.checkinCount), String(d.agentCount)]),
+      head: [['Department', 'Leads', 'Sold', 'Agents']],
+      body: departmentStats.map((d) => [d.displayName, String(d.totalLeads), String(d.soldCount), String(d.agentCount)]),
       theme: 'striped',
       styles: { fontSize: 9, cellPadding: 2 },
       headStyles: { fillColor: [4, 99, 202], textColor: [255, 255, 255], fontStyle: 'bold' },
@@ -264,9 +260,9 @@ export async function exportKPIAsPDF(agentStats: AgentStat[], departmentStats?: 
   doc.text('Agent Performance', 14, startY);
   autoTable(doc, {
     startY: startY + 4,
-    head: [['#', 'Agent', 'Leads', 'Check-ins', 'Sold', 'Revenue', 'Conversion']],
+    head: [['#', 'Agent', 'Leads', 'Sold', 'Revenue', 'Conversion']],
     body: agentStats.map((a, idx) => [
-      String(idx + 1), a.name, String(a.totalLeads), String(a.totalCheckins), String(a.soldCount),
+      String(idx + 1), a.name, String(a.totalLeads), String(a.soldCount),
       a.totalRevenue.toLocaleString(), a.totalLeads > 0 ? `${((a.soldCount / a.totalLeads) * 100).toFixed(1)}%` : '0%',
     ]),
     theme: 'striped',

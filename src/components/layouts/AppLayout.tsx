@@ -8,9 +8,9 @@ import { canAccessRoute, getRoleLabel, getDepartmentLabel, type RouteKey } from 
 import { usePwaInstall } from '@/hooks/usePwaInstall';
 import SystemBanner from '@/components/SystemBanner';
 import {
-  LayoutDashboard, UserPlus, Users, LogOut, Menu, Bell, Footprints, Image, Shield,
-  Footprints as CheckInIcon, CalendarDays, BarChart3, Plus, Home, MapPin,
-  Settings as SettingsIcon, BarChart3 as AnalyticsIcon, Thermometer, Kanban, Briefcase, ListChecks,
+  LayoutDashboard, UserPlus, Users, LogOut, Menu, Bell, Shield,
+  CalendarDays, BarChart3, Plus, Home,
+  Settings as SettingsIcon, BarChart3 as AnalyticsIcon, Kanban, Briefcase, ListChecks,
   Download,
   Activity as ActivityIcon,
   UsersRound,
@@ -37,9 +37,6 @@ const NAV_SECTIONS: { tKey: string; items: NavItem[] }[] = [
       { tKey: 'nav.leads', path: '/leads', routeKey: 'leads', icon: Users },
       { tKey: 'nav.followUps', path: '/follow-ups', routeKey: 'follow-ups', icon: ListChecks },
       { tKey: 'nav.pipeline', path: '/pipeline', routeKey: 'pipeline', icon: Kanban },
-      { tKey: 'nav.checkIn', path: '/check-in', routeKey: 'check-in', icon: Footprints },
-      { tKey: 'nav.checkInGallery', path: '/check-in-gallery', routeKey: 'check-in-gallery', icon: Image },
-      { tKey: 'nav.checkInMap', path: '/check-in-map', routeKey: 'check-in-map', icon: Thermometer },
     ],
   },
   {
@@ -66,8 +63,8 @@ const TAB_ITEMS = [
   { tKey: 'tab.dashboard', path: '/dashboard', icon: Home },
   { tKey: 'tab.leads', path: '/leads', icon: Users },
   { tKey: 'tab.add', path: '/add-lead', icon: Plus, isFab: true },
-  { tKey: 'tab.checkin', path: '/check-in', icon: MapPin },
-  { tKey: 'tab.gallery', path: '/check-in-gallery', icon: Image },
+  { tKey: 'tab.followUps', path: '/follow-ups', icon: ListChecks },
+  { tKey: 'tab.pipeline', path: '/pipeline', icon: Kanban },
 ];
 
 function initialsOf(name: string): string {
@@ -80,9 +77,8 @@ function formatNotifTime(iso?: string) {
 }
 
 function NotificationItem({ n, onClick }: { n: Notification; onClick: () => void }) {
-  const isCheckIn = n.type === 'checkin_reminder';
-  const Icon = isCheckIn ? CheckInIcon : CalendarDays;
-  const bgClass = isCheckIn ? 'bg-info/10 text-info' : 'bg-primary/10 text-primary';
+  const Icon = CalendarDays;
+  const bgClass = 'bg-primary/10 text-primary';
   return (
     <button
       type="button"
@@ -375,8 +371,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             const Icon = item.icon;
 
             if (item.isFab) {
-              // Plus button goes straight to Add Lead — Check-In already has
-              // its own tab immediately to the right, so no choice popup.
+              // Plus button goes straight to Add Lead — no choice popup.
               return (
                 <Link key={item.path} to={item.path} className="relative -mt-6">
                   <div className="w-14 h-14 rounded-full flex items-center justify-center shadow-elevated transition-all duration-200 active:scale-90 bg-gradient-to-br from-primary to-primary/80 text-primary-foreground">

@@ -1,0 +1,45 @@
+name: Daily Database Backup
+
+# Supabase Free tier has no automatic backups — this is the safety net.
+# Runs pg_dump against the project's direct Postgres connection (NOT the
+# app's pooler/API connection) and stores the result as a downloadable
+# workflow artifact. Requires the SUPABASE_DB_URL secret to be set
+# (Settings -> Secrets and variables -> Actions in this repo) — see
+# db-backup.yml's companion note in the PR/README for how to get that value.
+on:
+  schedule:
+    # 19:00 UTC — off-peak for a Myanmar-based team (~01:30 local the next
+    # day). GitHub does not guarantee exact-time execution for scheduled
+    # workflows; a few minutes of delay is normal.
+    - cron: '0 19 * * *'
+  workflow_dispatch: {} # lets you trigger a backup on demand from the Actions tab
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Set backup date
+        id: date
+        run: echo "value=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Dump database
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::SUPABASE_DB_URL secret is not set — see workflow comments for setup."
+            exit 1
+          fi
+          mkdir -p backup
+          pg_dump "$DATABASE_URL" --no-owner --no-privileges -Fc \
+            -f "backup/psm_crm_${{ steps.date.outputs.value }}.dump"
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: psm-crm-db-backup-${{ steps.date.outputs.value }}
+          path: backup/*.dump
+          retention-days: 30

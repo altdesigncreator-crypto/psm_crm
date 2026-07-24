@@ -17,7 +17,6 @@ const TYPE_STYLES: Record<string, { bg: string; text: string; icon: React.ReactN
   site_visit_reminder: { bg: 'bg-info/10', text: 'text-info', icon: <CalendarDays className="w-4 h-4" /> },
   booking_confirmation: { bg: 'bg-success/10', text: 'text-success', icon: <PartyPopper className="w-4 h-4" /> },
   warning_notification: { bg: 'bg-destructive/10', text: 'text-destructive', icon: <ShieldAlert className="w-4 h-4" /> },
-  checkin_reminder: { bg: 'bg-info/10', text: 'text-info', icon: <Clock className="w-4 h-4" /> },
   'due-today': { bg: 'bg-warning/10', text: 'text-warning', icon: <Clock className="w-4 h-4" /> },
   overdue: { bg: 'bg-destructive/10', text: 'text-destructive', icon: <AlertTriangle className="w-4 h-4" /> },
   upcoming: { bg: 'bg-success/10', text: 'text-success', icon: <Calendar className="w-4 h-4" /> },

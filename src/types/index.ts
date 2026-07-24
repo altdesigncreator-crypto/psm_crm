@@ -4,9 +4,8 @@ export type LeadStage = 'new' | 'contacted' | 'qualified' | 'appointment' | 'sit
 export type LeadGrade = 'A' | 'B' | 'C';
 export type FollowUpType = 'phone' | 'messenger' | 'whatsapp' | 'viber' | 'email' | 'meeting' | 'site_visit';
 export type FollowUpStatus = 'interested' | 'not_interested' | 'busy' | 'no_answer' | 'call_later' | 'site_visit' | 'booking' | 'lost';
-export type CheckInStatus = 'on_time' | 'late' | 'absent' | 'leave' | 'field_work';
-export type WarningReason = 'followup_overdue' | 'customer_complaint' | 'no_activity' | 'late_checkin' | 'pipeline_stalled' | 'missed_appointment';
-export type NotificationType = 'new_lead_assigned' | 'followup_reminder' | 'appointment_reminder' | 'site_visit_reminder' | 'booking_confirmation' | 'warning_notification' | 'checkin_reminder';
+export type WarningReason = 'followup_overdue' | 'customer_complaint' | 'no_activity' | 'pipeline_stalled' | 'missed_appointment';
+export type NotificationType = 'new_lead_assigned' | 'followup_reminder' | 'appointment_reminder' | 'site_visit_reminder' | 'booking_confirmation' | 'warning_notification';
 export type ApptStatus = 'scheduled' | 'completed' | 'missed' | 'cancelled';
 export type SystemMessageType = 'info' | 'warning' | 'maintenance' | 'critical';
 
@@ -82,6 +81,8 @@ export interface Lead {
   longitude?: number | null;
   next_follow_up_at?: string | null;
   remarks?: string | null;
+  visit_photo_url?: string | null;
+  appointment_photo_url?: string | null;
   created_at: string;
   updated_at: string;
   // Joined convenience fields (populated by some queries, not columns)
@@ -137,23 +138,6 @@ export interface Warning {
   issued_by: string;
   reason: WarningReason;
   message?: string | null;
-  created_at: string;
-}
-
-export interface CheckIn {
-  id: string;
-  employee_id: string;
-  department_code: Department;
-  check_in_date: string;
-  check_in_time: string;
-  latitude?: number | null;
-  longitude?: number | null;
-  photo_url?: string | null;
-  status: CheckInStatus;
-  is_late: boolean;
-  notes?: string | null;
-  approved_by?: string | null;
-  approved_at?: string | null;
   created_at: string;
 }
 
@@ -221,19 +205,10 @@ export function getGradeForFollowUpStatus(status: FollowUpStatus): LeadGrade {
   return FOLLOWUP_STATUS_TO_GRADE[status];
 }
 
-export const CHECKIN_STATUSES: { value: CheckInStatus; label: string }[] = [
-  { value: 'on_time', label: 'On Time' },
-  { value: 'late', label: 'Late' },
-  { value: 'absent', label: 'Absent' },
-  { value: 'leave', label: 'Leave' },
-  { value: 'field_work', label: 'Field Work' },
-];
-
 export const WARNING_REASONS: { value: WarningReason; label: string }[] = [
   { value: 'followup_overdue', label: 'Follow-up Overdue' },
   { value: 'customer_complaint', label: 'Customer Complaint' },
   { value: 'no_activity', label: 'No Activity' },
-  { value: 'late_checkin', label: 'Late Check-in' },
   { value: 'pipeline_stalled', label: 'Pipeline Stalled' },
   { value: 'missed_appointment', label: 'Missed Appointment' },
 ];

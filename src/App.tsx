@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'r
 import IntersectObserver from '@/components/common/IntersectObserver';
 import SplashScreen from '@/components/common/SplashScreen';
 import PWAInstallPrompt from '@/components/PWAInstallPrompt';
+import UpdatePrompt from '@/components/UpdatePrompt';
 import PermissionPrimer from '@/components/PermissionPrimer';
 import BiometricLock from '@/components/BiometricLock';
 import MaintenancePage from '@/components/MaintenancePage';
@@ -54,6 +55,7 @@ const AppContent: React.FC = () => {
     <RouteGuard>
       <IntersectObserver />
       <PWAInstallPrompt />
+      <UpdatePrompt />
       {/* First-time-use camera & GPS permission onboarding (signed-in only) */}
       {user && <PermissionPrimer />}
       <Suspense

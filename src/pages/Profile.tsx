@@ -14,11 +14,11 @@ import LeadLevelBadge from '@/components/LeadLevelBadge';
 import StatusBadge from '@/components/StatusBadge';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import {
-  ArrowLeft, Users, Footprints, TrendingUp, CheckCircle2, ListChecks, ShieldAlert,
-  User, Phone, Mail, Building2, Calendar, Clock, MapPin, UserCog, Globe,
+  ArrowLeft, Users, TrendingUp, CheckCircle2, ListChecks, ShieldAlert,
+  User, Phone, Mail, Building2, Calendar, Clock, UserCog, Globe,
   Activity, ChevronLeft, ChevronRight, Eye,
 } from 'lucide-react';
-import { LEAD_STAGES, FOLLOWUP_STATUSES, type Lead, type CheckIn, type FollowUp, type Profile as ProfileRecord } from '@/types';
+import { LEAD_STAGES, FOLLOWUP_STATUSES, type Lead, type FollowUp, type Profile as ProfileRecord } from '@/types';
 
 function initialsOf(name: string): string {
   return name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('') || '?';
@@ -66,7 +66,6 @@ export default function Profile() {
 
   const [profile, setProfile] = useState<ProfileRecord | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [checkins, setCheckins] = useState<CheckIn[]>([]);
   const [followUps, setFollowUps] = useState<FollowUpWithLead[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -76,16 +75,14 @@ export default function Profile() {
     if (!id) { setLoading(false); return; }
     let active = true;
     (async () => {
-      const [profileRes, leadsRes, checkinsRes, followUpsRes] = await Promise.all([
+      const [profileRes, leadsRes, followUpsRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', id).maybeSingle(),
         supabase.from('leads').select('*').eq('owner_id', id).order('created_at', { ascending: false }),
-        supabase.from('check_ins').select('*').eq('employee_id', id).order('check_in_time', { ascending: false }),
         supabase.from('follow_ups').select('*, leads(name, phone)').eq('created_by', id).order('created_at', { ascending: false }),
       ]);
       if (!active) return;
       setProfile((profileRes.data as ProfileRecord) || null);
       setLeads((leadsRes.data || []) as Lead[]);
-      setCheckins((checkinsRes.data || []) as CheckIn[]);
       setFollowUps((followUpsRes.data || []) as FollowUpWithLead[]);
       setLoading(false);
     })();
@@ -96,18 +93,16 @@ export default function Profile() {
     totalLeads: leads.length,
     gradeA: leads.filter((l) => l.lead_grade === 'A').length,
     sold: leads.filter((l) => l.status === 'sold').length,
-    totalCheckins: checkins.length,
     totalFollowUps: followUps.length,
   };
 
-  // Daily Activity — what this person did on a given day: leads added,
-  // follow-ups logged, and their check-in. Derived from the already-loaded
-  // full history above (no extra query needed), filtered to the selected day.
+  // Daily Activity — what this person did on a given day: leads added and
+  // follow-ups logged. Derived from the already-loaded full history above
+  // (no extra query needed), filtered to the selected day.
   const [day, setDay] = useState(todayStr());
   const isToday = day === todayStr();
   const dayLeads = useMemo(() => leads.filter((l) => localDateStr(l.created_at) === day), [leads, day]);
   const dayFollowUps = useMemo(() => followUps.filter((f) => localDateStr(f.created_at) === day), [followUps, day]);
-  const dayCheckin = useMemo(() => checkins.find((c) => c.check_in_date === day) || null, [checkins, day]);
 
   // Sales Person → the teams they're on (and each team's manager). Manager →
   // the teams they run. Admin/Boss/Super Admin aren't part of the team model
@@ -244,9 +239,9 @@ export default function Profile() {
         </Card>
       )}
 
-      {/* Daily Activity — leads added, follow-ups made, and check-in status
-          for a chosen day, mirroring Team Activity's per-day view but
-          scoped to this one person. */}
+      {/* Daily Activity — leads added and follow-ups made for a chosen day,
+          mirroring Team Activity's per-day view but scoped to this one
+          person. */}
       <Card className="shadow-card rounded-xl border-0">
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Activity className="w-4 h-4 text-primary" /></div>Daily Activity</CardTitle>
@@ -262,15 +257,6 @@ export default function Profile() {
             </Button>
             {!isToday && (
               <Button variant="ghost" className="h-10 px-3 text-xs font-medium text-primary" onClick={() => setDay(todayStr())}>Today</Button>
-            )}
-            {dayCheckin ? (
-              <span className={`ml-auto inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full shrink-0 ${dayCheckin.is_late ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'}`}>
-                <Footprints className="w-3 h-3" /> {dayCheckin.is_late ? 'Late' : 'Checked in'} · {timeOf(dayCheckin.check_in_time)}
-              </span>
-            ) : (
-              <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full bg-destructive/10 text-destructive shrink-0">
-                <Footprints className="w-3 h-3" /> No check-in
-              </span>
             )}
           </div>
 
@@ -321,22 +307,14 @@ export default function Profile() {
               )}
             </div>
           </div>
-
-          {dayCheckin?.notes && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground pt-2 border-t border-border/50">
-              <MapPin className="w-3.5 h-3.5 shrink-0 text-success" />
-              <span className="truncate">Check-in: {dayCheckin.notes}</span>
-            </div>
-          )}
         </CardContent>
       </Card>
 
       {/* Overview stats */}
-      <div className="flex md:grid md:grid-cols-5 gap-3 overflow-x-auto md:overflow-visible pb-2 md:pb-0 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
+      <div className="flex md:grid md:grid-cols-4 gap-3 overflow-x-auto md:overflow-visible pb-2 md:pb-0 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
         <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Users className="w-5 h-5 text-primary" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.totalLeads}</p><p className="text-xs text-muted-foreground">Total Leads</p></div></CardContent></Card>
         <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0"><TrendingUp className="w-5 h-5 text-destructive" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.gradeA}</p><p className="text-xs text-muted-foreground">Grade A</p></div></CardContent></Card>
         <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center shrink-0"><CheckCircle2 className="w-5 h-5 text-emerald-500" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.sold}</p><p className="text-xs text-muted-foreground">Sold</p></div></CardContent></Card>
-        <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-success/10 flex items-center justify-center shrink-0"><Footprints className="w-5 h-5 text-success" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.totalCheckins}</p><p className="text-xs text-muted-foreground">Check-ins</p></div></CardContent></Card>
         <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-info/10 flex items-center justify-center shrink-0"><ListChecks className="w-5 h-5 text-info" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.totalFollowUps}</p><p className="text-xs text-muted-foreground">Follow-ups</p></div></CardContent></Card>
       </div>
 
@@ -411,33 +389,6 @@ export default function Profile() {
         </CardContent>
       </Card>
 
-      {/* Check-ins */}
-      <Card className="shadow-card rounded-xl border-0">
-        <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-success/10 flex items-center justify-center"><Footprints className="w-4 h-4 text-success" /></div>Check-ins ({stats.totalCheckins})</CardTitle></CardHeader>
-        <CardContent className="p-0">
-          {checkins.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-32 text-muted-foreground"><Footprints className="w-8 h-8 mb-2 opacity-30" /><p className="text-sm font-medium">No check-ins yet</p></div>
-          ) : (
-            <ScrollArea className="h-[340px] md:h-80">
-              <div className="divide-y divide-border">
-                {checkins.map((c) => (
-                  <div key={c.id} className="flex items-start gap-3 p-4 min-h-[64px] hover:bg-muted/30 transition-colors">
-                    <div className="mt-0.5 w-10 h-10 rounded-full bg-success/10 flex items-center justify-center shrink-0"><Footprints className="w-4 h-4 text-success" /></div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-foreground">{c.notes || 'Field check-in'}</p>
-                      <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground flex-wrap">
-                        {c.latitude && c.longitude && (<span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />{c.latitude.toFixed(5)}, {c.longitude.toFixed(5)}</span>)}
-                        <span className="flex items-center gap-1 tabular-nums"><Clock className="w-3.5 h-3.5" />{new Date(c.check_in_time).toLocaleDateString('en-GB')}</span>
-                      </div>
-                    </div>
-                    {c.photo_url && (<img src={c.photo_url} alt="Check-in" className="w-16 h-16 md:w-20 md:h-20 rounded-xl object-cover shrink-0 border border-border" />)}
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }

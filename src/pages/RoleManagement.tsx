@@ -27,7 +27,6 @@ const MATRIX: { feature: string; access: Record<string, Access> }[] = [
   { feature: 'Assign / Reassign Lead', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'yes', sale: 'no' } },
   { feature: 'Follow-up', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'view', sale: 'own' } },
   { feature: 'Pipeline', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'branch', sale: 'own' } },
-  { feature: 'Check-in', access: { boss: 'yes', super_admin: 'yes', admin: 'view', manager: 'view', sale: 'own' } },
   { feature: 'Warnings', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'branch', sale: 'view' } },
   { feature: 'Reports', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'branch', sale: 'own' } },
   { feature: 'KPI', access: { boss: 'yes', super_admin: 'yes', admin: 'no', manager: 'no', sale: 'no' } },

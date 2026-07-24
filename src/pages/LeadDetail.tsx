@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   ArrowLeft, User, Phone, Mail, MapPin, Building2, DollarSign, Target, Calendar,
   TrendingUp, MessageSquare, Navigation, Clock, FileText, Loader2,
-  Plus, AlertTriangle, ArrowRightLeft, History, Trash2,
+  Plus, AlertTriangle, ArrowRightLeft, History, Trash2, Camera, CalendarClock, X, Eye, RefreshCw,
 } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -68,6 +68,12 @@ export default function LeadDetail() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  const [uploadingVisitPhoto, setUploadingVisitPhoto] = useState(false);
+  const visitPhotoInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingAppointmentPhoto, setUploadingAppointmentPhoto] = useState(false);
+  const appointmentPhotoInputRef = useRef<HTMLInputElement>(null);
+  const [viewingPhoto, setViewingPhoto] = useState<{ url: string; label: string } | null>(null);
+
   const currentUser = user ? { id: user.id, role, department: user.department, managedTeamIds: myTeamIds } : null;
 
   const loadAll = useCallback(async () => {
@@ -125,6 +131,10 @@ export default function LeadDetail() {
   // Exec can delete any lead; Manager/Sale only a lead they currently own —
   // matches the leads_delete RLS policy.
   const canDelete = canDeleteLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
+  // Mirrors can_manage_lead_photos() in crm.sql — deliberately not gated by
+  // lead.status the way `editable` is, since attaching a visit/appointment
+  // photo (evidence, not lead data) is still meaningful after a sale closes.
+  const canManagePhotos = canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id }) || lead.created_by === user?.id;
 
   const handleDeleteLead = async () => {
     setDeleting(true);
@@ -144,6 +154,32 @@ export default function LeadDetail() {
       toast.error('Could not delete the lead.');
       setDeleting(false);
       setDeleteOpen(false);
+    }
+  };
+
+  const handleUploadLeadPhoto = async (
+    file: File,
+    kind: 'visit' | 'appointment',
+    column: 'visit_photo_url' | 'appointment_photo_url',
+    setUploading: (v: boolean) => void
+  ) => {
+    if (!file.type.startsWith('image/')) { toast.error('Please choose an image file.'); return; }
+    setUploading(true);
+    try {
+      const path = `${lead.id}/${kind}-${Date.now()}.jpg`;
+      const { error: uploadErr } = await supabase.storage.from('lead-photos').upload(path, file);
+      if (uploadErr) throw uploadErr;
+      const url = supabase.storage.from('lead-photos').getPublicUrl(path).data.publicUrl;
+
+      const { error } = await supabase.from('leads').update({ [column]: url }).eq('id', lead.id);
+      if (error) throw error;
+
+      setLead((prev) => (prev ? { ...prev, [column]: url } : prev));
+      toast.success('Photo uploaded.');
+    } catch {
+      toast.error('Could not upload the photo.');
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -287,6 +323,102 @@ export default function LeadDetail() {
               )}
             </CardContent>
           </Card>
+
+          {(canManagePhotos || lead.visit_photo_url || lead.appointment_photo_url) && (
+            <Card className="shadow-card rounded-xl border-0">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Camera className="w-4 h-4 text-primary" /></div>
+                  Photos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0 grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">Site Visit</p>
+                  <input ref={visitPhotoInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadLeadPhoto(f, 'visit', 'visit_photo_url', setUploadingVisitPhoto); e.target.value = ''; }} />
+                  {lead.visit_photo_url ? (
+                    <div className="rounded-xl overflow-hidden border border-border bg-card">
+                      <button
+                        type="button" onClick={() => setViewingPhoto({ url: lead.visit_photo_url!, label: 'Site Visit Photo' })}
+                        className="block w-full h-28"
+                        aria-label="View site visit photo"
+                      >
+                        <img src={lead.visit_photo_url} alt="Site visit" className="w-full h-full object-cover" />
+                      </button>
+                      <div className="flex items-stretch divide-x divide-border border-t border-border">
+                        <button
+                          type="button" onClick={() => setViewingPhoto({ url: lead.visit_photo_url!, label: 'Site Visit Photo' })}
+                          className="flex-1 h-9 flex items-center justify-center gap-1.5 text-xs font-medium text-foreground hover:bg-muted/60 active:bg-muted transition-colors"
+                        >
+                          <Eye className="w-3.5 h-3.5" /> View
+                        </button>
+                        {canManagePhotos && (
+                          <button
+                            type="button" onClick={() => visitPhotoInputRef.current?.click()} disabled={uploadingVisitPhoto}
+                            className="flex-1 h-9 flex items-center justify-center gap-1.5 text-xs font-medium text-foreground hover:bg-muted/60 active:bg-muted transition-colors disabled:opacity-50"
+                          >
+                            {uploadingVisitPhoto ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Replace
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : canManagePhotos ? (
+                    <button
+                      type="button" onClick={() => visitPhotoInputRef.current?.click()} disabled={uploadingVisitPhoto}
+                      className="w-full h-28 flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-card active:bg-muted/50 transition-colors"
+                    >
+                      {uploadingVisitPhoto ? <Loader2 className="w-4 h-4 text-primary animate-spin" /> : <Camera className="w-4 h-4 text-primary" />}
+                      <span className="text-xs font-medium text-muted-foreground">Upload</span>
+                    </button>
+                  ) : (
+                    <div className="w-full h-28 flex items-center justify-center rounded-xl border border-dashed border-border text-xs text-muted-foreground">Not added</div>
+                  )}
+                </div>
+
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">Appointment</p>
+                  <input ref={appointmentPhotoInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadLeadPhoto(f, 'appointment', 'appointment_photo_url', setUploadingAppointmentPhoto); e.target.value = ''; }} />
+                  {lead.appointment_photo_url ? (
+                    <div className="rounded-xl overflow-hidden border border-border bg-card">
+                      <button
+                        type="button" onClick={() => setViewingPhoto({ url: lead.appointment_photo_url!, label: 'Appointment Photo' })}
+                        className="block w-full h-28"
+                        aria-label="View appointment photo"
+                      >
+                        <img src={lead.appointment_photo_url} alt="Appointment" className="w-full h-full object-cover" />
+                      </button>
+                      <div className="flex items-stretch divide-x divide-border border-t border-border">
+                        <button
+                          type="button" onClick={() => setViewingPhoto({ url: lead.appointment_photo_url!, label: 'Appointment Photo' })}
+                          className="flex-1 h-9 flex items-center justify-center gap-1.5 text-xs font-medium text-foreground hover:bg-muted/60 active:bg-muted transition-colors"
+                        >
+                          <Eye className="w-3.5 h-3.5" /> View
+                        </button>
+                        {canManagePhotos && (
+                          <button
+                            type="button" onClick={() => appointmentPhotoInputRef.current?.click()} disabled={uploadingAppointmentPhoto}
+                            className="flex-1 h-9 flex items-center justify-center gap-1.5 text-xs font-medium text-foreground hover:bg-muted/60 active:bg-muted transition-colors disabled:opacity-50"
+                          >
+                            {uploadingAppointmentPhoto ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Replace
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : canManagePhotos ? (
+                    <button
+                      type="button" onClick={() => appointmentPhotoInputRef.current?.click()} disabled={uploadingAppointmentPhoto}
+                      className="w-full h-28 flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-card active:bg-muted/50 transition-colors"
+                    >
+                      {uploadingAppointmentPhoto ? <Loader2 className="w-4 h-4 text-primary animate-spin" /> : <CalendarClock className="w-4 h-4 text-primary" />}
+                      <span className="text-xs font-medium text-muted-foreground">Upload</span>
+                    </button>
+                  ) : (
+                    <div className="w-full h-28 flex items-center justify-center rounded-xl border border-dashed border-border text-xs text-muted-foreground">Not added</div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {canReassign && (
             <Card className="shadow-card rounded-xl border-0">
@@ -487,6 +619,31 @@ export default function LeadDetail() {
                 />
               </div>
             </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Photo lightbox — near-fullscreen, dark backdrop, image contained
+          and centered; the shared DialogContent's default close button is
+          skipped in favor of a custom one that actually shows up against
+          this dark background. */}
+      <Dialog open={!!viewingPhoto} onOpenChange={(open) => !open && setViewingPhoto(null)}>
+        <DialogContent hideClose className="max-w-[96vw] sm:max-w-3xl w-full h-[85vh] sm:h-[80vh] p-0 overflow-hidden bg-black border-0 flex items-center justify-center">
+          <DialogTitle className="sr-only">{viewingPhoto?.label}</DialogTitle>
+          <button
+            type="button" onClick={() => setViewingPhoto(null)}
+            className="absolute top-3 right-3 z-10 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center backdrop-blur-sm transition-colors"
+            aria-label="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          {viewingPhoto && (
+            <>
+              <img src={viewingPhoto.url} alt={viewingPhoto.label} className="max-w-full max-h-full object-contain" />
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-white text-xs font-medium">
+                {viewingPhoto.label}
+              </div>
+            </>
           )}
         </DialogContent>
       </Dialog>

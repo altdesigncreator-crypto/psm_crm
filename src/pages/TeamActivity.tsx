@@ -12,10 +12,10 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  Activity, Calendar, ChevronLeft, ChevronRight, UserPlus, ListChecks, Footprints,
-  User as UserIcon, Phone, Eye, MapPin, Filter,
+  Activity, Calendar, ChevronLeft, ChevronRight, UserPlus, ListChecks,
+  User as UserIcon, Phone, Eye, Filter,
 } from 'lucide-react';
-import { FOLLOWUP_STATUSES, type CheckIn } from '@/types';
+import { FOLLOWUP_STATUSES } from '@/types';
 import type { Profile } from '@/types';
 import { toast } from 'sonner';
 
@@ -77,7 +77,6 @@ interface UserActivity {
   profile: Profile;
   leads: DayLead[];
   followUps: DayFollowUp[];
-  checkin: CheckIn | null;
 }
 
 export default function TeamActivity() {
@@ -94,7 +93,6 @@ export default function TeamActivity() {
   const [loading, setLoading] = useState(true);
   const [dayLeads, setDayLeads] = useState<DayLead[]>([]);
   const [dayFollowUps, setDayFollowUps] = useState<DayFollowUp[]>([]);
-  const [dayCheckins, setDayCheckins] = useState<CheckIn[]>([]);
 
   const isToday = day === todayStr();
 
@@ -107,7 +105,7 @@ export default function TeamActivity() {
       const end = new Date(start);
       end.setDate(end.getDate() + 1);
 
-      const [leadsRes, fuRes, ciRes] = await Promise.all([
+      const [leadsRes, fuRes] = await Promise.all([
         supabase.from('leads')
           .select('id, name, phone, created_at, created_by, owner_id')
           .gte('created_at', start.toISOString()).lt('created_at', end.toISOString())
@@ -116,13 +114,11 @@ export default function TeamActivity() {
           .select('id, lead_id, created_by, type, status, notes, created_at, leads(name)')
           .gte('created_at', start.toISOString()).lt('created_at', end.toISOString())
           .order('created_at', { ascending: true }),
-        supabase.from('check_ins').select('*').eq('check_in_date', day),
       ]);
       if (!active) return;
-      if (leadsRes.error || fuRes.error || ciRes.error) toast.error('Could not load the day\'s activity.');
+      if (leadsRes.error || fuRes.error) toast.error('Could not load the day\'s activity.');
       setDayLeads((leadsRes.data || []) as DayLead[]);
       setDayFollowUps((fuRes.data || []) as unknown as DayFollowUp[]);
-      setDayCheckins((ciRes.data || []) as CheckIn[]);
       setLoading(false);
     };
     load();
@@ -136,7 +132,7 @@ export default function TeamActivity() {
     for (const p of profiles) {
       if (p.status !== 'active') continue;
       if (deptFilter !== 'all' && p.department_code !== deptFilter) continue;
-      byUser.set(p.id, { profile: p, leads: [], followUps: [], checkin: null });
+      byUser.set(p.id, { profile: p, leads: [], followUps: [] });
     }
     for (const l of dayLeads) {
       const actor = l.created_by || l.owner_id;
@@ -144,9 +140,6 @@ export default function TeamActivity() {
     }
     for (const f of dayFollowUps) {
       if (f.created_by && byUser.has(f.created_by)) byUser.get(f.created_by)!.followUps.push(f);
-    }
-    for (const c of dayCheckins) {
-      if (byUser.has(c.employee_id)) byUser.get(c.employee_id)!.checkin = c;
     }
 
     // Role hierarchy order (boss → super admin → admin → manager → sale),
@@ -156,18 +149,17 @@ export default function TeamActivity() {
       const d = tierIndex(a.profile.role) - tierIndex(b.profile.role);
       return d !== 0 ? d : a.profile.name.localeCompare(b.profile.name);
     });
-  }, [profiles, deptFilter, dayLeads, dayFollowUps, dayCheckins]);
+  }, [profiles, deptFilter, dayLeads, dayFollowUps]);
 
   const visible = useMemo(() => {
     if (userFilter !== 'all') return activities.filter((a) => a.profile.id === userFilter);
     // "All staff": only show people who actually did something that day.
-    return activities.filter((a) => a.leads.length > 0 || a.followUps.length > 0 || a.checkin);
+    return activities.filter((a) => a.leads.length > 0 || a.followUps.length > 0);
   }, [activities, userFilter]);
 
   const summary = useMemo(() => ({
     leads: visible.reduce((n, a) => n + a.leads.length, 0),
     followUps: visible.reduce((n, a) => n + a.followUps.length, 0),
-    checkins: visible.filter((a) => a.checkin).length,
     activeStaff: visible.length,
   }), [visible]);
 
@@ -229,11 +221,10 @@ export default function TeamActivity() {
       </Card>
 
       {/* Summary tiles */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         {[
           { icon: UserPlus, label: 'Leads Added', value: summary.leads, tint: 'bg-primary/10 text-primary' },
           { icon: ListChecks, label: 'Follow-ups', value: summary.followUps, tint: 'bg-info/10 text-info' },
-          { icon: Footprints, label: 'Check-ins', value: summary.checkins, tint: 'bg-success/10 text-success' },
           { icon: UserIcon, label: userFilter === 'all' ? 'Active Staff' : 'Staff Shown', value: summary.activeStaff, tint: 'bg-warning/10 text-warning' },
         ].map((tile) => (
           <Card key={tile.label} className="shadow-card rounded-xl border-0">
@@ -264,7 +255,7 @@ export default function TeamActivity() {
       ) : (
         <div className="space-y-4">
           {visible.map((a) => {
-            const total = a.leads.length + a.followUps.length + (a.checkin ? 1 : 0);
+            const total = a.leads.length + a.followUps.length;
             return (
               <Card key={a.profile.id} className="shadow-card rounded-xl border-0 overflow-hidden">
                 <CardContent className="p-0">
@@ -289,16 +280,7 @@ export default function TeamActivity() {
                       </div>
                     </Link>
                     <div className="flex items-center gap-3 shrink-0 text-xs text-muted-foreground">
-                      <span className="hidden sm:inline tabular-nums">{total} activit{total === 1 ? 'y' : 'ies'}</span>
-                      {a.checkin ? (
-                        <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full ${a.checkin.is_late ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'}`}>
-                          <Footprints className="w-3 h-3" /> {a.checkin.is_late ? 'Late' : 'Checked in'} · {timeOf(a.checkin.check_in_time)}
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-full bg-destructive/10 text-destructive">
-                          <Footprints className="w-3 h-3" /> No check-in
-                        </span>
-                      )}
+                      <span className="tabular-nums">{total} activit{total === 1 ? 'y' : 'ies'}</span>
                     </div>
                   </div>
 
@@ -351,14 +333,6 @@ export default function TeamActivity() {
                       )}
                     </div>
                   </div>
-
-                  {/* Check-in note (when present) */}
-                  {a.checkin?.notes && (
-                    <div className="px-4 md:px-5 py-3 border-t border-border/50 flex items-center gap-2 text-xs text-muted-foreground">
-                      <MapPin className="w-3.5 h-3.5 shrink-0 text-success" />
-                      <span className="truncate">Check-in: {a.checkin.notes}</span>
-                    </div>
-                  )}
                 </CardContent>
               </Card>
             );

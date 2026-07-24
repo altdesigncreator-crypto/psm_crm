@@ -9,8 +9,8 @@ const PRIMED_KEY = 'psm_permissions_primed';
 /** One-time onboarding dialog shown on the first use of the web app on this
  * device. It requests camera and location access up front — from a button
  * tap, because iOS Safari and Android Chrome only show permission prompts in
- * response to a user gesture — so later check-ins don't stall on permission
- * pop-ups in the middle of the flow. */
+ * response to a user gesture — so later photo uploads and GPS tagging don't
+ * stall on permission pop-ups in the middle of the flow. */
 export default function PermissionPrimer() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -28,7 +28,7 @@ export default function PermissionPrimer() {
     setBusy(true);
 
     // Camera: open a throwaway stream just to trigger the permission prompt,
-    // then stop it immediately — the check-in flow uses the native camera app.
+    // then stop it immediately — photo uploads use the native camera app.
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       stream.getTracks().forEach((t) => t.stop());
@@ -42,7 +42,7 @@ export default function PermissionPrimer() {
       navigator.geolocation.getCurrentPosition(
         () => resolve(),
         () => {
-          toast.warning('Location access was not granted. GPS check-ins will not work until you allow it.');
+          toast.warning('Location access was not granted. GPS tagging will not work until you allow it.');
           resolve();
         },
         { timeout: 15000, maximumAge: 60000 }
@@ -62,8 +62,8 @@ export default function PermissionPrimer() {
           </div>
           <DialogTitle>Allow Camera & Location</DialogTitle>
           <DialogDescription>
-            PSM Sale CRM uses your phone camera and GPS location for daily field
-            check-ins. Granting access now means no interruptions later.
+            PSM Sale CRM uses your phone camera and GPS location for lead photos
+            and location tagging. Granting access now means no interruptions later.
           </DialogDescription>
         </DialogHeader>
 
@@ -74,7 +74,7 @@ export default function PermissionPrimer() {
             </div>
             <div>
               <p className="text-sm font-medium text-foreground">Camera</p>
-              <p className="text-xs text-muted-foreground">Take a check-in photo with your phone camera</p>
+              <p className="text-xs text-muted-foreground">Take photos with your phone camera</p>
             </div>
           </div>
           <div className="flex items-start gap-3">
@@ -83,7 +83,7 @@ export default function PermissionPrimer() {
             </div>
             <div>
               <p className="text-sm font-medium text-foreground">Location</p>
-              <p className="text-xs text-muted-foreground">Tag your check-in with your GPS position</p>
+              <p className="text-xs text-muted-foreground">Tag leads with your GPS position</p>
             </div>
           </div>
         </div>
