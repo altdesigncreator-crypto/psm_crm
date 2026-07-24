@@ -37,9 +37,28 @@ async function callMessages(body: Record<string, unknown>) {
   const token = getBannerToken();
   if (!token) throw new Error('Not logged in.');
   const { data, error } = await supabase.functions.invoke('banner-messages', { body, headers: { 'X-Banner-Token': token } });
-  if (error || data?.error) {
-    if (data?.error === 'Session expired — please log in again.') setBannerToken(null);
-    throw new Error(data?.error || error?.message || 'Request failed.');
+
+  if (error) {
+    // On a non-2xx response, supabase-js leaves `data` null and gives us
+    // only a generic "Edge Function returned a non-2xx status code" —
+    // the actual reason the function sent back (e.g. "maintenance_settings
+    // does not exist", a storage error, session expiry) is sitting unread
+    // in the raw Response on error.context. Pull it out so the real cause
+    // shows up instead of the generic message.
+    let message = error.message;
+    try {
+      const body = await (error as { context?: Response }).context?.json();
+      if (body?.error) message = body.error;
+    } catch {
+      // Response wasn't JSON (e.g. a platform-level gateway error) — keep
+      // the generic message.
+    }
+    if (message === 'Session expired — please log in again.') setBannerToken(null);
+    throw new Error(message || 'Request failed.');
+  }
+  if (data?.error) {
+    if (data.error === 'Session expired — please log in again.') setBannerToken(null);
+    throw new Error(data.error);
   }
   return data;
 }
@@ -73,20 +92,17 @@ export async function fetchMaintenanceSettings(): Promise<MaintenanceSettings | 
 }
 
 /** Saving requires the banner-admin session — maintenance_settings has no
- * client-facing write policy at all (see the edge function). `imageBase64`
- * is only sent when the admin picked a new image file. */
+ * client-facing write policy at all (see the edge function). */
 export async function saveMaintenanceSettings(patch: {
   is_enabled?: boolean;
   title?: string;
   message?: string;
-  imageBase64?: string;
 }): Promise<MaintenanceSettings> {
   const data = await callMessages({
     action: 'update_maintenance',
     is_enabled: patch.is_enabled,
     title: patch.title,
     message: patch.message,
-    image_base64: patch.imageBase64,
   });
   return data.settings as MaintenanceSettings;
 }

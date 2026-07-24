@@ -25,9 +25,6 @@ interface Payload {
   // update_maintenance only:
   is_enabled?: boolean;
   title?: string;
-  // Data URL (e.g. "data:image/png;base64,...."), sent as-is from the
-  // client's FileReader — only present when the admin picked a new image.
-  image_base64?: string;
 }
 
 /**
@@ -112,27 +109,6 @@ serve(async (req) => {
       if (payload.is_enabled !== undefined) patch.is_enabled = payload.is_enabled;
       if (payload.title !== undefined) patch.title = payload.title.trim();
       if (payload.message !== undefined) patch.message = payload.message.trim();
-
-      if (payload.image_base64) {
-        const match = payload.image_base64.match(/^data:(.+);base64,(.*)$/);
-        if (!match) return json({ error: 'Invalid image data.' }, 400);
-        const mime = match[1];
-        const ext = mime.split('/')[1] || 'jpg';
-        const binaryStr = atob(match[2]);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-
-        // Fixed filename (upsert) — this is a single-logo singleton, not a
-        // gallery, so each new upload replaces the last one rather than
-        // accumulating orphaned files in storage.
-        const path = `logo.${ext}`;
-        const { error: uploadErr } = await admin.storage.from('maintenance').upload(path, bytes, { contentType: mime, upsert: true });
-        if (uploadErr) return json({ error: uploadErr.message }, 500);
-
-        // Cache-bust: same path every time, so without this query param
-        // browsers/CDNs could keep serving the previous image.
-        patch.image_url = `${admin.storage.from('maintenance').getPublicUrl(path).data.publicUrl}?t=${Date.now()}`;
-      }
 
       const { data, error } = await admin.from('maintenance_settings').update(patch).eq('id', 1).select().single();
       if (error) return json({ error: error.message }, 500);

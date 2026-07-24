@@ -1,27 +1,16 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Megaphone, Eye, EyeOff, LogOut, Plus, Trash2, Edit2, Loader2, Info, AlertTriangle, Wrench, Siren, Camera, X } from 'lucide-react';
+import { Megaphone, Eye, EyeOff, LogOut, Plus, Trash2, Edit2, Loader2, Info, AlertTriangle, Wrench, Siren } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   getBannerToken, bannerLogin, bannerLogout, listMessages, createMessage, updateMessage, deleteMessage,
   fetchMaintenanceSettings, saveMaintenanceSettings,
 } from '@/lib/bannerAdmin';
 import { SYSTEM_MESSAGE_TYPES, type SystemMessage, type SystemMessageType, type MaintenanceSettings } from '@/types';
-
-const MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2MB — this goes over the wire as base64 JSON, not a raw upload
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
 
 const TYPE_ICON: Record<SystemMessageType, React.ComponentType<{ className?: string }>> = {
   info: Info, warning: AlertTriangle, maintenance: Wrench, critical: Siren,
@@ -149,9 +138,6 @@ function MaintenancePanel({ onSessionExpired }: { onSessionExpired: () => void }
   const [isEnabled, setIsEnabled] = useState(false);
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [pendingImageBase64, setPendingImageBase64] = useState<string | null>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     setLoading(true);
@@ -160,42 +146,17 @@ function MaintenancePanel({ onSessionExpired }: { onSessionExpired: () => void }
     setIsEnabled(data?.is_enabled ?? false);
     setTitle(data?.title || '');
     setMessage(data?.message || '');
-    setImagePreview(data?.image_url || null);
-    setPendingImageBase64(null);
     setLoading(false);
   };
 
   useEffect(() => { load(); }, []);
 
-  const handlePickImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) { toast.error('Please choose an image file.'); return; }
-    if (file.size > MAX_IMAGE_BYTES) { toast.error('Image is too large — please use one under 2MB.'); return; }
-    const dataUrl = await readFileAsDataUrl(file);
-    setPendingImageBase64(dataUrl);
-    setImagePreview(dataUrl);
-  };
-
-  const handleRemoveImage = () => {
-    setPendingImageBase64(null);
-    setImagePreview(null);
-    if (imageInputRef.current) imageInputRef.current.value = '';
-  };
-
   const handleSave = async () => {
     if (!title.trim() || !message.trim()) { toast.error('Title and message are required.'); return; }
     setSaving(true);
     try {
-      const updated = await saveMaintenanceSettings({
-        is_enabled: isEnabled,
-        title,
-        message,
-        imageBase64: pendingImageBase64 || undefined,
-      });
+      const updated = await saveMaintenanceSettings({ is_enabled: isEnabled, title, message });
       setSettings(updated);
-      setPendingImageBase64(null);
-      setImagePreview(updated.image_url);
       toast.success(isEnabled ? 'Maintenance mode is now ON — the site is blocked for everyone.' : 'Maintenance settings saved.');
     } catch (err: any) {
       toast.error(err?.message || 'Could not save maintenance settings.');
@@ -206,7 +167,7 @@ function MaintenancePanel({ onSessionExpired }: { onSessionExpired: () => void }
   };
 
   const dirty = settings
-    ? isEnabled !== settings.is_enabled || title !== settings.title || message !== settings.message || pendingImageBase64 !== null
+    ? isEnabled !== settings.is_enabled || title !== settings.title || message !== settings.message
     : true;
 
   return (
@@ -239,24 +200,6 @@ function MaintenancePanel({ onSessionExpired }: { onSessionExpired: () => void }
               <span>While this is on, nobody can sign in or use the app — only this admin page stays reachable.</span>
             </div>
           )}
-
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium text-muted-foreground">Logo / Image (optional)</Label>
-            <div className="flex items-center gap-3">
-              <div className="w-16 h-16 rounded-xl border border-border bg-muted/30 flex items-center justify-center overflow-hidden shrink-0">
-                {imagePreview ? <img src={imagePreview} alt="" className="w-full h-full object-contain" /> : <Wrench className="w-6 h-6 text-muted-foreground/50" />}
-              </div>
-              <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handlePickImage} />
-              <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => imageInputRef.current?.click()}>
-                <Camera className="w-3.5 h-3.5" /> {imagePreview ? 'Change' : 'Upload'}
-              </Button>
-              {imagePreview && (
-                <Button type="button" variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" onClick={handleRemoveImage}>
-                  <X className="w-3.5 h-3.5" /> Remove
-                </Button>
-              )}
-            </div>
-          </div>
 
           <div className="space-y-1.5">
             <Label className="text-xs font-medium text-muted-foreground">Title</Label>
