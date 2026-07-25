@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -10,12 +11,17 @@ import {
   ArrowLeft, User, Phone, Mail, MapPin, Building2, DollarSign, Target, Calendar,
   TrendingUp, MessageSquare, Navigation, Clock, FileText, Loader2,
   Plus, AlertTriangle, ArrowRightLeft, History, Trash2, Camera, CalendarClock, X, Eye, RefreshCw,
+  Edit2, Check,
 } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { FOLLOWUP_TYPES, FOLLOWUP_STATUSES, LEAD_STAGES, WARNING_REASONS, getGradeForFollowUpStatus, type Lead, type FollowUp, type Warning as WarningRecord } from '@/types';
+import {
+  FOLLOWUP_TYPES, FOLLOWUP_STATUSES, LEAD_STAGES, WARNING_REASONS, getGradeForFollowUpStatus,
+  INTEREST_TYPES, PROPERTY_TYPES, PURPOSES, LEAD_SOURCES,
+  type Lead, type FollowUp, type Warning as WarningRecord,
+} from '@/types';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
 import { useStatusColors } from '@/hooks/useStatusColors';
@@ -38,6 +44,18 @@ function DetailRow({ label, value, icon }: DetailRowProps) {
       <div className="min-w-0">
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{label}</p>
         <p className="text-sm font-medium text-foreground mt-0.5 break-words">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function EditField({ label, icon, children }: { label: string; icon?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-3 py-2">
+      {icon && <div className="mt-2.5 text-muted-foreground shrink-0">{icon}</div>}
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">{label}</p>
+        {children}
       </div>
     </div>
   );
@@ -67,6 +85,14 @@ export default function LeadDetail() {
   const [reassignTo, setReassignTo] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  const [editMode, setEditMode] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: '', phone: '', email: '', current_location: '',
+    interest_type: '', property_type: '', preferred_project: '', budget_range: '',
+    purpose: '', lead_source: '', remarks: '',
+  });
 
   const [uploadingVisitPhoto, setUploadingVisitPhoto] = useState(false);
   const visitPhotoInputRef = useRef<HTMLInputElement>(null);
@@ -135,6 +161,41 @@ export default function LeadDetail() {
   // lead.status the way `editable` is, since attaching a visit/appointment
   // photo (evidence, not lead data) is still meaningful after a sale closes.
   const canManagePhotos = canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id }) || lead.created_by === user?.id;
+
+  const startEdit = () => {
+    setEditForm({
+      name: lead.name || '', phone: lead.phone || '', email: lead.email || '', current_location: lead.current_location || '',
+      interest_type: lead.interest_type || '', property_type: lead.property_type || '', preferred_project: lead.preferred_project || '', budget_range: lead.budget_range || '',
+      purpose: lead.purpose || '', lead_source: lead.lead_source || '', remarks: lead.remarks || '',
+    });
+    setEditMode(true);
+  };
+
+  const handleCancelEdit = () => setEditMode(false);
+
+  const handleSaveEdit = async () => {
+    if (!editForm.name.trim() || !editForm.phone.trim()) { toast.error('Name and phone are required.'); return; }
+    setSavingEdit(true);
+    const patch = {
+      name: editForm.name.trim(),
+      phone: editForm.phone.trim(),
+      email: editForm.email.trim() || null,
+      current_location: editForm.current_location.trim() || null,
+      interest_type: editForm.interest_type || null,
+      property_type: editForm.property_type || null,
+      preferred_project: editForm.preferred_project.trim() || null,
+      budget_range: editForm.budget_range.trim() || null,
+      purpose: editForm.purpose || null,
+      lead_source: editForm.lead_source || null,
+      remarks: editForm.remarks.trim() || null,
+    };
+    const { error } = await supabase.from('leads').update(patch).eq('id', lead.id);
+    setSavingEdit(false);
+    if (error) { toast.error('Could not save changes.'); return; }
+    setLead((prev) => (prev ? { ...prev, ...patch } : prev));
+    setEditMode(false);
+    toast.success('Lead updated.');
+  };
 
   const handleDeleteLead = async () => {
     setDeleting(true);
@@ -256,6 +317,22 @@ export default function LeadDetail() {
           ) : (
             <StatusBadge status={stageLabel(lead.status)} color={statusColors[lead.status] || '#8FA3BF'} className="px-4 py-1.5 text-sm font-semibold" />
           )}
+          {editable && (
+            editMode ? (
+              <>
+                <Button variant="outline" size="icon" onClick={handleCancelEdit} disabled={savingEdit} className="h-9 w-9 shrink-0" aria-label="Cancel edit">
+                  <X className="w-4 h-4" />
+                </Button>
+                <Button size="icon" onClick={handleSaveEdit} disabled={savingEdit} className="h-9 w-9 shrink-0" aria-label="Save changes">
+                  {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                </Button>
+              </>
+            ) : (
+              <Button variant="outline" size="icon" onClick={startEdit} className="h-9 w-9 shrink-0" aria-label="Edit lead">
+                <Edit2 className="w-4 h-4" />
+              </Button>
+            )
+          )}
           {canDelete && (
             <Button variant="outline" size="icon" onClick={() => setDeleteOpen(true)} className="h-9 w-9 shrink-0 border-destructive/30 text-destructive hover:bg-destructive/5 hover:text-destructive" aria-label="Delete lead">
               <Trash2 className="w-4 h-4" />
@@ -313,13 +390,33 @@ export default function LeadDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0 space-y-1">
-              <DetailRow label="Customer Name" value={lead.name} icon={<User className="w-4 h-4" />} />
-              <DetailRow label="Phone" value={lead.phone} icon={<Phone className="w-4 h-4" />} />
-              <DetailRow label="Email" value={lead.email} icon={<Mail className="w-4 h-4" />} />
-              <DetailRow label="Current Location" value={lead.current_location} icon={<MapPin className="w-4 h-4" />} />
-              <DetailRow label="Created" value={createdDate} icon={<Clock className="w-4 h-4" />} />
-              {lead.lead_grade_reason && (
-                <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-2 py-1.5">{lead.lead_grade_reason}</p>
+              {editMode ? (
+                <>
+                  <EditField label="Customer Name" icon={<User className="w-4 h-4" />}>
+                    <Input value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} className="h-10" />
+                  </EditField>
+                  <EditField label="Phone" icon={<Phone className="w-4 h-4" />}>
+                    <Input type="tel" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} className="h-10" />
+                  </EditField>
+                  <EditField label="Email" icon={<Mail className="w-4 h-4" />}>
+                    <Input type="email" value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} className="h-10" />
+                  </EditField>
+                  <EditField label="Current Location" icon={<MapPin className="w-4 h-4" />}>
+                    <Input value={editForm.current_location} onChange={(e) => setEditForm((f) => ({ ...f, current_location: e.target.value }))} className="h-10" />
+                  </EditField>
+                  <DetailRow label="Created" value={createdDate} icon={<Clock className="w-4 h-4" />} />
+                </>
+              ) : (
+                <>
+                  <DetailRow label="Customer Name" value={lead.name} icon={<User className="w-4 h-4" />} />
+                  <DetailRow label="Phone" value={lead.phone} icon={<Phone className="w-4 h-4" />} />
+                  <DetailRow label="Email" value={lead.email} icon={<Mail className="w-4 h-4" />} />
+                  <DetailRow label="Current Location" value={lead.current_location} icon={<MapPin className="w-4 h-4" />} />
+                  <DetailRow label="Created" value={createdDate} icon={<Clock className="w-4 h-4" />} />
+                  {lead.lead_grade_reason && (
+                    <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-2 py-1.5">{lead.lead_grade_reason}</p>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
@@ -480,24 +577,67 @@ export default function LeadDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
-                <DetailRow label="Interest" value={lead.interest_type} icon={<TrendingUp className="w-4 h-4" />} />
-                <DetailRow label="Property Type" value={lead.property_type} icon={<Building2 className="w-4 h-4" />} />
-                <DetailRow label="Preferred Project" value={lead.preferred_project} icon={<Building2 className="w-4 h-4" />} />
-                <DetailRow label="Budget" value={lead.budget_range} icon={<DollarSign className="w-4 h-4" />} />
-                <DetailRow label="Purpose" value={lead.purpose} icon={<Target className="w-4 h-4" />} />
-                <DetailRow label="Source" value={lead.lead_source} icon={<TrendingUp className="w-4 h-4" />} />
-              </div>
-              {lead.remarks && (
+              {editMode ? (
                 <>
-                  <Separator className="my-3" />
-                  <div className="flex items-start gap-3 py-1">
-                    <MessageSquare className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Remarks</p>
-                      <p className="text-sm font-medium text-foreground mt-1 break-words leading-relaxed">{lead.remarks}</p>
-                    </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+                    <EditField label="Interest" icon={<TrendingUp className="w-4 h-4" />}>
+                      <Select value={editForm.interest_type} onValueChange={(v) => setEditForm((f) => ({ ...f, interest_type: v }))}>
+                        <SelectTrigger className="h-10"><SelectValue placeholder="Select interest" /></SelectTrigger>
+                        <SelectContent>{INTEREST_TYPES.map((t) => (<SelectItem key={t} value={t}>{t}</SelectItem>))}</SelectContent>
+                      </Select>
+                    </EditField>
+                    <EditField label="Property Type" icon={<Building2 className="w-4 h-4" />}>
+                      <Select value={editForm.property_type} onValueChange={(v) => setEditForm((f) => ({ ...f, property_type: v }))}>
+                        <SelectTrigger className="h-10"><SelectValue placeholder="Select property type" /></SelectTrigger>
+                        <SelectContent>{PROPERTY_TYPES.map((t) => (<SelectItem key={t} value={t}>{t}</SelectItem>))}</SelectContent>
+                      </Select>
+                    </EditField>
+                    <EditField label="Preferred Project" icon={<Building2 className="w-4 h-4" />}>
+                      <Input value={editForm.preferred_project} onChange={(e) => setEditForm((f) => ({ ...f, preferred_project: e.target.value }))} className="h-10" />
+                    </EditField>
+                    <EditField label="Budget" icon={<DollarSign className="w-4 h-4" />}>
+                      <Input value={editForm.budget_range} onChange={(e) => setEditForm((f) => ({ ...f, budget_range: e.target.value }))} className="h-10" />
+                    </EditField>
+                    <EditField label="Purpose" icon={<Target className="w-4 h-4" />}>
+                      <Select value={editForm.purpose} onValueChange={(v) => setEditForm((f) => ({ ...f, purpose: v }))}>
+                        <SelectTrigger className="h-10"><SelectValue placeholder="Select purpose" /></SelectTrigger>
+                        <SelectContent>{PURPOSES.map((p) => (<SelectItem key={p} value={p}>{p}</SelectItem>))}</SelectContent>
+                      </Select>
+                    </EditField>
+                    <EditField label="Source" icon={<TrendingUp className="w-4 h-4" />}>
+                      <Select value={editForm.lead_source} onValueChange={(v) => setEditForm((f) => ({ ...f, lead_source: v }))}>
+                        <SelectTrigger className="h-10"><SelectValue placeholder="Select source" /></SelectTrigger>
+                        <SelectContent>{LEAD_SOURCES.map((s) => (<SelectItem key={s} value={s}>{s}</SelectItem>))}</SelectContent>
+                      </Select>
+                    </EditField>
                   </div>
+                  <Separator className="my-3" />
+                  <EditField label="Remarks" icon={<MessageSquare className="w-4 h-4" />}>
+                    <Textarea value={editForm.remarks} onChange={(e) => setEditForm((f) => ({ ...f, remarks: e.target.value }))} className="min-h-[80px]" placeholder="Additional remarks…" />
+                  </EditField>
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+                    <DetailRow label="Interest" value={lead.interest_type} icon={<TrendingUp className="w-4 h-4" />} />
+                    <DetailRow label="Property Type" value={lead.property_type} icon={<Building2 className="w-4 h-4" />} />
+                    <DetailRow label="Preferred Project" value={lead.preferred_project} icon={<Building2 className="w-4 h-4" />} />
+                    <DetailRow label="Budget" value={lead.budget_range} icon={<DollarSign className="w-4 h-4" />} />
+                    <DetailRow label="Purpose" value={lead.purpose} icon={<Target className="w-4 h-4" />} />
+                    <DetailRow label="Source" value={lead.lead_source} icon={<TrendingUp className="w-4 h-4" />} />
+                  </div>
+                  {lead.remarks && (
+                    <>
+                      <Separator className="my-3" />
+                      <div className="flex items-start gap-3 py-1">
+                        <MessageSquare className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Remarks</p>
+                          <p className="text-sm font-medium text-foreground mt-1 break-words leading-relaxed">{lead.remarks}</p>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </>
               )}
             </CardContent>

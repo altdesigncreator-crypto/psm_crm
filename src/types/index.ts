@@ -227,7 +227,7 @@ export const LEAD_GRADES: { value: LeadGrade; label: string }[] = [
 ];
 
 export const INTEREST_TYPES = ['ဝယ်ရန်', 'ငှားရန်', 'ရောင်းရန်'];
-export const PROPERTY_TYPES = ['ကွန်ဒို', 'လုံးချင်း', 'တိုက်ခန်း', 'မြေကွက်'];
+export const PROPERTY_TYPES = ['ကွန်ဒို', 'လုံးချင်း', 'တိုက်ခန်း', 'မြေကွက်', 'Commercial Area', 'Hotel'];
 export const BUDGET_RANGES = ['သိန်း ၁၀၀၀ အောက်', 'သိန်း ၁၀၀၀ မှ ၃၀၀၀ ကြား', 'သိန်း ၃၀၀၀ မှ ၅၀၀၀ ကြား', 'သိန်း ၅၀၀၀ မှ ၁၀၀၀၀ ကြား', 'သိန်း ၁၀၀၀၀ အထက်'];
 export const PURPOSES = ['ကိုယ်တိုင်နေထိုင်ရန်', 'ရင်းနှီးမြှုပ်နှံရန်', 'စီးပွားရေး'];
-export const LEAD_SOURCES = ['Facebook', 'TikTok', 'YouTube', 'Instagram', 'Boss Content', 'Admin Content'];
+export const LEAD_SOURCES = ['Facebook', 'TikTok', 'YouTube', 'Instagram', 'Boss Content', 'Admin Content', 'Hotline', 'Walk-in', 'Agent', 'Freelance', 'Open House Inquiry'];
