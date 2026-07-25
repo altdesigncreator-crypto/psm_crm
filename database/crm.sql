@@ -568,6 +568,34 @@ drop trigger if exists trg_profiles_updated_at on public.profiles;
 create trigger trg_profiles_updated_at before update on public.profiles
   for each row execute function public.set_updated_at();
 
+-- When a manager or salesperson's own department changes, every lead they
+-- currently own follows them to the new department — otherwise those leads
+-- are stranded under a department their owner has left, which both hides
+-- them from the new department's admin and blocks the old department from
+-- ever being deleted (its leads FK still references it). team_id is cleared
+-- rather than guessed, since a team belongs to exactly one department
+-- (enforce_lead_team_department) and there's no way to know which of the
+-- new department's teams, if any, the lead should be re-filed under — it's
+-- left for the owner/admin to re-assign from the lead's own page. Skipped
+-- entirely when the new department is null (e.g. promoting someone to an
+-- exec role) — their existing leads have no reason to move in that case.
+create or replace function public.cascade_profile_department_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.department_code is distinct from old.department_code and new.department_code is not null then
+    update public.leads
+      set department_code = new.department_code, team_id = null
+      where owner_id = new.id
+        and department_code is distinct from new.department_code;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_profiles_cascade_department on public.profiles;
+create trigger trg_profiles_cascade_department after update of department_code on public.profiles
+  for each row execute function public.cascade_profile_department_change();
+
 -- =============================================================================
 -- 9. TRIGGERS — lead assignment history + pipeline history (auto-logged,
 --    so the history is correct regardless of which UI path changed the row)
@@ -1462,6 +1490,22 @@ begin
     on conflict do nothing;
   end loop;
 end $$;
+
+-- One-time backfill for existing data drift: before
+-- trg_profiles_cascade_department existed, moving a manager or salesperson
+-- to a different department never moved their leads with them, stranding
+-- those leads under the department they'd left — which both hides them
+-- from the new department's admin and blocks the old department from ever
+-- being deleted (its leads still reference it). This fixes every lead
+-- already out of sync with its current owner's department, same rule the
+-- trigger now enforces going forward. Safe to re-run: only touches rows
+-- that are actually mismatched.
+update public.leads l
+set department_code = p.department_code, team_id = null
+from public.profiles p
+where l.owner_id = p.id
+  and p.department_code is not null
+  and l.department_code is distinct from p.department_code;
 
 -- =============================================================================
 -- 16. SYSTEM BANNER — standalone maintenance/announcement board
