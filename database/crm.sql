@@ -192,6 +192,31 @@ drop trigger if exists trg_teams_manager_rules on public.teams;
 create trigger trg_teams_manager_rules before insert or update of manager_id, department_code on public.teams
   for each row execute function public.enforce_team_manager_rules();
 
+-- When a manager is assigned to run a team (on team creation, or by
+-- reassignment), any lead they personally own that's sitting unfiled
+-- (team_id null) in that team's department gets filed under it — otherwise
+-- it stays invisible to team-scoped leads_select forever, since a manager
+-- only ever sees leads with a team_id they run. enforce_team_manager_rules
+-- above already guarantees the manager's own department matches the team's,
+-- so no separate department check is needed here.
+create or replace function public.cascade_team_manager_assign() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.manager_id is not null and (tg_op = 'INSERT' or new.manager_id is distinct from old.manager_id) then
+    update public.leads
+      set team_id = new.id
+      where owner_id = new.manager_id
+        and team_id is null
+        and department_code = new.department_code;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_teams_cascade_manager on public.teams;
+create trigger trg_teams_cascade_manager after insert or update of manager_id on public.teams
+  for each row execute function public.cascade_team_manager_assign();
+
 create or replace function public.enforce_team_member_rules() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
@@ -214,6 +239,34 @@ $$;
 drop trigger if exists trg_team_members_rules on public.team_members;
 create trigger trg_team_members_rules before insert on public.team_members
   for each row execute function public.enforce_team_member_rules();
+
+-- When a salesperson joins a team, any lead they already own that's sitting
+-- unfiled (team_id null) — most commonly because their department changed
+-- moments earlier via cascade_profile_department_change, which clears
+-- team_id since it can't guess the right team — gets filed under their new
+-- team, so its manager can actually see it. A lead already filed under a
+-- different team is left alone: team membership is additive (a salesperson
+-- can be on more than one team), and an explicitly-chosen team assignment
+-- is never silently overridden. enforce_team_member_rules above already
+-- guarantees the salesperson's department matches the team's.
+create or replace function public.cascade_team_member_join() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_dept text;
+begin
+  select department_code into v_dept from public.teams where id = new.team_id;
+  update public.leads
+    set team_id = new.team_id
+    where owner_id = new.sale_person_id
+      and team_id is null
+      and department_code = v_dept;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_team_members_cascade_join on public.team_members;
+create trigger trg_team_members_cascade_join after insert on public.team_members
+  for each row execute function public.cascade_team_member_join();
 
 -- =============================================================================
 -- 3. LEADS + ASSIGNMENT HISTORY
@@ -1506,6 +1559,41 @@ from public.profiles p
 where l.owner_id = p.id
   and p.department_code is not null
   and l.department_code is distinct from p.department_code;
+
+-- One-time backfill, same idea, for team membership: files every still-
+-- unfiled (team_id null) lead under its owner's team, for owners who were
+-- already on a team before trg_team_members_cascade_join/
+-- trg_teams_cascade_manager existed. If an owner is on more than one team
+-- in their department, their most-recently-joined one wins — a person can
+-- only ever be on teams inside their own single department (enforced by
+-- enforce_team_member_rules), so this is never actually ambiguous across
+-- departments, only which of several same-department teams to prefer.
+-- Safe to re-run: only touches rows that are actually unfiled.
+with latest_membership as (
+  select distinct on (tm.sale_person_id) tm.sale_person_id, tm.team_id, t.department_code
+  from public.team_members tm
+  join public.teams t on t.id = tm.team_id
+  order by tm.sale_person_id, tm.added_at desc
+)
+update public.leads l
+set team_id = m.team_id
+from latest_membership m
+where l.owner_id = m.sale_person_id
+  and l.team_id is null
+  and l.department_code = m.department_code;
+
+with latest_managed_team as (
+  select distinct on (manager_id) manager_id, id as team_id, department_code
+  from public.teams
+  where manager_id is not null
+  order by manager_id, created_at desc
+)
+update public.leads l
+set team_id = m.team_id
+from latest_managed_team m
+where l.owner_id = m.manager_id
+  and l.team_id is null
+  and l.department_code = m.department_code;
 
 -- =============================================================================
 -- 16. SYSTEM BANNER — standalone maintenance/announcement board
