@@ -13,7 +13,8 @@ import {
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetClose,
 } from '@/components/ui/sheet';
-import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode, Trash2, CheckCircle2, XCircle, ListPlus } from 'lucide-react';
+import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode, Trash2, CheckCircle2, XCircle, ListPlus, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckSquare, Square } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { LEAD_STAGES, type Lead } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -37,9 +38,39 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { exportAsCSV, exportAsExcel, exportAsPDF, exportAsHTML } from '@/lib/exportUtils';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 function stageLabel(status: string) {
   return LEAD_STAGES.find((s) => s.value === status)?.label || status;
+}
+
+// Lives inside the undo toast itself (sonner keeps this element mounted for
+// the toast's whole lifetime), ticking its own countdown independent of
+// Leads' re-renders. Turns urgent — red + pulsing — for the last 5s.
+function BulkDeleteUndoToast({ count }: { count: number }) {
+  const [secondsLeft, setSecondsLeft] = useState(10);
+  useEffect(() => {
+    const interval = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(interval);
+  }, []);
+  const urgent = secondsLeft <= 5;
+
+  return (
+    <div className="flex items-center gap-3">
+      <div
+        className={cn(
+          'flex items-center justify-center w-8 h-8 shrink-0 rounded-full text-sm font-bold tabular-nums transition-colors duration-300',
+          urgent ? 'bg-destructive/15 text-destructive animate-pulse' : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+        )}
+      >
+        {secondsLeft}
+      </div>
+      <div className="min-w-0">
+        <p className="font-medium leading-tight">{count} lead{count === 1 ? '' : 's'} deleted</p>
+        <p className="text-xs text-muted-foreground leading-tight">Undo before this disappears</p>
+      </div>
+    </div>
+  );
 }
 
 function initialsOf(name: string) {
@@ -114,6 +145,7 @@ export default function Leads() {
 
   const importFileRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
+  const leadsCardRef = useRef<HTMLDivElement>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -121,6 +153,26 @@ export default function Leads() {
   const [deptFilter, setDeptFilter] = useState('all');
   const [teamFilter, setTeamFilter] = useState('all');
   const [agentFilter, setAgentFilter] = useState('all');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'followup' | 'grade'>('newest');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  // Bulk select/delete — Super Admin only, deliberately narrower than
+  // isExec()/canDeleteLead() (which would also allow Boss): this is a much
+  // more powerful, harder-to-undo action than the existing per-row delete,
+  // so it's scoped to exactly the one tier that was asked for.
+  const isSuperAdmin = role === 'super_admin';
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeletePassword, setBulkDeletePassword] = useState('');
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  // A confirmed bulk delete doesn't hit the DB right away — it's held for a
+  // 10s undo window (toast at top-right) and hidden from the list
+  // optimistically in the meantime. Tracked as a list of batches (not one
+  // flat id set) so starting a second bulk delete while an earlier one is
+  // still undoable doesn't clobber it.
+  const [pendingBulkDeletes, setPendingBulkDeletes] = useState<{ id: string; leads: Lead[] }[]>([]);
+  const pendingDeleteTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
     let active = true;
@@ -147,9 +199,18 @@ export default function Leads() {
     };
   }, []);
 
+  // Ids currently in the 10s undo window — hidden from the list as soon as
+  // a bulk delete is confirmed, before the actual DB delete ever runs.
+  const pendingDeleteIdSet = useMemo(
+    () => new Set(pendingBulkDeletes.flatMap((b) => b.leads.map((l) => l.id))),
+    [pendingBulkDeletes]
+  );
+
   const leads: Lead[] = useMemo(
-    () => rawLeads.map((l) => ({ ...l, owner_name: nameOf(l.owner_id) })),
-    [rawLeads, nameOf]
+    () => rawLeads
+      .filter((l) => !pendingDeleteIdSet.has(l.id))
+      .map((l) => ({ ...l, owner_name: nameOf(l.owner_id) })),
+    [rawLeads, nameOf, pendingDeleteIdSet]
   );
 
   const uniqueAgents = useMemo(
@@ -194,6 +255,73 @@ export default function Leads() {
     });
   }, [leads, searchQuery, statusFilter, projectFilter, deptFilter, teamFilter, teamMemberIds, teamManagerId, agentFilter]);
 
+  const sortedLeads = useMemo(() => {
+    const arr = [...filteredLeads];
+    switch (sortBy) {
+      case 'oldest':
+        arr.sort((a, b) => a.created_at.localeCompare(b.created_at));
+        break;
+      case 'name':
+        arr.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        break;
+      case 'followup':
+        // Leads with no scheduled follow-up sort to the end, not the top —
+        // "nothing due" shouldn't outrank "due soon".
+        arr.sort((a, b) => {
+          if (!a.next_follow_up_at && !b.next_follow_up_at) return 0;
+          if (!a.next_follow_up_at) return 1;
+          if (!b.next_follow_up_at) return -1;
+          return a.next_follow_up_at.localeCompare(b.next_follow_up_at);
+        });
+        break;
+      case 'grade': {
+        const rank: Record<string, number> = { A: 0, B: 1, C: 2 };
+        arr.sort((a, b) => (rank[a.lead_grade || ''] ?? 3) - (rank[b.lead_grade || ''] ?? 3));
+        break;
+      }
+      case 'newest':
+      default:
+        arr.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    }
+    return arr;
+  }, [filteredLeads, sortBy]);
+
+  // A fresh filter/sort/page-size choice always starts back at page 1 — a
+  // stale page number from before would otherwise show a confusingly
+  // unrelated (or blank) slice of the new result set. Bulk selection is
+  // cleared for the same reason: it's scoped to "leads matching the current
+  // filter" (see the bulk-delete rule below), so carrying a selection over
+  // into a different filter view would be both confusing and risky.
+  useEffect(() => {
+    setPage(1);
+    setSelectedIds(new Set());
+  }, [searchQuery, statusFilter, projectFilter, deptFilter, teamFilter, agentFilter, sortBy, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedLeads.length / pageSize));
+
+  // Realtime updates can shrink the result set out from under whatever page
+  // someone's currently viewing (e.g. another user deletes a lead) — snap
+  // back to the last valid page instead of rendering an empty one.
+  useEffect(() => {
+    setPage((p) => Math.min(p, totalPages));
+  }, [totalPages]);
+
+  const pagedLeads = useMemo(
+    () => sortedLeads.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize),
+    [sortedLeads, page, pageSize]
+  );
+
+  // The page/card list has no scroll container of its own — the whole page
+  // scrolls (see AppLayout's <main>) — so switching pages while scrolled
+  // deep into a long list would otherwise leave the new page's rows exactly
+  // where the old ones were, off-screen. Skips the very first render so
+  // landing on the page doesn't jump-scroll on its own.
+  const isFirstPageRenderRef = useRef(true);
+  useEffect(() => {
+    if (isFirstPageRenderRef.current) { isFirstPageRenderRef.current = false; return; }
+    leadsCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [page]);
+
   const openMap = (lead: Lead) => {
     setSelectedLead(lead);
     setMapOpen(true);
@@ -220,6 +348,98 @@ export default function Leads() {
     } finally {
       setDeleting(false);
       setDeleteTarget(null);
+    }
+  };
+
+  const toggleSelectLead = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  // Selects/deselects every lead in the current *filtered* set — not just
+  // the current page — so "Select All" plus "Delete Selected" together
+  // always act on exactly what the active filters show, never on leads
+  // outside the current view.
+  const allFilteredSelected = sortedLeads.length > 0 && sortedLeads.every((l) => selectedIds.has(l.id));
+  const toggleSelectAll = () => {
+    setSelectedIds(allFilteredSelected ? new Set() : new Set(sortedLeads.map((l) => l.id)));
+  };
+
+  // Actually commits one undo-window batch to the DB — fires 10s after
+  // confirmation unless cancelled first via undoBulkDelete.
+  const commitBulkDelete = async (batchId: string, targets: Lead[]) => {
+    pendingDeleteTimersRef.current.delete(batchId);
+    try {
+      const ids = targets.map((l) => l.id);
+      const { error } = await supabase.from('leads').delete().in('id', ids);
+      if (error) throw error;
+
+      await supabase.from('audit_logs').insert(
+        targets.map((l) => ({
+          action: 'lead_deleted',
+          target_table: 'leads',
+          target_id: l.id,
+          performed_by: user?.id,
+          old_value: { name: l.name, phone: l.phone, owner_id: l.owner_id },
+        }))
+      );
+    } catch {
+      toast.error('Could not delete the selected leads.');
+    } finally {
+      // Either the realtime reload already dropped these rows (success), or
+      // it failed and they need to reappear instead of staying hidden
+      // forever — both cases mean the optimistic hide should end now.
+      setPendingBulkDeletes((prev) => prev.filter((b) => b.id !== batchId));
+    }
+  };
+
+  const undoBulkDelete = (batchId: string, count: number) => {
+    const timer = pendingDeleteTimersRef.current.get(batchId);
+    if (timer) {
+      clearTimeout(timer);
+      pendingDeleteTimersRef.current.delete(batchId);
+    }
+    setPendingBulkDeletes((prev) => prev.filter((b) => b.id !== batchId));
+    toast.success(`Restored ${count} lead${count === 1 ? '' : 's'}.`, { position: 'top-right' });
+  };
+
+  const handleBulkDelete = async () => {
+    if (!user?.email || !bulkDeletePassword) return;
+    setBulkDeleting(true);
+    try {
+      // Re-authenticating with the typed password IS the confirmation check
+      // — same pattern Settings.tsx uses for deleting one's own account.
+      // signInWithPassword doesn't disturb the current session either way.
+      const { error: verifyErr } = await supabase.auth.signInWithPassword({ email: user.email, password: bulkDeletePassword });
+      if (verifyErr) { toast.error('Password is incorrect.'); return; }
+
+      const targets = sortedLeads.filter((l) => selectedIds.has(l.id));
+      if (targets.length === 0) return;
+      const batchId = crypto.randomUUID();
+
+      // Hide immediately (optimistic) and close the confirm dialog — the
+      // actual delete is scheduled, not run yet, so it can still be undone.
+      setPendingBulkDeletes((prev) => [...prev, { id: batchId, leads: targets }]);
+      setSelectedIds(new Set());
+      setBulkDeleteOpen(false);
+      setBulkDeletePassword('');
+
+      const timer = setTimeout(() => commitBulkDelete(batchId, targets), 10_000);
+      pendingDeleteTimersRef.current.set(batchId, timer);
+
+      toast(<BulkDeleteUndoToast count={targets.length} />, {
+        position: 'top-right',
+        duration: 10_000,
+        closeButton: true,
+        action: { label: 'Undo', onClick: () => undoBulkDelete(batchId, targets.length) },
+      });
+    } catch {
+      toast.error('Could not delete the selected leads.');
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -315,8 +535,30 @@ export default function Leads() {
           <h1 className="text-xl md:text-2xl font-semibold text-foreground">{t('leads.title')}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t('leads.subtitle')}</p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center flex-wrap justify-end gap-2 shrink-0">
           <input ref={importFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} className="hidden" />
+          {isSuperAdmin && filteredLeads.length > 0 && (
+            <>
+              <Button
+                variant="outline"
+                onClick={toggleSelectAll}
+                className="h-11 md:h-12 gap-2 active:scale-[0.98] transition-transform"
+              >
+                {allFilteredSelected ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4" />}
+                <span className="hidden sm:inline">{allFilteredSelected ? 'Deselect All' : 'Select All'}</span>
+              </Button>
+              {selectedIds.size > 0 && (
+                <Button
+                  variant="destructive"
+                  onClick={() => setBulkDeleteOpen(true)}
+                  className="h-11 md:h-12 gap-2 active:scale-[0.98] transition-transform"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete Selected ({selectedIds.size})
+                </Button>
+              )}
+            </>
+          )}
           {isManagerOrAbove(role) && (
             <Button variant="outline" disabled={importing} onClick={() => importFileRef.current?.click()} className="h-11 md:h-12 gap-2 active:scale-[0.98] transition-transform">
               {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
@@ -419,6 +661,7 @@ export default function Leads() {
                       deptFilter={deptFilter} setDeptFilter={setDeptFilter}
                       teamFilter={teamFilter} setTeamFilter={setTeamFilter}
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
+                      sortBy={sortBy} setSortBy={setSortBy}
                       leads={leads} uniqueAgents={uniqueAgents} departments={departments} teamOptions={teamOptions}
                       showDept={showDeptFilter}
                     />
@@ -490,6 +733,19 @@ export default function Leads() {
                   {uniqueAgents.map((a) => (<SelectItem key={a} value={a}>{a}</SelectItem>))}
                 </SelectContent>
               </Select>
+              <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+                <SelectTrigger className="w-[170px] h-11">
+                  <ArrowUpDown className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
+                  <SelectValue placeholder="Sort" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest first</SelectItem>
+                  <SelectItem value="oldest">Oldest first</SelectItem>
+                  <SelectItem value="name">Name (A–Z)</SelectItem>
+                  <SelectItem value="followup">Next follow-up</SelectItem>
+                  <SelectItem value="grade">Grade (A–C)</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="md:hidden flex flex-wrap gap-2">
@@ -518,7 +774,7 @@ export default function Leads() {
       </Card>
 
       {/* Mobile: Card List | Desktop: Table */}
-      <Card className="shadow-card rounded-xl border-0 overflow-hidden">
+      <Card ref={leadsCardRef} className="shadow-card rounded-xl border-0 overflow-hidden">
         <CardHeader className="px-6 py-4 border-b border-border/40 bg-muted/10">
           <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground/90">
             <FileText className="w-4 h-4 text-muted-foreground/80" />
@@ -545,7 +801,12 @@ export default function Leads() {
                   <Table>
                     <TableHeader>
                       <TableRow className="hover:bg-transparent bg-muted/30">
-                        <TableHead className={`${TH_STYLE} pl-5`}>Customer</TableHead>
+                        {isSuperAdmin && (
+                          <TableHead className={`${TH_STYLE} pl-5 w-10`}>
+                            <Checkbox checked={allFilteredSelected} onCheckedChange={toggleSelectAll} aria-label="Select all leads" />
+                          </TableHead>
+                        )}
+                        <TableHead className={`${TH_STYLE} ${isSuperAdmin ? 'pl-3' : 'pl-5'}`}>Customer</TableHead>
                         <TableHead className={TH_STYLE}>Project / Budget</TableHead>
                         <TableHead className={TH_STYLE}>Grade</TableHead>
                         <TableHead className={TH_STYLE}>Status</TableHead>
@@ -555,9 +816,14 @@ export default function Leads() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredLeads.map((lead) => (
+                      {pagedLeads.map((lead) => (
                         <TableRow key={lead.id} className="table-row-interactive table-row-zebra cursor-pointer border-border/40" onClick={() => navigate(`/lead/${lead.id}`)}>
-                          <TableCell className="pl-5 pr-4 py-2.5">
+                          {isSuperAdmin && (
+                            <TableCell className="pl-5 pr-0 py-2.5" onClick={(e) => e.stopPropagation()}>
+                              <Checkbox checked={selectedIds.has(lead.id)} onCheckedChange={() => toggleSelectLead(lead.id)} aria-label={`Select ${lead.name}`} />
+                            </TableCell>
+                          )}
+                          <TableCell className={`${isSuperAdmin ? 'pl-3' : 'pl-5'} pr-4 py-2.5`}>
                             <div className="flex items-center gap-3">
                               <div className="w-9 h-9 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
                                 {initialsOf(lead.name)}
@@ -610,8 +876,13 @@ export default function Leads() {
 
                 {/* Mobile card list */}
                 <div className="md:hidden divide-y divide-border">
-                  {filteredLeads.map((lead) => (
+                  {pagedLeads.map((lead) => (
                     <div key={lead.id} className="flex items-start gap-3 p-4 min-h-[72px] transition-colors hover:bg-muted/30 active:bg-muted/50">
+                      {isSuperAdmin && (
+                        <div className="pt-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          <Checkbox checked={selectedIds.has(lead.id)} onCheckedChange={() => toggleSelectLead(lead.id)} aria-label={`Select ${lead.name}`} />
+                        </div>
+                      )}
                       {/* A plain div (not <button>) — it needs to contain the
                           NameLink's <a> and the "View map" <button> below,
                           and interactive elements can't nest inside a
@@ -658,6 +929,42 @@ export default function Leads() {
               </>
             )}
           </div>
+
+          {/* Pager — always shown once there's a result to page through, on
+              both mobile and desktop; stacks to two rows on narrow screens
+              instead of squeezing everything onto one. */}
+          {!loading && sortedLeads.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 md:px-6 py-3.5 border-t border-border/60 bg-muted/5">
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span>
+                  Showing <span className="font-medium text-foreground tabular-nums">{(page - 1) * pageSize + 1}</span>
+                  –<span className="font-medium text-foreground tabular-nums">{Math.min(page * pageSize, sortedLeads.length)}</span>
+                  {' '}of <span className="font-medium text-foreground tabular-nums">{sortedLeads.length}</span>
+                </span>
+                <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+                  <SelectTrigger className="h-8 w-[100px] text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[10, 25, 50, 100].map((n) => (<SelectItem key={n} value={String(n)}>{n} / page</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="h-8 w-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage(1)} aria-label="First page">
+                  <ChevronsLeft className="w-4 h-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-8 w-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <span className="px-2 text-xs font-medium text-foreground tabular-nums whitespace-nowrap">Page {page} of {totalPages}</span>
+                <Button variant="outline" size="icon" className="h-8 w-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="h-8 w-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage(totalPages)} aria-label="Last page">
+                  <ChevronsRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -792,11 +1099,53 @@ export default function Leads() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Bulk delete confirmation (Super Admin only) — requires re-entering
+          your own password as the confirmation step, since this can remove
+          far more leads at once than the single-lead delete above. */}
+      <AlertDialog
+        open={bulkDeleteOpen}
+        onOpenChange={(open) => { if (!bulkDeleting) { setBulkDeleteOpen(open); if (!open) setBulkDeletePassword(''); } }}
+      >
+        <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedIds.size} selected lead{selectedIds.size === 1 ? '' : 's'}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This deletes every currently-selected lead — matching only what your active
+              search and filters show — along with all of their follow-ups, warnings and history.
+              You'll have 10 seconds to undo from a notice at the top right before it's final.
+              Enter your password to confirm.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="py-1">
+            <Input
+              type="password"
+              placeholder="Your password"
+              value={bulkDeletePassword}
+              onChange={(e) => setBulkDeletePassword(e.target.value)}
+              disabled={bulkDeleting}
+              className="h-11"
+              autoComplete="current-password"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={bulkDeleting || !bulkDeletePassword}
+              onClick={(e) => { e.preventDefault(); handleBulkDelete(); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {bulkDeleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
+              {bulkDeleting ? 'Deleting…' : `Delete ${selectedIds.size}`}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
-function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProjectFilter, deptFilter, setDeptFilter, teamFilter, setTeamFilter, agentFilter, setAgentFilter, leads, uniqueAgents, departments, teamOptions, showDept = true }: any) {
+function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProjectFilter, deptFilter, setDeptFilter, teamFilter, setTeamFilter, agentFilter, setAgentFilter, sortBy, setSortBy, leads, uniqueAgents, departments, teamOptions, showDept = true }: any) {
   return (
     <>
       <div className="space-y-2">
@@ -852,6 +1201,19 @@ function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProject
           <SelectContent>
             <SelectItem value="all">All sales people</SelectItem>
             {uniqueAgents.map((a: string) => (<SelectItem key={a} value={a}>{a}</SelectItem>))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-foreground">Sort By</label>
+        <Select value={sortBy} onValueChange={setSortBy}>
+          <SelectTrigger className="h-12 w-full"><SelectValue placeholder="Sort" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="newest">Newest first</SelectItem>
+            <SelectItem value="oldest">Oldest first</SelectItem>
+            <SelectItem value="name">Name (A–Z)</SelectItem>
+            <SelectItem value="followup">Next follow-up</SelectItem>
+            <SelectItem value="grade">Grade (A–C)</SelectItem>
           </SelectContent>
         </Select>
       </div>
