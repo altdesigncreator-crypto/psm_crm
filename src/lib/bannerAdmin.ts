@@ -1,4 +1,5 @@
 import { supabase } from '@/db/supabase';
+import { getEdgeFunctionErrorMessage } from '@/lib/edgeFunctionError';
 import type { SystemMessage, SystemMessageType, MaintenanceSettings } from '@/types';
 
 const TOKEN_KEY = 'psm_banner_admin_token';
@@ -21,7 +22,8 @@ function setBannerToken(token: string | null) {
 
 export async function bannerLogin(username: string, password: string): Promise<void> {
   const { data, error } = await supabase.functions.invoke('banner-login', { body: { username, password } });
-  if (error || data?.error) throw new Error(data?.error || error?.message || 'Login failed.');
+  if (error) throw new Error(await getEdgeFunctionErrorMessage(error, 'Login failed.'));
+  if (data?.error) throw new Error(data.error);
   setBannerToken(data.token);
 }
 
@@ -39,22 +41,9 @@ async function callMessages(body: Record<string, unknown>) {
   const { data, error } = await supabase.functions.invoke('banner-messages', { body, headers: { 'X-Banner-Token': token } });
 
   if (error) {
-    // On a non-2xx response, supabase-js leaves `data` null and gives us
-    // only a generic "Edge Function returned a non-2xx status code" —
-    // the actual reason the function sent back (e.g. "maintenance_settings
-    // does not exist", a storage error, session expiry) is sitting unread
-    // in the raw Response on error.context. Pull it out so the real cause
-    // shows up instead of the generic message.
-    let message = error.message;
-    try {
-      const body = await (error as { context?: Response }).context?.json();
-      if (body?.error) message = body.error;
-    } catch {
-      // Response wasn't JSON (e.g. a platform-level gateway error) — keep
-      // the generic message.
-    }
+    const message = await getEdgeFunctionErrorMessage(error);
     if (message === 'Session expired — please log in again.') setBannerToken(null);
-    throw new Error(message || 'Request failed.');
+    throw new Error(message);
   }
   if (data?.error) {
     if (data.error === 'Session expired — please log in again.') setBannerToken(null);

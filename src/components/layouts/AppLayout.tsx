@@ -169,7 +169,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // scrolling the main content never scrolls the nav, and vice versa.
   const sidebarContent = (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center gap-3 px-5 h-16 border-b border-sidebar-border shrink-0">
+      {/* min-h + pt-safe (not a fixed h-16) since this same header renders
+          inside the mobile Sheet drawer too, which spans full screen height
+          on iOS — without reserving space for the notch/Dynamic Island, its
+          content just sits at the true top of the screen and gets covered.
+          A no-op on desktop/non-notched devices (pt-safe floors at 0.5rem). */}
+      <div className="flex items-center gap-3 px-5 min-h-16 pt-safe border-b border-sidebar-border shrink-0">
         <img src="/logo.png" alt="PSM Properties" className="h-10 w-auto dark:hidden" draggable={false} />
         <img src="/logo-dark.png" alt="PSM Properties" className="h-10 w-auto hidden dark:block" draggable={false} />
       </div>
@@ -271,7 +276,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <SheetContent
           side="left"
           className="w-[280px] p-0 bg-sidebar border-r border-sidebar-border"
-          closeClassName="text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground active:bg-sidebar-accent/80"
+          // Matches the sidebar header's own pt-safe offset above, so the
+          // close button stays aligned with the logo row instead of ending
+          // up below it once that row grows taller to clear the notch.
+          closeClassName="top-[max(0.5rem,env(safe-area-inset-top))] text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground active:bg-sidebar-accent/80"
         >
           {sidebarContent}
         </SheetContent>
@@ -279,7 +287,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Right column scrolls independently of the sidebar */}
       <div className="flex-1 min-w-0 flex flex-col h-full overflow-hidden">
-        <header className="md:hidden flex items-center justify-between px-4 h-16 bg-card/95 backdrop-blur-sm shadow-sm border-b border-border shrink-0">
+        {/* min-h + pt-safe (not a fixed h-16): on iOS with the notch/Dynamic
+            Island, content starting at the true top of the screen renders
+            underneath it — this pushes the hamburger/logo/bell row down
+            below the unsafe area instead. No visible change on desktop or
+            non-notched devices, since pt-safe floors at 0.5rem there. */}
+        <header className="md:hidden flex items-center justify-between px-4 min-h-16 pt-safe bg-card/95 backdrop-blur-sm shadow-sm border-b border-border shrink-0">
           <div className="flex items-center gap-3">
             <Sheet>
               <SheetTrigger asChild>

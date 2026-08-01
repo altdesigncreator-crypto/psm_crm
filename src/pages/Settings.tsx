@@ -4,6 +4,7 @@ import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { getRoleLabel, getDepartmentLabel, isExec } from '@/lib/permissions';
+import { getEdgeFunctionErrorMessage } from '@/lib/edgeFunctionError';
 import { useDepartments } from '@/hooks/useDepartments';
 import {
   isPlatformAuthenticatorAvailable, isBiometricEnabledFor, registerBiometric, disableBiometric,
@@ -170,7 +171,8 @@ export default function Settings() {
         body: {},
         headers: { Authorization: `Bearer ${sessionData.session?.access_token}` },
       });
-      if (error || data?.error) throw new Error(data?.error || error?.message || 'Could not delete your account.');
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, 'Could not delete your account.'));
+      if (data?.error) throw new Error(data.error);
 
       disableBiometric(user.id);
       toast.success('Your account has been deleted.');

@@ -21,6 +21,7 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { exportAsExcel, exportAsCSV } from '@/lib/exportUtils';
+import { getEdgeFunctionErrorMessage } from '@/lib/edgeFunctionError';
 import { ROLE_TIERS, ROLE_LABELS, isExec, isAdminOrAbove, canWarnStaff, getDepartmentLabel, type RoleTier, type Department } from '@/lib/permissions';
 import { useDepartments } from '@/hooks/useDepartments';
 import { useTeams } from '@/hooks/useTeams';
@@ -147,7 +148,8 @@ export default function UserManagement() {
         },
         headers: { Authorization: `Bearer ${sessionData.session?.access_token}` },
       });
-      if (error || data?.error) throw new Error(data?.error || error?.message || 'Could not create staff account.');
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, 'Could not create staff account.'));
+      if (data?.error) throw new Error(data.error);
 
       toast.success('Staff account created.');
       setNewName(''); setNewEmail(''); setNewPhone(''); setNewPassword(''); setNewRole('sale'); setNewDept(departments[0]?.code || '');
@@ -200,7 +202,8 @@ export default function UserManagement() {
         body: { userId: selectedStaffId, newPassword: resetPassword },
         headers: { Authorization: `Bearer ${sessionData.session?.access_token}` },
       });
-      if (error || data?.error) throw new Error(data?.error || error?.message || 'Could not reset the password.');
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, 'Could not reset the password.'));
+      if (data?.error) throw new Error(data.error);
       toast.success(`Password reset for ${data?.name || editName}.`);
       setResetPassword('');
     } catch (err: any) {
@@ -218,7 +221,8 @@ export default function UserManagement() {
         body: { userId: selectedStaffId },
         headers: { Authorization: `Bearer ${sessionData.session?.access_token}` },
       });
-      if (error || data?.error) throw new Error(data?.error || error?.message || 'Could not delete the account.');
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, 'Could not delete the account.'));
+      if (data?.error) throw new Error(data.error);
       toast.success(`${data?.name || editName}'s account was deleted.`);
       setDeleteConfirmOpen(false);
       setIsEditOpen(false);

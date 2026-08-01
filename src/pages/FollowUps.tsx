@@ -305,7 +305,14 @@ export default function FollowUps() {
           owner_id: ownerId,
           created_by: user.id,
           status: 'new',
-          ...(dateIso ? { created_at: dateIso } : {}),
+          // Every row must carry the same keys: a bulk insert like this one
+          // goes through Postgres's json_populate_recordset, which fills a
+          // key missing from just one row's JSON object with an explicit
+          // NULL rather than the column's `default now()` — so leaving this
+          // out for unparseable-date rows doesn't "fall back to the
+          // default", it silently breaks the NOT NULL constraint and fails
+          // the entire batch over a single bad row.
+          created_at: dateIso || new Date().toISOString(),
         });
         meta.push({ notes: followText, type: detectFollowUpType(followText), status: GRADE_TO_IMPORT_STATUS[grade] });
       }
@@ -321,7 +328,10 @@ export default function FollowUps() {
         type: meta[idx].type,
         status: meta[idx].status,
         notes: meta[idx].notes || null,
-        ...(leadPayloads[idx].created_at ? { created_at: leadPayloads[idx].created_at } : {}),
+        // leadPayloads[idx].created_at is always set now (see above) — kept
+        // as a plain field, not a conditional spread, so every row in this
+        // batch always carries the same keys too.
+        created_at: leadPayloads[idx].created_at,
       })).filter((f) => f.notes);
 
       let followUpErrorCount = 0;

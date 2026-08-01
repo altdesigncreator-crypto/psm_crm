@@ -19,6 +19,7 @@ import { useProfiles } from '@/hooks/useProfiles';
 import { useTeams } from '@/hooks/useTeams';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { isManagerOrAbove, isAdminOrAbove, getDepartmentLabel } from '@/lib/permissions';
+import { getEdgeFunctionErrorMessage } from '@/lib/edgeFunctionError';
 
 export default function AddLead() {
   const navigate = useNavigate();
@@ -158,7 +159,8 @@ export default function AddLead() {
           },
         },
       });
-      if (error || !data?.score) throw new Error(error?.message || 'AI scoring failed.');
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, 'AI scoring failed.'));
+      if (!data?.score) throw new Error('AI scoring failed.');
       setLeadGrade(data.score);
       setAiScoreReason(data.reasoning || '');
       toast.success(`AI score: ${data.score} — ${data.reasoning}`);

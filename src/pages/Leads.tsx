@@ -370,6 +370,27 @@ export default function Leads() {
                   className="pl-9 h-12"
                 />
               </div>
+              {/* One-tap self filter — a manager sees their whole team's
+                  leads via team-scoped RLS, so this is the fast way back to
+                  just the ones they personally own, without opening the
+                  filter sheet and hunting for their own name in the agent
+                  list. Reuses the existing agentFilter/owner_name filtering
+                  rather than adding a parallel filter path. */}
+              {role === 'manager' && user?.name && (
+                <button
+                  type="button"
+                  onClick={() => setAgentFilter((prev) => (prev === user.name ? 'all' : user.name))}
+                  aria-pressed={agentFilter === user.name}
+                  className={`flex items-center gap-1.5 px-3.5 h-12 rounded-lg border text-sm font-medium transition-colors shrink-0 ${
+                    agentFilter === user.name
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'border-border bg-card text-foreground hover:bg-muted'
+                  }`}
+                >
+                  <UserIcon className="w-4 h-4" />
+                  <span className="hidden sm:inline">My Leads</span>
+                </button>
+              )}
               <Sheet>
                 <SheetTrigger asChild>
                   <button
