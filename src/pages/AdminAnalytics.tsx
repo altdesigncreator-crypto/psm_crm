@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/db/supabase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,6 +14,7 @@ import { Bar, Line, Doughnut } from 'react-chartjs-2';
 import { exportAnalyticsAsExcel, exportAnalyticsAsPDF, exportAnalyticsAsHTML } from '@/lib/analyticsExport';
 import { LEAD_STAGES, type Lead } from '@/types';
 import { toast } from 'sonner';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Title, Tooltip, Legend, Filler);
 
@@ -29,8 +29,11 @@ export default function AdminAnalytics() {
   useEffect(() => {
     if (!isExec(role)) { setLoading(false); return; }
     (async () => {
-      const { data } = await supabase.from('leads').select('*');
-      setLeads((data || []) as Lead[]);
+      try {
+        setLeads(await fetchAllRows<Lead>('leads'));
+      } catch {
+        toast.error('Could not load analytics data.');
+      }
       setLoading(false);
     })();
   }, [role]);

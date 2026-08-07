@@ -30,6 +30,7 @@ import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
 import { toast } from 'sonner';
 import { cacheGet, cacheSetDebounced } from '@/lib/localCache';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 
 const FOLLOWUPS_CACHE_TTL_MS = 5 * 60 * 1000;
 const leadsCacheKey = (userId: string) => `followups-leads:${userId}`;
@@ -104,26 +105,6 @@ function parseImportDate(raw: unknown): string | null {
 
 function findColumn(headers: string[], keywords: string[]): number {
   return headers.findIndex((h) => keywords.some((k) => h.includes(k)));
-}
-
-/** PostgREST caps any single request at 1000 rows — paging through in
- * chunks is the only way to get everything past that, capped at a generous
- * 20,000 as a sane ceiling. The fetch loads the complete set regardless of
- * the on-screen pager, since filtering/sorting/paging all happen
- * client-side over whatever's in memory here. */
-async function fetchAllRows<T>(table: string, maxRows = 20_000): Promise<T[]> {
-  const chunkSize = 1000;
-  const all: T[] = [];
-  let from = 0;
-  while (all.length < maxRows) {
-    const { data, error } = await supabase.from(table).select('*').order('created_at', { ascending: false }).range(from, from + chunkSize - 1);
-    if (error) throw error;
-    const rows = (data || []) as T[];
-    all.push(...rows);
-    if (rows.length < chunkSize) break;
-    from += chunkSize;
-  }
-  return all.slice(0, maxRows);
 }
 
 function todayStr() {

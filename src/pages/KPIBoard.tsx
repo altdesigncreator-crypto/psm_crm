@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
@@ -11,9 +10,11 @@ import NameLink from '@/components/NameLink';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Trophy, Users, TrendingUp, Target, ArrowUpRight, BarChart3, Eye,
-  Building2, FileSpreadsheet, FileText,
+  Building2, FileSpreadsheet, FileText, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import type { Lead } from '@/types';
+import { fetchAllRows } from '@/lib/fetchAllRows';
+import { toast } from 'sonner';
 
 interface AgentStats {
   id: string;
@@ -41,6 +42,9 @@ const DEPT_PALETTE = [
   { bg: 'bg-rose-50 dark:bg-rose-900/20', text: 'text-rose-600 dark:text-rose-400' },
 ];
 
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+type Period = 'monthly' | 'yearly' | 'overall';
+
 export default function KPIBoard() {
   const navigate = useNavigate();
   const { role } = useAuth();
@@ -50,11 +54,46 @@ export default function KPIBoard() {
   const [deptFilter, setDeptFilter] = useState<string>('all');
   usePageHeader('KPI Board', 'Sales performance leaderboard');
 
+  const now = new Date();
+  const [period, setPeriod] = useState<Period>('monthly');
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+
+  const isCurrentPeriod = period === 'overall'
+    ? true
+    : period === 'yearly'
+      ? selectedYear === now.getFullYear()
+      : selectedYear === now.getFullYear() && selectedMonth === now.getMonth();
+
+  const shiftPeriod = (delta: number) => {
+    if (period === 'yearly') { setSelectedYear((y) => y + delta); return; }
+    let m = selectedMonth + delta;
+    let y = selectedYear;
+    if (m < 0) { m = 11; y -= 1; }
+    if (m > 11) { m = 0; y += 1; }
+    setSelectedMonth(m);
+    setSelectedYear(y);
+  };
+
+  const periodLabel = period === 'yearly' ? String(selectedYear) : `${MONTH_NAMES[selectedMonth]} ${selectedYear}`;
+
+  const periodLeads = useMemo(() => {
+    if (period === 'overall') return leads;
+    return leads.filter((l) => {
+      const d = new Date(l.created_at);
+      if (period === 'yearly') return d.getFullYear() === selectedYear;
+      return d.getFullYear() === selectedYear && d.getMonth() === selectedMonth;
+    });
+  }, [leads, period, selectedMonth, selectedYear]);
+
   useEffect(() => {
     if (!isExec(role)) return;
     (async () => {
-      const { data } = await supabase.from('leads').select('*');
-      setLeads((data || []) as Lead[]);
+      try {
+        setLeads(await fetchAllRows<Lead>('leads'));
+      } catch {
+        toast.error('Could not load KPI data.');
+      }
       setLoading(false);
     })();
   }, [role]);
@@ -77,7 +116,7 @@ export default function KPIBoard() {
       return map[d];
     };
 
-    leads.forEach((l) => {
+    periodLeads.forEach((l) => {
       const stat = ensure(l.department_code);
       stat.totalLeads += 1;
       if (l.lead_grade === 'A') stat.gradeACount += 1;
@@ -86,7 +125,7 @@ export default function KPIBoard() {
     Object.keys(map).forEach((d) => { map[d].agentCount = agentsInDept[d].size; });
 
     return Object.values(map).sort((a, b) => a.department.localeCompare(b.department));
-  }, [leads]);
+  }, [periodLeads]);
 
   const agentStats = useMemo<AgentStats[]>(() => {
     const map: Record<string, AgentStats> = {};
@@ -95,7 +134,7 @@ export default function KPIBoard() {
       return map[id];
     };
 
-    leads.forEach((l) => {
+    periodLeads.forEach((l) => {
       if (!l.owner_id) return;
       if (deptFilter !== 'all' && l.department_code !== deptFilter) return;
       const s = ensure(l.owner_id);
@@ -107,7 +146,7 @@ export default function KPIBoard() {
     });
 
     return Object.values(map).sort((a, b) => (b.gradeA - a.gradeA) || (b.totalLeads - a.totalLeads));
-  }, [leads, deptFilter, nameOf]);
+  }, [periodLeads, deptFilter, nameOf]);
 
   const topAgent = agentStats[0];
 
@@ -135,17 +174,45 @@ export default function KPIBoard() {
         </div>
       </div>
 
+      <Card className="shadow-card rounded-xl border-0">
+        <CardContent className="p-3 flex items-center gap-2 flex-wrap">
+          <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/30 shrink-0">
+            {(['monthly', 'yearly', 'overall'] as const).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setPeriod(p)}
+                className={`px-3.5 h-9 rounded-md text-xs font-semibold capitalize transition-colors ${period === p ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+          {period !== 'overall' && (
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="icon" className="h-9 w-9 min-h-0" aria-label="Previous period" onClick={() => shiftPeriod(-1)}>
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <span className="text-sm font-medium tabular-nums px-1.5 min-w-[110px] text-center">{periodLabel}</span>
+              <Button variant="outline" size="icon" className="h-9 w-9 min-h-0" aria-label="Next period" disabled={isCurrentPeriod} onClick={() => shiftPeriod(1)}>
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="flex md:grid md:grid-cols-2 gap-3 overflow-x-auto md:overflow-visible pb-2 md:pb-0 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
         <Card className="shadow-card rounded-xl border-0 min-w-[150px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-4 flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Users className="w-5 h-5 text-primary" /></div>
-            <div><p className="text-2xl font-bold text-foreground tabular-nums">{leads.length}</p><p className="text-xs text-muted-foreground">Total Leads</p></div>
+            <div><p className="text-2xl font-bold text-foreground tabular-nums">{periodLeads.length}</p><p className="text-xs text-muted-foreground">Total Leads</p></div>
           </CardContent>
         </Card>
         <Card className="shadow-card rounded-xl border-0 min-w-[150px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-4 flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0"><Target className="w-5 h-5 text-destructive" /></div>
-            <div><p className="text-2xl font-bold text-foreground tabular-nums">{leads.filter((l) => l.lead_grade === 'A').length}</p><p className="text-xs text-muted-foreground">Grade A Leads</p></div>
+            <div><p className="text-2xl font-bold text-foreground tabular-nums">{periodLeads.filter((l) => l.lead_grade === 'A').length}</p><p className="text-xs text-muted-foreground">Grade A Leads</p></div>
           </CardContent>
         </Card>
       </div>

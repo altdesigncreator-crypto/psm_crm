@@ -24,6 +24,7 @@ import NameLink from '@/components/NameLink';
 import { exportAsExcel, exportAsPDF, exportAsHTML } from '@/lib/exportUtils';
 import { toast } from 'sonner';
 import { cacheGet, cacheSetDebounced } from '@/lib/localCache';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 
 const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
 const dashboardCacheKey = (userId: string) => `dashboard-leads:${userId}`;
@@ -77,11 +78,14 @@ export default function Dashboard() {
     let active = true;
     const writeCache = (list: Lead[]) => { cacheSetDebounced(dashboardCacheKey(user.id), list); return list; };
     const load = async () => {
-      const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
-      if (!active) return;
-      if (error) toast.error('Could not load dashboard data.');
-      else setRawLeads(writeCache((data || []) as Lead[]));
-      setLoading(false);
+      try {
+        const rows = await fetchAllRows<Lead>('leads');
+        if (!active) return;
+        setRawLeads(writeCache(rows));
+      } catch {
+        if (active) toast.error('Could not load dashboard data.');
+      }
+      if (active) setLoading(false);
     };
     load();
     const channel = supabase

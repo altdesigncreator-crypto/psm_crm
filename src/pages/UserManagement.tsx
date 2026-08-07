@@ -96,11 +96,24 @@ export default function UserManagement() {
     let active = true;
     const writeCache = (list: Profile[]) => { cacheSetDebounced(staffCacheKey(user.id), list); return list; };
     const load = async () => {
-      const { data, error } = await supabase.from('profiles').select('*').order('name');
-      if (!active) return;
-      if (error) toast.error('Could not load staff.');
-      else setStaff(writeCache((data || []) as Profile[]));
-      setLoading(false);
+      try {
+        const chunkSize = 1000;
+        const all: Profile[] = [];
+        let from = 0;
+        while (true) {
+          const { data, error } = await supabase.from('profiles').select('*').order('name').range(from, from + chunkSize - 1);
+          if (error) throw error;
+          const rows = (data || []) as Profile[];
+          all.push(...rows);
+          if (rows.length < chunkSize) break;
+          from += chunkSize;
+        }
+        if (!active) return;
+        setStaff(writeCache(all));
+      } catch {
+        if (active) toast.error('Could not load staff.');
+      }
+      if (active) setLoading(false);
     };
     load();
     const channel = supabase
