@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
 import { LEAD_STAGES, type Lead, type LeadStage } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
@@ -12,8 +14,12 @@ import { useProfiles } from '@/hooks/useProfiles';
 import { canEditLead } from '@/lib/permissions';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
-import { Phone, MapPin, DollarSign, User, ArrowRight, ArrowLeft, Eye, MoveRight, Lock } from 'lucide-react';
+import { Phone, MapPin, DollarSign, User, ArrowRight, ArrowLeft, Eye, MoveRight, Lock, Columns3 } from 'lucide-react';
 import { toast } from 'sonner';
+import { cacheGet, cacheSetDebounced } from '@/lib/localCache';
+
+const PIPELINE_CACHE_TTL_MS = 5 * 60 * 1000;
+const pipelineCacheKey = (userId: string) => `pipeline-leads:${userId}`;
 
 interface PipelineColumn {
   status: LeadStage;
@@ -21,13 +27,15 @@ interface PipelineColumn {
   leads: Lead[];
 }
 
-// All stages are shown as board columns, including Lost. But Lost is a
-// branch off the happy path (reached from any stage, not a forward step),
-// so it's excluded from the quick forward/backward buttons — those only
-// walk the sequential "happy path". Sold is terminal: once there, a lead
-// can't move to any other stage (enforced in the DB too, see crm.sql).
 const ALL_STAGE_VALUES: LeadStage[] = LEAD_STAGES.map((s) => s.value);
 const FORWARD_STAGE_VALUES: LeadStage[] = ALL_STAGE_VALUES.filter((s) => s !== 'lost');
+const FALLBACK_COLOR = '#0463CA';
+
+const getStageIndex = (status: string) => FORWARD_STAGE_VALUES.indexOf(status as LeadStage);
+const canMoveForward = (status: string) => status !== 'sold' && getStageIndex(status) >= 0 && getStageIndex(status) < FORWARD_STAGE_VALUES.length - 1;
+const canMoveBackward = (status: string) => status !== 'sold' && getStageIndex(status) > 0;
+const getNextStatus = (status: string) => FORWARD_STAGE_VALUES[getStageIndex(status) + 1];
+const getPrevStatus = (status: string) => FORWARD_STAGE_VALUES[getStageIndex(status) - 1];
 
 export default function PipelineBoard() {
   const navigate = useNavigate();
@@ -36,30 +44,48 @@ export default function PipelineBoard() {
   const { nameOf } = useProfiles();
   usePageHeader('Lead Pipeline', 'Stage-based lead tracking board');
 
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cachedLeads = user ? cacheGet<Lead[]>(pipelineCacheKey(user.id), PIPELINE_CACHE_TTL_MS) : undefined;
+  const [leads, setLeads] = useState<Lead[]>(cachedLeads ?? []);
+  const [loading, setLoading] = useState(cachedLeads === undefined);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [moving, setMoving] = useState(false);
 
+  const [hiddenStages, setHiddenStages] = useState<Set<LeadStage>>(new Set());
+  const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
+  const [mobileStage, setMobileStage] = useState<LeadStage>(ALL_STAGE_VALUES[0]);
+
   useEffect(() => {
+    if (!user) return;
     let active = true;
+    const writeCache = (list: Lead[]) => { cacheSetDebounced(pipelineCacheKey(user.id), list); return list; };
     const load = async () => {
       const { data, error } = await supabase.from('leads').select('*');
       if (!active) return;
       if (error) toast.error('Could not load the pipeline.');
-      else setLeads((data || []) as Lead[]);
+      else setLeads(writeCache((data || []) as Lead[]));
       setLoading(false);
     };
     load();
 
     const channel = supabase
       .channel('pipeline-board')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, () => load())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'leads' }, (payload) => {
+        const row = payload.new as Lead;
+        setLeads((prev) => writeCache(prev.some((l) => l.id === row.id) ? prev : [row, ...prev]));
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'leads' }, (payload) => {
+        const row = payload.new as Lead;
+        setLeads((prev) => writeCache(prev.map((l) => (l.id === row.id ? row : l))));
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'leads' }, (payload) => {
+        const oldId = (payload.old as { id: string }).id;
+        setLeads((prev) => writeCache(prev.filter((l) => l.id !== oldId)));
+      })
       .subscribe();
 
     return () => { active = false; supabase.removeChannel(channel); };
-  }, []);
+  }, [user?.id]);
 
   const currentUser = user ? { id: user.id, role, department } : null;
 
@@ -70,6 +96,22 @@ export default function PipelineBoard() {
       leads: leads.filter((l) => l.status === status),
     }));
   }, [leads]);
+
+  const visibleColumns = useMemo(() => columns.filter((c) => !hiddenStages.has(c.status)), [columns, hiddenStages]);
+
+  const toggleStageVisibility = (status: LeadStage) => {
+    setHiddenStages((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status); else next.add(status);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (hiddenStages.has(mobileStage) && visibleColumns.length > 0) {
+      setMobileStage(visibleColumns[0].status);
+    }
+  }, [hiddenStages, visibleColumns, mobileStage]);
 
   const handleMoveLead = async (leadId: string, newStatus: string, currentStatus?: string) => {
     if (currentStatus === 'sold') {
@@ -90,12 +132,6 @@ export default function PipelineBoard() {
 
   const openMoveDialog = (lead: Lead) => { setSelectedLead(lead); setMoveDialogOpen(true); };
 
-  const getStageIndex = (status: string) => FORWARD_STAGE_VALUES.indexOf(status as LeadStage);
-  const canMoveForward = (status: string) => status !== 'sold' && getStageIndex(status) >= 0 && getStageIndex(status) < FORWARD_STAGE_VALUES.length - 1;
-  const canMoveBackward = (status: string) => status !== 'sold' && getStageIndex(status) > 0;
-  const getNextStatus = (status: string) => FORWARD_STAGE_VALUES[getStageIndex(status) + 1];
-  const getPrevStatus = (status: string) => FORWARD_STAGE_VALUES[getStageIndex(status) - 1];
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -104,136 +140,164 @@ export default function PipelineBoard() {
     );
   }
 
+  const mobileColumn = visibleColumns.find((c) => c.status === mobileStage) || visibleColumns[0];
+
   return (
     <div className="animate-fade-in-up space-y-5">
-      <div className="flex items-center justify-between md:justify-end">
-        <div className="md:hidden">
-          <h1 className="text-xl md:text-2xl font-semibold text-foreground">Lead Pipeline</h1>
+      <div className="flex items-center justify-between gap-3">
+        <div className="md:hidden min-w-0">
+          <h1 className="text-xl md:text-2xl font-semibold text-foreground truncate">Lead Pipeline</h1>
           <p className="text-sm text-muted-foreground mt-1">Stage-based lead tracking board</p>
         </div>
-        <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2.5 py-1 rounded-full shrink-0 tabular-nums">{leads.length} total leads</span>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-start">
-        {columns.map((col) => {
-          const fallbackColor = '#0463CA';
-          const columnColor = statusColors[col.status] || fallbackColor;
-
-          return (
-            <div key={col.status} className="flex flex-col gap-3 bg-muted/30 p-3 rounded-2xl border border-border/40">
-              <div
-                className="flex items-center justify-between px-4 py-3 rounded-xl border transition-all duration-200 shadow-sm"
-                style={{ borderColor: `${columnColor}40`, backgroundColor: `${columnColor}10` }}
+        <div className="flex items-center gap-2 ml-auto shrink-0">
+          <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2.5 py-1 rounded-full tabular-nums">{leads.length} total leads</span>
+          <Popover open={columnsMenuOpen} onOpenChange={setColumnsMenuOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 h-9 px-3 rounded-full border border-border bg-card text-xs font-medium text-foreground hover:bg-muted transition-colors"
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: columnColor }} />
-                  <span className="text-sm font-semibold truncate" style={{ color: columnColor }}>{col.label}</span>
-                </div>
-                <span className="text-xs font-medium text-muted-foreground bg-background px-2 py-0.5 rounded-full border shadow-sm shrink-0 tabular-nums">{col.leads.length}</span>
-              </div>
-
-              <div className="flex flex-col gap-2.5 max-h-[70vh] overflow-y-auto pr-0.5 custom-scrollbar">
-                {col.leads.map((lead) => {
-                  const editable = canEditLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code }) && lead.status !== 'sold';
+                <Columns3 className="w-3.5 h-3.5 text-muted-foreground" />
+                Columns
+                {hiddenStages.size > 0 && (
+                  <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">{hiddenStages.size}</span>
+                )}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-64 p-2">
+              <p className="text-xs font-medium text-muted-foreground px-2 pt-1 pb-2">Show stages</p>
+              <div className="space-y-0.5 max-h-72 overflow-y-auto">
+                {columns.map((col) => {
+                  const color = statusColors[col.status] || FALLBACK_COLOR;
                   return (
-                    <Card
-                      key={lead.id}
-                      className="shadow-sm rounded-xl border border-border/60 hover:border-primary/30 hover:shadow-card transition-all duration-200 cursor-pointer active:scale-[0.99] bg-card"
-                      onClick={() => navigate(`/lead/${lead.id}`)}
-                    >
-                      <CardContent className="p-3.5 space-y-2.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-semibold text-foreground truncate">{lead.name}</span>
-                          <div className="flex items-center gap-1 shrink-0">
-                            {lead.status === 'sold' && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-success/10 text-success border border-success/20" title="Sold — stage is locked">
-                                <Lock className="w-2.5 h-2.5" /> Locked
-                              </span>
-                            )}
-                            <LeadLevelBadge grade={lead.lead_grade} />
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <Phone className="w-3 h-3 shrink-0" /> <span className="truncate">{lead.phone}</span>
-                        </div>
-                        {lead.preferred_project && (
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <MapPin className="w-3 h-3 shrink-0" /> <span className="truncate">{lead.preferred_project}</span>
-                          </div>
-                        )}
-                        {lead.budget_range && (
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <DollarSign className="w-3 h-3 shrink-0" /> <span className="truncate">{lead.budget_range}</span>
-                          </div>
-                        )}
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <User className="w-3 h-3 shrink-0" />
-                          {lead.owner_id ? <NameLink id={lead.owner_id} name={nameOf(lead.owner_id)} showAvatar={false} className="text-xs" /> : <span className="truncate">Unassigned</span>}
-                        </div>
-
-                        <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/40">
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); navigate(`/lead/${lead.id}`); }}
-                            className="flex-1 h-8 flex items-center justify-center gap-1 rounded-lg bg-primary/5 text-primary text-xs font-medium hover:bg-primary/10 active:bg-primary/15 transition-colors"
-                          >
-                            <Eye className="w-3 h-3" /> View
-                          </button>
-                          {editable && (
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); openMoveDialog(lead); }}
-                              className="flex-1 h-8 flex items-center justify-center gap-1 rounded-lg bg-muted text-muted-foreground text-xs font-medium hover:bg-muted/80 active:bg-muted/60 transition-colors"
-                            >
-                              <MoveRight className="w-3 h-3" /> Move
-                            </button>
-                          )}
-                        </div>
-
-                        {editable && (
-                          <div className="flex items-center gap-1 pt-0.5">
-                            {canMoveBackward(lead.status) && (
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); handleMoveLead(lead.id, getPrevStatus(lead.status), lead.status); }}
-                                disabled={moving}
-                                className="h-7 px-2 rounded-md border border-border/60 text-xs text-muted-foreground hover:bg-muted active:bg-muted/80 transition-colors disabled:opacity-40 flex items-center gap-0.5"
-                              >
-                                <ArrowLeft className="w-3 h-3" /> {LEAD_STAGES.find((s) => s.value === getPrevStatus(lead.status))?.label}
-                              </button>
-                            )}
-                            {canMoveForward(lead.status) && (
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); handleMoveLead(lead.id, getNextStatus(lead.status), lead.status); }}
-                                disabled={moving}
-                                className="h-7 px-2 rounded-md border text-xs flex items-center gap-0.5 ml-auto transition-colors disabled:opacity-40"
-                                style={{
-                                  borderColor: `${statusColors[getNextStatus(lead.status)] || fallbackColor}40`,
-                                  color: statusColors[getNextStatus(lead.status)] || fallbackColor,
-                                  backgroundColor: `${statusColors[getNextStatus(lead.status)] || fallbackColor}08`,
-                                }}
-                              >
-                                {LEAD_STAGES.find((s) => s.value === getNextStatus(lead.status))?.label} <ArrowRight className="w-3 h-3" />
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
+                    <label key={col.status} className="flex items-center gap-2.5 px-2 py-2 rounded-md text-sm cursor-pointer hover:bg-muted">
+                      <Checkbox checked={!hiddenStages.has(col.status)} onCheckedChange={() => toggleStageVisibility(col.status)} />
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                      <span className="flex-1 truncate">{col.label}</span>
+                      <span className="text-xs text-muted-foreground tabular-nums">{col.leads.length}</span>
+                    </label>
                   );
                 })}
+              </div>
+              {hiddenStages.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setHiddenStages(new Set())}
+                  className="w-full mt-1 h-8 rounded-md text-xs font-medium text-primary hover:bg-primary/5"
+                >
+                  Show all stages
+                </button>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
+      </div>
 
-                {col.leads.length === 0 && (
-                  <div className="text-center py-8 text-muted-foreground text-sm border-2 border-dashed border-border/40 rounded-xl bg-background/50">
-                    No leads
-                  </div>
-                )}
+      {visibleColumns.length === 0 ? (
+        <div className="text-center py-16 text-muted-foreground text-sm border-2 border-dashed border-border/40 rounded-xl bg-background/50">
+          Every stage is hidden. Use "Columns" above to show at least one.
+        </div>
+      ) : (
+        <>
+          {/* Mobile: one stage at a time via a tab strip — stacking all 9
+              columns made the page an enormous scroll on a small screen. */}
+          <div className="md:hidden space-y-3">
+            <div className="-mx-4 px-4 overflow-x-auto">
+              <div className="flex items-center gap-2 w-max pb-1">
+                {visibleColumns.map((col) => {
+                  const color = statusColors[col.status] || FALLBACK_COLOR;
+                  const active = mobileColumn?.status === col.status;
+                  return (
+                    <button
+                      key={col.status}
+                      type="button"
+                      onClick={() => setMobileStage(col.status)}
+                      className="flex items-center gap-1.5 h-10 px-3.5 rounded-full border text-sm font-medium shrink-0 transition-colors"
+                      style={active
+                        ? { backgroundColor: color, borderColor: color, color: '#fff' }
+                        : { backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', color: 'hsl(var(--muted-foreground))' }}
+                    >
+                      {col.label}
+                      <span
+                        className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full tabular-nums"
+                        style={active ? { backgroundColor: 'rgba(255,255,255,0.25)' } : { backgroundColor: 'hsl(var(--muted))' }}
+                      >
+                        {col.leads.length}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
-          );
-        })}
-      </div>
+
+            <div className="space-y-2.5">
+              {mobileColumn && mobileColumn.leads.length > 0 ? (
+                mobileColumn.leads.map((lead) => (
+                  <PipelineLeadCard
+                    key={lead.id}
+                    lead={lead}
+                    editable={canEditLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code }) && lead.status !== 'sold'}
+                    statusColors={statusColors}
+                    nameOf={nameOf}
+                    navigate={navigate}
+                    openMoveDialog={openMoveDialog}
+                    handleMoveLead={handleMoveLead}
+                    moving={moving}
+                  />
+                ))
+              ) : (
+                <div className="text-center py-10 text-muted-foreground text-sm border-2 border-dashed border-border/40 rounded-xl bg-background/50">
+                  No leads in {mobileColumn?.label}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Desktop / tablet: the full multi-column board. */}
+          <div className="hidden md:grid gap-4 items-start" style={{ gridTemplateColumns: `repeat(${Math.min(visibleColumns.length, 4)}, minmax(0, 1fr))` }}>
+            {visibleColumns.map((col) => {
+              const columnColor = statusColors[col.status] || FALLBACK_COLOR;
+
+              return (
+                <div key={col.status} className="flex flex-col gap-3 bg-muted/30 p-3 rounded-2xl border border-border/40">
+                  <div
+                    className="flex items-center justify-between px-4 py-3 rounded-xl border transition-all duration-200 shadow-sm"
+                    style={{ borderColor: `${columnColor}40`, backgroundColor: `${columnColor}10` }}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: columnColor }} />
+                      <span className="text-sm font-semibold truncate" style={{ color: columnColor }}>{col.label}</span>
+                    </div>
+                    <span className="text-xs font-medium text-muted-foreground bg-background px-2 py-0.5 rounded-full border shadow-sm shrink-0 tabular-nums">{col.leads.length}</span>
+                  </div>
+
+                  <div className="flex flex-col gap-2.5 max-h-[70vh] overflow-y-auto pr-0.5 custom-scrollbar">
+                    {col.leads.map((lead) => (
+                      <PipelineLeadCard
+                        key={lead.id}
+                        lead={lead}
+                        editable={canEditLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code }) && lead.status !== 'sold'}
+                        statusColors={statusColors}
+                        nameOf={nameOf}
+                        navigate={navigate}
+                        openMoveDialog={openMoveDialog}
+                        handleMoveLead={handleMoveLead}
+                        moving={moving}
+                      />
+                    ))}
+
+                    {col.leads.length === 0 && (
+                      <div className="text-center py-8 text-muted-foreground text-sm border-2 border-dashed border-border/40 rounded-xl bg-background/50">
+                        No leads
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       <Dialog open={moveDialogOpen} onOpenChange={setMoveDialogOpen}>
         <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-sm rounded-2xl">
@@ -265,5 +329,105 @@ export default function PipelineBoard() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function PipelineLeadCard({
+  lead, editable, statusColors, nameOf, navigate, openMoveDialog, handleMoveLead, moving,
+}: {
+  lead: Lead;
+  editable: boolean;
+  statusColors: Record<string, string>;
+  nameOf: (id: string) => string;
+  navigate: (path: string) => void;
+  openMoveDialog: (lead: Lead) => void;
+  handleMoveLead: (leadId: string, newStatus: string, currentStatus?: string) => void;
+  moving: boolean;
+}) {
+  const nextStatus = getNextStatus(lead.status);
+  const prevStatus = getPrevStatus(lead.status);
+  const nextColor = statusColors[nextStatus] || FALLBACK_COLOR;
+
+  return (
+    <Card
+      className="shadow-sm rounded-xl border border-border/60 hover:border-primary/30 hover:shadow-card transition-all duration-200 cursor-pointer active:scale-[0.99] bg-card"
+      onClick={() => navigate(`/lead/${lead.id}`)}
+    >
+      <CardContent className="p-3.5 space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm font-semibold text-foreground truncate">{lead.name}</span>
+          <div className="flex items-center gap-1 shrink-0">
+            {lead.status === 'sold' && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-success/10 text-success border border-success/20" title="Sold — stage is locked">
+                <Lock className="w-2.5 h-2.5" /> Locked
+              </span>
+            )}
+            <LeadLevelBadge grade={lead.lead_grade} />
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Phone className="w-3 h-3 shrink-0" /> <span className="truncate">{lead.phone}</span>
+        </div>
+        {lead.preferred_project && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <MapPin className="w-3 h-3 shrink-0" /> <span className="truncate">{lead.preferred_project}</span>
+          </div>
+        )}
+        {lead.budget_range && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <DollarSign className="w-3 h-3 shrink-0" /> <span className="truncate">{lead.budget_range}</span>
+          </div>
+        )}
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <User className="w-3 h-3 shrink-0" />
+          {lead.owner_id ? <NameLink id={lead.owner_id} name={nameOf(lead.owner_id)} showAvatar={false} className="text-xs" /> : <span className="truncate">Unassigned</span>}
+        </div>
+
+        <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/40">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); navigate(`/lead/${lead.id}`); }}
+            className="flex-1 h-11 min-h-0 flex items-center justify-center gap-1.5 rounded-lg bg-primary/5 text-primary text-xs font-semibold hover:bg-primary/10 active:bg-primary/15 transition-colors"
+          >
+            <Eye className="w-3.5 h-3.5" /> View
+          </button>
+          {editable && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); openMoveDialog(lead); }}
+              className="flex-1 h-11 min-h-0 flex items-center justify-center gap-1.5 rounded-lg bg-muted text-muted-foreground text-xs font-semibold hover:bg-muted/80 active:bg-muted/60 transition-colors"
+            >
+              <MoveRight className="w-3.5 h-3.5" /> Move
+            </button>
+          )}
+        </div>
+
+        {editable && (canMoveBackward(lead.status) || canMoveForward(lead.status)) && (
+          <div className="grid gap-1.5" style={{ gridTemplateColumns: canMoveBackward(lead.status) && canMoveForward(lead.status) ? '1fr 1fr' : '1fr' }}>
+            {canMoveBackward(lead.status) && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handleMoveLead(lead.id, prevStatus, lead.status); }}
+                disabled={moving}
+                className="h-9 min-h-0 px-2 rounded-md border border-border/60 text-xs text-muted-foreground hover:bg-muted active:bg-muted/80 transition-colors disabled:opacity-40 flex items-center justify-center gap-1"
+              >
+                <ArrowLeft className="w-3 h-3 shrink-0" /> <span className="truncate">{LEAD_STAGES.find((s) => s.value === prevStatus)?.label}</span>
+              </button>
+            )}
+            {canMoveForward(lead.status) && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); handleMoveLead(lead.id, nextStatus, lead.status); }}
+                disabled={moving}
+                className="h-9 min-h-0 px-2 rounded-md border text-xs flex items-center justify-center gap-1 transition-colors disabled:opacity-40"
+                style={{ borderColor: `${nextColor}40`, color: nextColor, backgroundColor: `${nextColor}08` }}
+              >
+                <span className="truncate">{LEAD_STAGES.find((s) => s.value === nextStatus)?.label}</span> <ArrowRight className="w-3 h-3 shrink-0" />
+              </button>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

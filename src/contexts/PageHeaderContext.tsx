@@ -14,9 +14,6 @@ const PageHeaderContext = createContext<PageHeaderContextType | undefined>(undef
 
 export function PageHeaderProvider({ children }: { children: React.ReactNode }) {
   const [header, setHeaderState] = useState<PageHeaderValue | null>(null);
-  // Stable identity so usePageHeader's effect below only re-fires when the
-  // calling page's own title/subtitle actually change, not whenever some
-  // other page updates the shared header state.
   const setHeader = useCallback((h: PageHeaderValue | null) => setHeaderState(h), []);
 
   return (

@@ -13,8 +13,6 @@ Sentry.init({
   environment: import.meta.env.MODE,
 });
 
-// Register PWA service worker (static asset caching / installability only —
-// there is no offline-first data sync in the Supabase-backed app).
 registerServiceWorker();
 
 createRoot(document.getElementById("root")!).render(

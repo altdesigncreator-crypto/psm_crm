@@ -105,9 +105,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
-  // Desktop-only sidebar show/hide (mobile always uses the overlay Sheet
-  // above instead) — remembered across sessions so it doesn't reset on
-  // every reload.
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('psm_sidebar_collapsed') === '1');
   const toggleSidebar = () => {
     setSidebarCollapsed((prev) => {
@@ -116,12 +113,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       return next;
     });
   };
-  // Separate open state per breakpoint: the mobile and desktop headers each
-  // render their own Popover (only one is visible at a time via CSS, but
-  // both stay mounted), so sharing one boolean made Radix position the
-  // shared content against whichever trigger's rect it saw last — causing
-  // it to flicker between the hidden trigger's (0,0) rect and the visible
-  // one's real position.
   const [notifOpenMobile, setNotifOpenMobile] = useState(false);
   const [notifOpenDesktop, setNotifOpenDesktop] = useState(false);
 
@@ -165,8 +156,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     </div>
   );
 
-  // Sidebar is its own independently-scrolling column (ScrollArea below) so
-  // scrolling the main content never scrolls the nav, and vice versa.
   const sidebarContent = (
     <div className="flex flex-col h-full min-h-0">
       {/* min-h + pt-safe (not a fixed h-16) since this same header renders
@@ -276,9 +265,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <SheetContent
           side="left"
           className="w-[280px] p-0 bg-sidebar border-r border-sidebar-border"
-          // Matches the sidebar header's own pt-safe offset above, so the
-          // close button stays aligned with the logo row instead of ending
-          // up below it once that row grows taller to clear the notch.
           closeClassName="top-[max(0.5rem,env(safe-area-inset-top))] text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground active:bg-sidebar-accent/80"
         >
           {sidebarContent}

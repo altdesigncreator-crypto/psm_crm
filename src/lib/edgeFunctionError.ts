@@ -13,8 +13,6 @@ export async function getEdgeFunctionErrorMessage(error: unknown, fallback = 'Re
     const body = await err.context?.json();
     if (body?.error) return body.error;
   } catch {
-    // Response wasn't JSON (e.g. a platform-level gateway error) — fall
-    // through to whatever generic message we have.
   }
   return err.message || fallback;
 }

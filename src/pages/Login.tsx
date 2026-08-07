@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import SystemBanner from '@/components/SystemBanner';
-import { Building2, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Login() {
@@ -26,8 +26,6 @@ export default function Login() {
     setLoading(true);
 
     try {
-      // Must be set before login() so the session Supabase writes lands in
-      // the right storage (localStorage = persists, sessionStorage = not).
       setRememberMe(remember);
       const staffUser = await login(email.toLowerCase().trim(), password);
       toast.success(`Welcome back, ${staffUser.name}`);

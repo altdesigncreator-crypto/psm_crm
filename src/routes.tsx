@@ -1,11 +1,8 @@
-import React, { lazy } from 'react';
+import { lazy } from 'react';
 import type { ReactNode } from 'react';
 import { ProtectedRoute } from './components/ProtectedRoutes';
 import type { RouteKey } from '@/lib/permissions';
 
-// Every page is lazy-loaded so the initial bundle only carries the app
-// shell — each route's code downloads the first time it's visited (and is
-// then cached). The Suspense fallback lives in App.tsx.
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const AddLead = lazy(() => import('./pages/AddLead'));

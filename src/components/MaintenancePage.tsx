@@ -1,4 +1,3 @@
-import React from 'react';
 import { Cog } from 'lucide-react';
 import type { MaintenanceSettings } from '@/types';
 

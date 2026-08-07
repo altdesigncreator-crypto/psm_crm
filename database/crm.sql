@@ -113,6 +113,10 @@ create table if not exists public.profiles (
   )
 );
 
+create index if not exists idx_profiles_department on public.profiles(department_code);
+create index if not exists idx_profiles_role on public.profiles(role);
+create index if not exists idx_profiles_status on public.profiles(status);
+
 -- Departments are managed dynamically from the app (Settings → System
 -- Configuration, Boss/Super Admin only — see departments_write RLS policy
 -- below), not a fixed code list. Auto-provision a default attendance window
@@ -309,6 +313,9 @@ create index if not exists idx_leads_next_followup on public.leads(next_follow_u
 -- fast as values become more varied.
 create index if not exists idx_leads_preferred_project on public.leads(preferred_project);
 create index if not exists idx_leads_team on public.leads(team_id);
+-- Backs both the default "Newest first" sort and the Date Added filter on
+-- the Leads list, plus Dashboard/TeamActivity date-range queries.
+create index if not exists idx_leads_created_at on public.leads(created_at desc);
 
 -- A lead's team (if any — team_id is nullable, chosen at creation time when
 -- the owner belongs to more than one team) must belong to the same
@@ -375,6 +382,9 @@ create table if not exists public.follow_ups (
 );
 
 create index if not exists idx_followups_lead on public.follow_ups(lead_id);
+create index if not exists idx_followups_created_at on public.follow_ups(created_at desc);
+create index if not exists idx_followups_status on public.follow_ups(status);
+create index if not exists idx_followups_created_by on public.follow_ups(created_by);
 
 create table if not exists public.pipeline_history (
   id           uuid primary key default gen_random_uuid(),

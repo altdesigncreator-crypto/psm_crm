@@ -6,7 +6,8 @@ import { useTranslation } from '@/contexts/TranslationContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useDepartments } from '@/hooks/useDepartments';
-import { canAddFollowUp, isAdminOrAbove, isDepartmentScoped } from '@/lib/permissions';
+import { useTeams } from '@/hooks/useTeams';
+import { canAddFollowUp, isAdminOrAbove, isDepartmentScoped, getDepartmentLabel } from '@/lib/permissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -14,15 +15,25 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetClose } from '@/components/ui/sheet';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuCheckboxItem, DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 import {
   Search, Filter, Phone, User, MapPin, DollarSign, Calendar, MessageSquare, Eye,
   Loader2, Plus, ListChecks, HelpCircle, Upload, Download, FileSpreadsheet, FileText, Users,
+  SlidersHorizontal, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X,
 } from 'lucide-react';
 import { FOLLOWUP_TYPES, FOLLOWUP_STATUSES, getGradeForFollowUpStatus, type Lead, type FollowUp, type FollowUpStatus, type FollowUpType, type LeadGrade } from '@/types';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
 import { toast } from 'sonner';
+import { cacheGet, cacheSetDebounced } from '@/lib/localCache';
+
+const FOLLOWUPS_CACHE_TTL_MS = 5 * 60 * 1000;
+const leadsCacheKey = (userId: string) => `followups-leads:${userId}`;
+const followUpsCacheKey = (userId: string) => `followups-list:${userId}`;
 
 function followUpTypeLabel(type: string) {
   return FOLLOWUP_TYPES.find((t) => t.value === type)?.label || type;
@@ -54,9 +65,6 @@ interface LeadWithFollowUps extends Lead {
 
 const EXPORT_HEADERS = ['Customer Name', 'Mobile', 'Sales', 'Date', 'Location', 'Budget', 'Rate', 'Enquire Details', 'Follow Up Status'];
 
-// A representative follow-up status is picked per imported grade so the
-// database's follow-up→grade sync trigger lands back on the same grade we
-// imported, instead of silently overwriting it (see database/crm.sql).
 const GRADE_TO_IMPORT_STATUS: Record<LeadGrade, FollowUpStatus> = { A: 'site_visit', B: 'interested', C: 'busy' };
 
 function normalizeGrade(raw: string): { grade: LeadGrade; original: string } {
@@ -98,6 +106,42 @@ function findColumn(headers: string[], keywords: string[]): number {
   return headers.findIndex((h) => keywords.some((k) => h.includes(k)));
 }
 
+/** PostgREST caps any single request at 1000 rows — paging through in
+ * chunks is the only way to get everything past that, capped at a generous
+ * 20,000 as a sane ceiling. The fetch loads the complete set regardless of
+ * the on-screen pager, since filtering/sorting/paging all happen
+ * client-side over whatever's in memory here. */
+async function fetchAllRows<T>(table: string, maxRows = 20_000): Promise<T[]> {
+  const chunkSize = 1000;
+  const all: T[] = [];
+  let from = 0;
+  while (all.length < maxRows) {
+    const { data, error } = await supabase.from(table).select('*').order('created_at', { ascending: false }).range(from, from + chunkSize - 1);
+    if (error) throw error;
+    const rows = (data || []) as T[];
+    all.push(...rows);
+    if (rows.length < chunkSize) break;
+    from += chunkSize;
+  }
+  return all.slice(0, maxRows);
+}
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function shiftDay(day: string, delta: number) {
+  const d = new Date(`${day}T00:00:00`);
+  d.setDate(d.getDate() + delta);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function localDateStr(iso: string) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export default function FollowUps() {
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -105,16 +149,26 @@ export default function FollowUps() {
   usePageHeader(t('followups.title'), t('followups.subtitle'));
   const { nameOf, profiles } = useProfiles();
   const { departments } = useDepartments();
+  const { teams, membersOf } = useTeams();
 
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cachedLeads = user ? cacheGet<Lead[]>(leadsCacheKey(user.id), FOLLOWUPS_CACHE_TTL_MS) : undefined;
+  const cachedFollowUps = user ? cacheGet<FollowUp[]>(followUpsCacheKey(user.id), FOLLOWUPS_CACHE_TTL_MS) : undefined;
+  const [leads, setLeads] = useState<Lead[]>(cachedLeads ?? []);
+  const [followUps, setFollowUps] = useState<FollowUp[]>(cachedFollowUps ?? []);
+  const [loading, setLoading] = useState(cachedLeads === undefined || cachedFollowUps === undefined);
   const [importing, setImporting] = useState(false);
   const importFileRef = useRef<HTMLInputElement>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [deptFilter, setDeptFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [projectFilters, setProjectFilters] = useState<string[]>([]);
+  const [teamFilter, setTeamFilter] = useState('all');
+  const [agentFilter, setAgentFilter] = useState('all');
+  const [dateFilter, setDateFilter] = useState('');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'grade'>('newest');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   const [activeLead, setActiveLead] = useState<LeadWithFollowUps | null>(null);
   const [formType, setFormType] = useState('phone');
@@ -122,32 +176,57 @@ export default function FollowUps() {
   const [formNotes, setFormNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // Every role can import — Sales Persons use it for their own past
-  // follow-ups (owner defaults to self, see canAssignOthers below), Managers
-  // the same for their own, and only Admin/Boss/Super Admin can use the
-  // Sales column to attribute rows to a different staff member.
   const canImport = !!role;
 
   useEffect(() => {
+    if (!user) return;
     let active = true;
+    const writeLeadsCache = (list: Lead[]) => { cacheSetDebounced(leadsCacheKey(user.id), list); return list; };
+    const writeFollowUpsCache = (list: FollowUp[]) => { cacheSetDebounced(followUpsCacheKey(user.id), list); return list; };
     const load = async () => {
-      const [leadsRes, followUpsRes] = await Promise.all([
-        supabase.from('leads').select('*').order('created_at', { ascending: false }),
-        supabase.from('follow_ups').select('*').order('created_at', { ascending: false }),
-      ]);
-      if (!active) return;
-      setLeads((leadsRes.data || []) as Lead[]);
-      setFollowUps((followUpsRes.data || []) as FollowUp[]);
-      setLoading(false);
+      try {
+        const [leadsRows, followUpsRows] = await Promise.all([
+          fetchAllRows<Lead>('leads'),
+          fetchAllRows<FollowUp>('follow_ups'),
+        ]);
+        if (!active) return;
+        setLeads(writeLeadsCache(leadsRows));
+        setFollowUps(writeFollowUpsCache(followUpsRows));
+      } catch {
+        if (active) toast.error('Could not load follow-ups.');
+      }
+      if (active) setLoading(false);
     };
     load();
     const channel = supabase
       .channel('follow-ups-page')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, () => load())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'follow_ups' }, () => load())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'leads' }, (payload) => {
+        const row = payload.new as Lead;
+        setLeads((prev) => writeLeadsCache(prev.some((l) => l.id === row.id) ? prev : [row, ...prev]));
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'leads' }, (payload) => {
+        const row = payload.new as Lead;
+        setLeads((prev) => writeLeadsCache(prev.map((l) => (l.id === row.id ? row : l))));
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'leads' }, (payload) => {
+        const oldId = (payload.old as { id: string }).id;
+        setLeads((prev) => writeLeadsCache(prev.filter((l) => l.id !== oldId)));
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'follow_ups' }, (payload) => {
+        const row = payload.new as FollowUp;
+        setFollowUps((prev) => writeFollowUpsCache(prev.some((f) => f.id === row.id) ? prev : [row, ...prev]));
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'follow_ups' }, (payload) => {
+        const row = payload.new as FollowUp;
+        setFollowUps((prev) => writeFollowUpsCache(prev.map((f) => (f.id === row.id ? row : f))));
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'follow_ups' }, (payload) => {
+        const oldId = (payload.old as { id: string }).id;
+        setFollowUps((prev) => writeFollowUpsCache(prev.filter((f) => f.id !== oldId)));
+      })
       .subscribe();
     return () => { active = false; supabase.removeChannel(channel); };
-  }, []);
+  }, [user?.id]);
 
   const rows = useMemo<LeadWithFollowUps[]>(() => {
     return leads.map((lead) => ({
@@ -155,6 +234,23 @@ export default function FollowUps() {
       followUps: followUps.filter((f) => f.lead_id === lead.id),
     }));
   }, [leads, followUps]);
+
+  const uniqueProjects = useMemo(
+    () => Array.from(new Set(leads.map((l) => l.preferred_project).filter(Boolean))).sort() as string[],
+    [leads]
+  );
+  const toggleProjectFilter = (project: string) => {
+    setProjectFilters((prev) => (prev.includes(project) ? prev.filter((p) => p !== project) : [...prev, project]));
+  };
+
+  const uniqueAgents = useMemo(() => Array.from(new Set(profiles.map((p) => p.name))).sort(), [profiles]);
+
+  const teamOptions = useMemo(
+    () => teams.filter((tm) => deptFilter === 'all' || tm.department_code === deptFilter),
+    [teams, deptFilter]
+  );
+  const teamMemberIds = useMemo(() => (teamFilter === 'all' ? [] : membersOf(teamFilter)), [teamFilter, membersOf]);
+  const teamManagerId = useMemo(() => (teamFilter === 'all' ? null : teams.find((tm) => tm.id === teamFilter)?.manager_id ?? null), [teamFilter, teams]);
 
   const filteredRows = useMemo(() => {
     const q = searchQuery.toLowerCase();
@@ -164,9 +260,51 @@ export default function FollowUps() {
       const matchesDept = deptFilter === 'all' || r.department_code === deptFilter;
       const latestStatus = r.followUps[0]?.status;
       const matchesStatus = statusFilter === 'all' || (statusFilter === 'none' ? r.followUps.length === 0 : latestStatus === statusFilter);
-      return matchesSearch && matchesDept && matchesStatus;
+      const matchesProject = projectFilters.length === 0 || (!!r.preferred_project && projectFilters.includes(r.preferred_project));
+      const matchesTeam = teamFilter === 'all'
+        || r.team_id === teamFilter
+        || (!!r.owner_id && teamMemberIds.includes(r.owner_id))
+        || (!!r.owner_id && r.owner_id === teamManagerId);
+      const matchesAgent = agentFilter === 'all' || nameOf(r.owner_id) === agentFilter;
+      const matchesDate = !dateFilter || localDateStr(r.created_at) === dateFilter;
+      return matchesSearch && matchesDept && matchesStatus && matchesProject && matchesTeam && matchesAgent && matchesDate;
     });
-  }, [rows, searchQuery, deptFilter, statusFilter, nameOf]);
+  }, [rows, searchQuery, deptFilter, statusFilter, projectFilters, teamFilter, teamMemberIds, teamManagerId, agentFilter, dateFilter, nameOf]);
+
+  const sortedRows = useMemo(() => {
+    const arr = [...filteredRows];
+    switch (sortBy) {
+      case 'oldest':
+        arr.sort((a, b) => a.created_at.localeCompare(b.created_at));
+        break;
+      case 'name':
+        arr.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        break;
+      case 'grade': {
+        const rank: Record<string, number> = { A: 0, B: 1, C: 2 };
+        arr.sort((a, b) => (rank[a.lead_grade || ''] ?? 3) - (rank[b.lead_grade || ''] ?? 3));
+        break;
+      }
+      case 'newest':
+      default:
+        arr.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    }
+    return arr;
+  }, [filteredRows, sortBy]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, deptFilter, statusFilter, projectFilters, teamFilter, agentFilter, dateFilter, sortBy, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  useEffect(() => {
+    setPage((p) => Math.min(p, totalPages));
+  }, [totalPages]);
+
+  const pagedRows = useMemo(
+    () => sortedRows.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize),
+    [sortedRows, page, pageSize]
+  );
 
   const summary = useMemo(() => ({
     total: rows.length,
@@ -305,13 +443,6 @@ export default function FollowUps() {
           owner_id: ownerId,
           created_by: user.id,
           status: 'new',
-          // Every row must carry the same keys: a bulk insert like this one
-          // goes through Postgres's json_populate_recordset, which fills a
-          // key missing from just one row's JSON object with an explicit
-          // NULL rather than the column's `default now()` — so leaving this
-          // out for unparseable-date rows doesn't "fall back to the
-          // default", it silently breaks the NOT NULL constraint and fails
-          // the entire batch over a single bad row.
           created_at: dateIso || new Date().toISOString(),
         });
         meta.push({ notes: followText, type: detectFollowUpType(followText), status: GRADE_TO_IMPORT_STATUS[grade] });
@@ -328,9 +459,6 @@ export default function FollowUps() {
         type: meta[idx].type,
         status: meta[idx].status,
         notes: meta[idx].notes || null,
-        // leadPayloads[idx].created_at is always set now (see above) — kept
-        // as a plain field, not a conditional spread, so every row in this
-        // batch always carries the same keys too.
         created_at: leadPayloads[idx].created_at,
       })).filter((f) => f.notes);
 
@@ -426,17 +554,60 @@ export default function FollowUps() {
 
       <Card className="shadow-card rounded-xl border-0">
         <CardContent className="p-4 md:p-5">
-          <div className="flex flex-col md:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input placeholder="Search by customer, phone, or sales person…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 h-12" />
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1 min-w-0">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input placeholder="Search by customer, phone, or sales person…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 h-12" />
+              </div>
+              <Sheet>
+                <SheetTrigger asChild>
+                  <button
+                    type="button"
+                    className="md:hidden flex items-center gap-1.5 px-3.5 h-12 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
+                  >
+                    <SlidersHorizontal className="w-4 h-4" />
+                    <span className="hidden sm:inline">Filters</span>
+                    {(deptFilter !== 'all' || statusFilter !== 'all' || projectFilters.length > 0 || teamFilter !== 'all' || agentFilter !== 'all' || dateFilter) && (
+                      <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                        {[deptFilter, statusFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0) + (dateFilter ? 1 : 0)}
+                      </span>
+                    )}
+                  </button>
+                </SheetTrigger>
+                <SheetContent side="bottom" className="rounded-t-2xl border-t border-border px-6 pt-6 pb-8 max-h-[85dvh] overflow-y-auto">
+                  <SheetHeader className="pb-4">
+                    <SheetTitle className="flex items-center gap-2 text-base font-semibold">
+                      <Filter className="w-4 h-4 text-primary" /> Search / Filter
+                    </SheetTitle>
+                  </SheetHeader>
+                  <div className="space-y-5">
+                    <FollowUpFilterFields
+                      deptFilter={deptFilter} setDeptFilter={setDeptFilter}
+                      statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+                      projectFilters={projectFilters} toggleProjectFilter={toggleProjectFilter} setProjectFilters={setProjectFilters}
+                      teamFilter={teamFilter} setTeamFilter={setTeamFilter}
+                      agentFilter={agentFilter} setAgentFilter={setAgentFilter}
+                      dateFilter={dateFilter} setDateFilter={setDateFilter}
+                      sortBy={sortBy} setSortBy={setSortBy}
+                      uniqueAgents={uniqueAgents} uniqueProjects={uniqueProjects} departments={departments} teamOptions={teamOptions}
+                      showDept={!isDepartmentScoped(role)}
+                    />
+                    <SheetClose asChild>
+                      <button type="button" className="w-full h-12 text-sm font-medium transition-colors rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80">
+                        Done
+                      </button>
+                    </SheetClose>
+                  </div>
+                </SheetContent>
+              </Sheet>
             </div>
-            <div className="flex gap-2">
-              {/* Dept-scoped roles (admin/manager/sale) only see their own
-                  department via RLS — no point offering the filter. */}
+
+            {/* Desktop / tablet inline filters */}
+            <div className="hidden md:flex flex-wrap gap-3 shrink-0">
               {!isDepartmentScoped(role) && (
                 <Select value={deptFilter} onValueChange={setDeptFilter}>
-                  <SelectTrigger className="w-full md:w-[160px] h-12"><Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Department" /></SelectTrigger>
+                  <SelectTrigger className="w-[160px] h-11"><Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Department" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All departments</SelectItem>
                     {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
@@ -444,13 +615,128 @@ export default function FollowUps() {
                 </Select>
               )}
               <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-full md:w-[180px] h-12"><SelectValue placeholder="Follow-up status" /></SelectTrigger>
+                <SelectTrigger className="w-[180px] h-11"><SelectValue placeholder="Follow-up status" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All statuses</SelectItem>
                   <SelectItem value="none">No follow-up yet</SelectItem>
                   {FOLLOWUP_STATUSES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
                 </SelectContent>
               </Select>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex h-11 w-[180px] items-center justify-between whitespace-nowrap rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    <span className="flex items-center min-w-0">
+                      <Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground shrink-0" />
+                      <span className={`truncate ${projectFilters.length === 0 ? 'text-muted-foreground' : ''}`}>
+                        {projectFilters.length === 0 ? 'All projects' : projectFilters.length === 1 ? projectFilters[0] : `${projectFilters.length} projects`}
+                      </span>
+                    </span>
+                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0 ml-1" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-56 max-h-72 overflow-y-auto">
+                  <DropdownMenuItem className="cursor-pointer" onSelect={(e) => { e.preventDefault(); setProjectFilters([]); }}>
+                    All projects
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  {uniqueProjects.map((p) => (
+                    <DropdownMenuCheckboxItem key={p} checked={projectFilters.includes(p)} onSelect={(e) => e.preventDefault()} onCheckedChange={() => toggleProjectFilter(p)}>
+                      {p}
+                    </DropdownMenuCheckboxItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {teamOptions.length > 0 && (
+                <Select value={teamFilter} onValueChange={setTeamFilter}>
+                  <SelectTrigger className="w-[160px] h-11"><Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Team" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All teams</SelectItem>
+                    {teamOptions.map((tm) => (<SelectItem key={tm.id} value={tm.id}>{tm.name}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              )}
+              <Select value={agentFilter} onValueChange={setAgentFilter}>
+                <SelectTrigger className="w-[180px] h-11"><User className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Sales person" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All sales people</SelectItem>
+                  {uniqueAgents.map((a) => (<SelectItem key={a} value={a}>{a}</SelectItem>))}
+                </SelectContent>
+              </Select>
+              <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+                <SelectTrigger className="w-[170px] h-11"><ArrowUpDown className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Sort" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest first</SelectItem>
+                  <SelectItem value="oldest">Oldest first</SelectItem>
+                  <SelectItem value="name">Name (A–Z)</SelectItem>
+                  <SelectItem value="grade">Grade (A–C)</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label="Previous day" onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}>
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <div className="flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="h-11 w-[150px] text-sm" />
+                </div>
+                <Button
+                  variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label="Next day"
+                  disabled={(dateFilter || todayStr()) >= todayStr()}
+                  onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+                {dateFilter && (
+                  <Button variant="ghost" className="h-11 px-3 text-xs font-medium text-primary" onClick={() => setDateFilter('')}>
+                    All dates
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 md:hidden">
+              {[
+                ['dept', deptFilter, setDeptFilter, deptFilter !== 'all' ? getDepartmentLabel(deptFilter) : ''],
+                ['status', statusFilter, setStatusFilter, statusFilter !== 'all' ? (statusFilter === 'none' ? 'No follow-up yet' : followUpStatusLabel(statusFilter)) : ''],
+                ['team', teamFilter, setTeamFilter, teamFilter !== 'all' ? (teamOptions.find((tm) => tm.id === teamFilter)?.name || '') : ''],
+                ['agent', agentFilter, setAgentFilter, agentFilter],
+              ].map(([key, value, setter, label]) =>
+                value !== 'all' ? (
+                  <button
+                    key={key as string}
+                    type="button"
+                    onClick={() => (setter as (v: string) => void)('all')}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
+                  >
+                    {label as string}
+                    <X className="w-3 h-3" />
+                  </button>
+                ) : null
+              )}
+              {projectFilters.map((p) => (
+                <button
+                  key={`project-${p}`}
+                  type="button"
+                  onClick={() => toggleProjectFilter(p)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
+                >
+                  {p}
+                  <X className="w-3 h-3" />
+                </button>
+              ))}
+              {dateFilter && (
+                <button
+                  type="button"
+                  onClick={() => setDateFilter('')}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
+                >
+                  {dateFilter}
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
           </div>
         </CardContent>
@@ -488,7 +774,7 @@ export default function FollowUps() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredRows.map((row) => {
+                    {pagedRows.map((row) => {
                       const latest = row.followUps[0];
                       const date = latest?.created_at || row.created_at;
                       return (
@@ -541,7 +827,7 @@ export default function FollowUps() {
 
               {/* Mobile card list */}
               <div className="md:hidden divide-y divide-border">
-                {filteredRows.map((row) => {
+                {pagedRows.map((row) => {
                   const latest = row.followUps[0];
                   const date = latest?.created_at || row.created_at;
                   return (
@@ -573,6 +859,39 @@ export default function FollowUps() {
                 })}
               </div>
             </>
+          )}
+
+          {sortedRows.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 md:px-6 py-3.5 border-t border-border/60 bg-muted/5">
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span>
+                  Showing <span className="font-medium text-foreground tabular-nums">{(page - 1) * pageSize + 1}</span>
+                  –<span className="font-medium text-foreground tabular-nums">{Math.min(page * pageSize, sortedRows.length)}</span>
+                  {' '}of <span className="font-medium text-foreground tabular-nums">{sortedRows.length}</span>
+                </span>
+                <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+                  <SelectTrigger className="h-8 w-[100px] text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[10, 25, 50, 100].map((n) => (<SelectItem key={n} value={String(n)}>{n} / page</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage(1)} aria-label="First page">
+                  <ChevronsLeft className="w-4 h-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <span className="px-2 text-xs font-medium text-foreground tabular-nums whitespace-nowrap">Page {page} of {totalPages}</span>
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage(totalPages)} aria-label="Last page">
+                  <ChevronsRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -646,5 +965,117 @@ export default function FollowUps() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function FollowUpFilterFields({
+  deptFilter, setDeptFilter, statusFilter, setStatusFilter, projectFilters, toggleProjectFilter, setProjectFilters,
+  teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter, sortBy, setSortBy,
+  uniqueAgents, uniqueProjects, departments, teamOptions, showDept = true,
+}: any) {
+  return (
+    <>
+      {showDept && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">Department</label>
+          <Select value={deptFilter} onValueChange={setDeptFilter}>
+            <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select department" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All departments</SelectItem>
+              {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-foreground">Follow-up Status</label>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select status" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="none">No follow-up yet</SelectItem>
+            {FOLLOWUP_STATUSES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-foreground">Project</label>
+        <div className="max-h-48 overflow-y-auto rounded-md border border-input divide-y divide-border">
+          {uniqueProjects.length === 0 ? (
+            <p className="text-xs text-muted-foreground p-3">No projects yet</p>
+          ) : (
+            uniqueProjects.map((p: string) => (
+              <label key={p} className="flex items-center gap-2.5 px-3 py-2.5 text-sm cursor-pointer">
+                <Checkbox checked={projectFilters.includes(p)} onCheckedChange={() => toggleProjectFilter(p)} />
+                <span className="truncate">{p}</span>
+              </label>
+            ))
+          )}
+        </div>
+        {projectFilters.length > 0 && (
+          <button type="button" onClick={() => setProjectFilters([])} className="text-xs font-medium text-primary">
+            Clear projects
+          </button>
+        )}
+      </div>
+      {teamOptions.length > 0 && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">Team</label>
+          <Select value={teamFilter} onValueChange={setTeamFilter}>
+            <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select team" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All teams</SelectItem>
+              {teamOptions.map((tm: { id: string; name: string }) => (<SelectItem key={tm.id} value={tm.id}>{tm.name}</SelectItem>))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-foreground">Sales Person</label>
+        <Select value={agentFilter} onValueChange={setAgentFilter}>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select sales person" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All sales people</SelectItem>
+            {uniqueAgents.map((a: string) => (<SelectItem key={a} value={a}>{a}</SelectItem>))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-foreground">Sort By</label>
+        <Select value={sortBy} onValueChange={setSortBy}>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Sort" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="newest">Newest first</SelectItem>
+            <SelectItem value="oldest">Oldest first</SelectItem>
+            <SelectItem value="name">Name (A–Z)</SelectItem>
+            <SelectItem value="grade">Grade (A–C)</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-foreground">Date Added</label>
+        <div className="flex items-center gap-1.5">
+          <Button
+            type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Previous day"
+            onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
+          <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="w-full h-12 text-sm" />
+          <Button
+            type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Next day"
+            disabled={(dateFilter || todayStr()) >= todayStr()}
+            onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
+          >
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+        </div>
+        {dateFilter && (
+          <button type="button" onClick={() => setDateFilter('')} className="text-xs font-medium text-primary">
+            Clear — show all dates
+          </button>
+        )}
+      </div>
+    </>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -125,8 +125,6 @@ export default function TeamActivity() {
     return () => { active = false; };
   }, [day]);
 
-  // One activity bucket per staff member visible to this viewer (RLS scopes
-  // profiles: exec sees all, admin/manager their department, sale themself).
   const activities = useMemo<UserActivity[]>(() => {
     const byUser = new Map<string, UserActivity>();
     for (const p of profiles) {
@@ -142,8 +140,6 @@ export default function TeamActivity() {
       if (f.created_by && byUser.has(f.created_by)) byUser.get(f.created_by)!.followUps.push(f);
     }
 
-    // Role hierarchy order (boss → super admin → admin → manager → sale),
-    // then by name inside each tier.
     const tierIndex = (r: string) => { const i = ROLE_TIERS.indexOf(r as (typeof ROLE_TIERS)[number]); return i === -1 ? 99 : i; };
     return Array.from(byUser.values()).sort((a, b) => {
       const d = tierIndex(a.profile.role) - tierIndex(b.profile.role);

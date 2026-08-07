@@ -13,13 +13,14 @@ import {
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetClose,
 } from '@/components/ui/sheet';
-import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode, Trash2, CheckCircle2, XCircle, ListPlus, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckSquare, Square } from 'lucide-react';
+import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode, Trash2, CheckCircle2, XCircle, ListPlus, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckSquare, Square, ChevronDown } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
-import { LEAD_STAGES, type Lead } from '@/types';
+import { LEAD_STAGES, type Lead, type Profile } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
+import { useDebounce } from '@/hooks/use-debounce';
 import { isManagerOrAbove, isDepartmentScoped, getDepartmentLabel, canDeleteLead } from '@/lib/permissions';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -34,7 +35,7 @@ import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
 
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuCheckboxItem, DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { exportAsCSV, exportAsExcel, exportAsPDF, exportAsHTML } from '@/lib/exportUtils';
 import { toast } from 'sonner';
@@ -44,9 +45,121 @@ function stageLabel(status: string) {
   return LEAD_STAGES.find((s) => s.value === status)?.label || status;
 }
 
-// Lives inside the undo toast itself (sonner keeps this element mounted for
-// the toast's whole lifetime), ticking its own countdown independent of
-// Leads' re-renders. Turns urgent — red + pulsing — for the last 5s.
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function shiftDay(day: string, delta: number) {
+  const d = new Date(`${day}T00:00:00`);
+  d.setDate(d.getDate() + delta);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Local-midnight-to-local-midnight window for a "YYYY-MM-DD" day, expressed
+ * as the UTC instants Postgres needs — same day-boundary convention Team
+ * Activity's own day picker already uses. */
+function localDayRangeUTC(day: string) {
+  const start = new Date(`${day}T00:00:00`);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { startISO: start.toISOString(), endISO: end.toISOString() };
+}
+
+type SortBy = 'newest' | 'oldest' | 'name' | 'followup' | 'grade';
+
+function sortSpec(sortBy: SortBy): { column: string; ascending: boolean; nullsFirst?: boolean } {
+  switch (sortBy) {
+    case 'oldest': return { column: 'created_at', ascending: true };
+    case 'name': return { column: 'name', ascending: true };
+    // Nulls last, not first — "no follow-up scheduled" shouldn't outrank
+    // "due soon", and no grade shouldn't outrank a graded lead.
+    case 'followup': return { column: 'next_follow_up_at', ascending: true, nullsFirst: false };
+    case 'grade': return { column: 'lead_grade', ascending: true, nullsFirst: false };
+    case 'newest':
+    default: return { column: 'created_at', ascending: false };
+  }
+}
+
+interface LeadFilters {
+  statusFilter: string;
+  projectFilters: string[];
+  deptFilter: string;
+  teamFilter: string;
+  agentFilter: string;
+  dateFilter: string;
+  search: string;
+  teamMemberIds: string[];
+  teamManagerId: string | null;
+  profiles: Profile[];
+}
+
+const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+/** Applies every active Leads-list filter directly to a Supabase query —
+ * shared by the paginated list fetch, the "select/export everything
+ * matching this filter" fetch, and the bulk-delete-by-filter path, so all
+ * three always agree on exactly what "matches the current filter" means.
+ * Works on both select() and delete() builders since both support
+ * eq/in/or/gte/lt. */
+function applyLeadFilters<Q extends { eq: any; in: any; or: any; gte: any; lt: any }>(query: Q, f: LeadFilters): Q {
+  let q = query;
+
+  if (f.statusFilter !== 'all') q = q.eq('status', f.statusFilter);
+  if (f.projectFilters.length > 0) q = q.in('preferred_project', f.projectFilters);
+  if (f.deptFilter !== 'all') q = q.eq('department_code', f.deptFilter);
+
+  if (f.teamFilter !== 'all') {
+    const memberIds = Array.from(new Set([...f.teamMemberIds, f.teamManagerId].filter(Boolean))) as string[];
+    q = memberIds.length > 0
+      ? q.or(`team_id.eq.${f.teamFilter},owner_id.in.(${memberIds.join(',')})`)
+      : q.eq('team_id', f.teamFilter);
+  }
+
+  if (f.agentFilter !== 'all') {
+    const ids = f.profiles.filter((p) => p.name === f.agentFilter).map((p) => p.id);
+    q = ids.length > 0 ? q.in('owner_id', ids) : q.eq('owner_id', NIL_UUID);
+  }
+
+  if (f.dateFilter) {
+    const { startISO, endISO } = localDayRangeUTC(f.dateFilter);
+    q = q.gte('created_at', startISO).lt('created_at', endISO);
+  }
+
+  const term = f.search.trim();
+  if (term) {
+    const esc = term.replace(/[%,()\\]/g, (c) => `\\${c}`);
+    const ownerIds = f.profiles.filter((p) => p.name.toLowerCase().includes(term.toLowerCase())).map((p) => p.id);
+    const clauses = [`name.ilike.%${esc}%`, `phone.ilike.%${esc}%`];
+    if (ownerIds.length > 0) clauses.push(`owner_id.in.(${ownerIds.join(',')})`);
+    q = q.or(clauses.join(','));
+  }
+
+  return q;
+}
+
+/** Fetches every lead matching the current filter regardless of page —
+ * needed for "Select All" (bulk delete) and Export, which both mean "every
+ * matching lead," not just the visible page. PostgREST caps any single
+ * request at 1000 rows, so this pages through in chunks internally; capped
+ * at 20,000 total as a sane ceiling for a single bulk action. */
+async function fetchAllMatchingLeads(f: LeadFilters, maxRows = 20_000): Promise<Lead[]> {
+  const chunkSize = 1000;
+  const all: Lead[] = [];
+  let from = 0;
+  while (all.length < maxRows) {
+    let query = supabase.from('leads').select('*') as any;
+    query = applyLeadFilters(query, f);
+    const { data, error } = await query.order('created_at', { ascending: false }).range(from, from + chunkSize - 1);
+    if (error) throw error;
+    const rows = (data || []) as Lead[];
+    all.push(...rows);
+    if (rows.length < chunkSize) break;
+    from += chunkSize;
+  }
+  return all.slice(0, maxRows);
+}
+
 function BulkDeleteUndoToast({ count }: { count: number }) {
   const [secondsLeft, setSecondsLeft] = useState(10);
   useEffect(() => {
@@ -67,7 +180,7 @@ function BulkDeleteUndoToast({ count }: { count: number }) {
       </div>
       <div className="min-w-0">
         <p className="font-medium leading-tight">{count} lead{count === 1 ? '' : 's'} deleted</p>
-        <p className="text-xs text-muted-foreground leading-tight">Undo before this disappears</p>
+        <p className="text-xs leading-tight text-muted-foreground">Undo before this disappears</p>
       </div>
     </div>
   );
@@ -79,13 +192,6 @@ function initialsOf(name: string) {
 
 const TH_STYLE = 'px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap';
 
-/** The complete, explicit set of spreadsheet columns the bulk-import flow
- * ever reads — every other column in an uploaded file (extra notes,
- * internal ids, whatever else a sales team's export happens to carry) is
- * ignored by construction: the insert payload below is built field-by-field
- * from this list, never by spreading a row, so there's no path for an
- * unrecognized column to end up in the database. Recognize a new column by
- * adding one entry here, not by touching the import logic itself. */
 type ImportField = 'name' | 'phone' | 'email' | 'preferred_project' | 'budget_range';
 const IMPORT_COLUMNS: { key: ImportField; label: string; aliases: string[] }[] = [
   { key: 'name', label: 'Name', aliases: ['name', 'customer', 'client'] },
@@ -125,8 +231,10 @@ export default function Leads() {
   const { nameOf, profiles } = useProfiles();
   const { departments } = useDepartments();
   const { teams, membersOf } = useTeams();
-  const [rawLeads, setRawLeads] = useState<Lead[]>([]);
+  const [pagedLeads, setPagedLeads] = useState<Lead[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [actionSheetLead, setActionSheetLead] = useState<Lead | null>(null);
@@ -135,12 +243,7 @@ export default function Leads() {
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
 
   const currentUser = user ? { id: user.id, role, department, managedTeamIds: myTeamIds } : null;
-  // Exec can delete any lead; Manager/Sale only a lead they currently own —
-  // matches the leads_delete RLS policy. Checked per-row below, not as a
-  // single flag, since ownership varies lead by lead.
   const canDeleteRow = (lead: Lead) => canDeleteLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
-  // Admin/Manager/Sale only ever see their own department (RLS), so the
-  // department filter is meaningless noise for them.
   const showDeptFilter = !isDepartmentScoped(role);
 
   const importFileRef = useRef<HTMLInputElement>(null);
@@ -149,173 +252,160 @@ export default function Leads() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [projectFilter, setProjectFilter] = useState('all');
+  const [projectFilters, setProjectFilters] = useState<string[]>([]);
   const [deptFilter, setDeptFilter] = useState('all');
   const [teamFilter, setTeamFilter] = useState('all');
   const [agentFilter, setAgentFilter] = useState('all');
+  const [dateFilter, setDateFilter] = useState('');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'followup' | 'grade'>('newest');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
-  // Bulk select/delete — Super Admin only, deliberately narrower than
-  // isExec()/canDeleteLead() (which would also allow Boss): this is a much
-  // more powerful, harder-to-undo action than the existing per-row delete,
-  // so it's scoped to exactly the one tier that was asked for.
   const isSuperAdmin = role === 'super_admin';
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Individually-checked rows keep the full Lead object (not just its id) —
+  // selection can span multiple pages, and once you've paged away a row's
+  // data is no longer sitting in pagedLeads, so the object has to be kept
+  // at the moment it's checked. selectAllMatchingActive is the separate
+  // "every lead matching the current filter, not just what's checked"
+  // toggle — resolved to actual rows on demand only when a bulk action is
+  // confirmed, never held in memory otherwise.
+  const [selectedLeads, setSelectedLeads] = useState<Map<string, Lead>>(new Map());
+  const [selectAllMatchingActive, setSelectAllMatchingActive] = useState(false);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeletePassword, setBulkDeletePassword] = useState('');
   const [bulkDeleting, setBulkDeleting] = useState(false);
-  // A confirmed bulk delete doesn't hit the DB right away — it's held for a
-  // 10s undo window (toast at top-right) and hidden from the list
-  // optimistically in the meantime. Tracked as a list of batches (not one
-  // flat id set) so starting a second bulk delete while an earlier one is
-  // still undoable doesn't clobber it.
   const [pendingBulkDeletes, setPendingBulkDeletes] = useState<{ id: string; leads: Lead[] }[]>([]);
   const pendingDeleteTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
+  const debouncedSearch = useDebounce(searchQuery, 300);
+  const teamOptions = useMemo(
+    () => teams.filter((t) => deptFilter === 'all' || t.department_code === deptFilter),
+    [teams, deptFilter]
+  );
+  const teamMemberIds = useMemo(() => (teamFilter === 'all' ? [] : membersOf(teamFilter)), [teamFilter, membersOf]);
+  const teamManagerId = useMemo(() => (teamFilter === 'all' ? null : teams.find((t) => t.id === teamFilter)?.manager_id ?? null), [teamFilter, teams]);
+
+  const currentFilters: LeadFilters = {
+    statusFilter, projectFilters, deptFilter, teamFilter, agentFilter, dateFilter,
+    search: debouncedSearch, teamMemberIds, teamManagerId, profiles,
+  };
+
+  // Every staff member can be a filter option, whether or not they
+  // currently own any leads — a small, always-accurate list sourced from
+  // profiles rather than derived from whatever's on the current page.
+  const uniqueAgents = useMemo(
+    () => Array.from(new Set(profiles.map((p) => p.name))).sort(),
+    [profiles]
+  );
+
+  // Project names are free-text, so there's no fixed table to read them
+  // from. This is a bounded, one-time sample (not re-run per filter/page
+  // change) — good enough for a filter dropdown without needing a
+  // dedicated distinct-values query.
+  const [uniqueProjects, setUniqueProjects] = useState<string[]>([]);
   useEffect(() => {
+    if (!user) return;
+    supabase.from('leads').select('preferred_project').not('preferred_project', 'is', null).limit(1000)
+      .then(({ data }) => {
+        const names = Array.from(new Set((data || []).map((r: any) => r.preferred_project as string).filter(Boolean)));
+        setUniqueProjects(names.sort());
+      });
+  }, [user?.id]);
+
+  const toggleProjectFilter = (project: string) => {
+    setProjectFilters((prev) => (prev.includes(project) ? prev.filter((p) => p !== project) : [...prev, project]));
+  };
+
+  // The actual page fetch — filters/sort/pagination all pushed into the
+  // query itself, with an exact total count returned alongside, instead of
+  // loading the whole table into the browser (which also silently caps at
+  // Supabase's 1000-row default and would just be wrong past that).
+  const fetchLeadsRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (!user) { setLoading(false); return; }
     let active = true;
-    const load = async () => {
-      const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
+
+    const fetchPage = async () => {
+      setLoading(true);
+      const { column, ascending, nullsFirst } = sortSpec(sortBy);
+      let query = supabase.from('leads').select('*', { count: 'exact' }) as any;
+      query = applyLeadFilters(query, currentFilters);
+      query = query.order(column, { ascending, nullsFirst }).range((page - 1) * pageSize, (page - 1) * pageSize + pageSize - 1);
+
+      const { data, error, count } = await query;
       if (!active) return;
       if (error) {
         toast.error('Could not load leads.');
       } else {
-        setRawLeads((data || []) as Lead[]);
+        setPagedLeads((data || []) as Lead[]);
+        setTotalCount(count ?? 0);
       }
       setLoading(false);
     };
-    load();
 
+    fetchLeadsRef.current = fetchPage;
+    fetchPage();
+
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    user?.id, page, pageSize, sortBy, statusFilter, projectFilters, deptFilter,
+    teamFilter, agentFilter, dateFilter, debouncedSearch, teamMemberIds, teamManagerId, profiles,
+  ]);
+
+  // Realtime just invalidates — any change anywhere on the leads table
+  // re-runs the exact same page fetch (debounced, so a burst of events
+  // from a bulk import/delete triggers one refetch, not dozens). This
+  // subscription only depends on the user, not on any filter/page state,
+  // so filter changes never tear down and reopen the socket.
+  useEffect(() => {
+    if (!user) return;
+    let debounceTimer: ReturnType<typeof setTimeout>;
+    const debouncedRefetch = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => fetchLeadsRef.current(), 400);
+    };
     const channel = supabase
       .channel('leads-list')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, debouncedRefetch)
       .subscribe();
-
     return () => {
-      active = false;
+      clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [user?.id]);
 
-  // Ids currently in the 10s undo window — hidden from the list as soon as
-  // a bulk delete is confirmed, before the actual DB delete ever runs.
   const pendingDeleteIdSet = useMemo(
     () => new Set(pendingBulkDeletes.flatMap((b) => b.leads.map((l) => l.id))),
     [pendingBulkDeletes]
   );
 
-  const leads: Lead[] = useMemo(
-    () => rawLeads
+  const visibleLeads = useMemo(
+    () => pagedLeads
       .filter((l) => !pendingDeleteIdSet.has(l.id))
       .map((l) => ({ ...l, owner_name: nameOf(l.owner_id) })),
-    [rawLeads, nameOf, pendingDeleteIdSet]
+    [pagedLeads, pendingDeleteIdSet, nameOf]
   );
 
-  const uniqueAgents = useMemo(
-    () => Array.from(new Set(leads.map((l) => l.owner_name).filter(Boolean))).sort() as string[],
-    [leads]
+  const pendingDeleteCount = useMemo(
+    () => pendingBulkDeletes.reduce((n, b) => n + b.leads.length, 0),
+    [pendingBulkDeletes]
   );
+  const visibleTotalCount = Math.max(0, totalCount - pendingDeleteCount);
 
-  // Narrow the team picker to the selected department (if any) so it never
-  // offers teams that couldn't possibly match.
-  const teamOptions = useMemo(
-    () => teams.filter((t) => deptFilter === 'all' || t.department_code === deptFilter),
-    [teams, deptFilter]
-  );
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
-  // A lead matches a team filter if it was explicitly filed under that team
-  // OR its current owner is a member of that team (or is the team's
-  // manager, for leads a manager assigned to themselves) — this second path
-  // is what makes the filter work for a person's leads created before they
-  // were put on a team, or before team_id was tagged at all, since the
-  // membership lookup always reflects current team assignment rather than a
-  // possibly-stale/absent field on the lead itself.
-  const teamMemberIds = useMemo(() => (teamFilter === 'all' ? [] : membersOf(teamFilter)), [teamFilter, membersOf]);
-  const teamManagerId = useMemo(() => (teamFilter === 'all' ? null : teams.find((t) => t.id === teamFilter)?.manager_id ?? null), [teamFilter, teams]);
-
-  const filteredLeads = useMemo(() => {
-    return leads.filter((lead) => {
-      const name = lead.name?.toLowerCase() || '';
-      const agent = (lead.owner_name || '').toLowerCase();
-      const q = searchQuery.toLowerCase();
-
-      const matchesSearch = !searchQuery || name.includes(q) || lead.phone?.includes(searchQuery) || agent.includes(q);
-      const matchesStatus = statusFilter === 'all' || lead.status === statusFilter;
-      const matchesProject = projectFilter === 'all' || lead.preferred_project === projectFilter;
-      const matchesDept = deptFilter === 'all' || lead.department_code === deptFilter;
-      const matchesTeam = teamFilter === 'all'
-        || lead.team_id === teamFilter
-        || (!!lead.owner_id && teamMemberIds.includes(lead.owner_id))
-        || (!!lead.owner_id && lead.owner_id === teamManagerId);
-      const matchesAgent = agentFilter === 'all' || lead.owner_name === agentFilter;
-
-      return matchesSearch && matchesStatus && matchesProject && matchesDept && matchesTeam && matchesAgent;
-    });
-  }, [leads, searchQuery, statusFilter, projectFilter, deptFilter, teamFilter, teamMemberIds, teamManagerId, agentFilter]);
-
-  const sortedLeads = useMemo(() => {
-    const arr = [...filteredLeads];
-    switch (sortBy) {
-      case 'oldest':
-        arr.sort((a, b) => a.created_at.localeCompare(b.created_at));
-        break;
-      case 'name':
-        arr.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-        break;
-      case 'followup':
-        // Leads with no scheduled follow-up sort to the end, not the top —
-        // "nothing due" shouldn't outrank "due soon".
-        arr.sort((a, b) => {
-          if (!a.next_follow_up_at && !b.next_follow_up_at) return 0;
-          if (!a.next_follow_up_at) return 1;
-          if (!b.next_follow_up_at) return -1;
-          return a.next_follow_up_at.localeCompare(b.next_follow_up_at);
-        });
-        break;
-      case 'grade': {
-        const rank: Record<string, number> = { A: 0, B: 1, C: 2 };
-        arr.sort((a, b) => (rank[a.lead_grade || ''] ?? 3) - (rank[b.lead_grade || ''] ?? 3));
-        break;
-      }
-      case 'newest':
-      default:
-        arr.sort((a, b) => b.created_at.localeCompare(a.created_at));
-    }
-    return arr;
-  }, [filteredLeads, sortBy]);
-
-  // A fresh filter/sort/page-size choice always starts back at page 1 — a
-  // stale page number from before would otherwise show a confusingly
-  // unrelated (or blank) slice of the new result set. Bulk selection is
-  // cleared for the same reason: it's scoped to "leads matching the current
-  // filter" (see the bulk-delete rule below), so carrying a selection over
-  // into a different filter view would be both confusing and risky.
   useEffect(() => {
     setPage(1);
-    setSelectedIds(new Set());
-  }, [searchQuery, statusFilter, projectFilter, deptFilter, teamFilter, agentFilter, sortBy, pageSize]);
+    setSelectedLeads(new Map());
+    setSelectAllMatchingActive(false);
+  }, [debouncedSearch, statusFilter, projectFilters, deptFilter, teamFilter, agentFilter, dateFilter, sortBy, pageSize]);
 
-  const totalPages = Math.max(1, Math.ceil(sortedLeads.length / pageSize));
-
-  // Realtime updates can shrink the result set out from under whatever page
-  // someone's currently viewing (e.g. another user deletes a lead) — snap
-  // back to the last valid page instead of rendering an empty one.
   useEffect(() => {
     setPage((p) => Math.min(p, totalPages));
   }, [totalPages]);
 
-  const pagedLeads = useMemo(
-    () => sortedLeads.slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize),
-    [sortedLeads, page, pageSize]
-  );
-
-  // The page/card list has no scroll container of its own — the whole page
-  // scrolls (see AppLayout's <main>) — so switching pages while scrolled
-  // deep into a long list would otherwise leave the new page's rows exactly
-  // where the old ones were, off-screen. Skips the very first render so
-  // landing on the page doesn't jump-scroll on its own.
   const isFirstPageRenderRef = useRef(true);
   useEffect(() => {
     if (isFirstPageRenderRef.current) { isFirstPageRenderRef.current = false; return; }
@@ -333,8 +423,6 @@ export default function Leads() {
     try {
       const { error } = await supabase.from('leads').delete().eq('id', deleteTarget.id);
       if (error) throw error;
-      // No DB trigger logs deletions (triggers only cover insert/update),
-      // so record it here like AuthContext does for login/logout.
       await supabase.from('audit_logs').insert({
         action: 'lead_deleted',
         target_table: 'leads',
@@ -351,47 +439,63 @@ export default function Leads() {
     }
   };
 
-  const toggleSelectLead = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+  const toggleSelectLead = (lead: Lead) => {
+    if (selectAllMatchingActive) return;
+    setSelectedLeads((prev) => {
+      const next = new Map(prev);
+      if (next.has(lead.id)) next.delete(lead.id); else next.set(lead.id, lead);
       return next;
     });
   };
 
-  // Selects/deselects every lead in the current *filtered* set — not just
-  // the current page — so "Select All" plus "Delete Selected" together
-  // always act on exactly what the active filters show, never on leads
-  // outside the current view.
-  const allFilteredSelected = sortedLeads.length > 0 && sortedLeads.every((l) => selectedIds.has(l.id));
+  // Deliberately all-or-nothing: "Select All" always means every lead
+  // matching the current filter, not just this page — mixing that with
+  // per-row deselection (Gmail's "select all, then uncheck one" pattern)
+  // would need to track exclusions across pages too, real complexity for a
+  // rare, password-gated admin action. Individual checkboxes are disabled
+  // while this is active for exactly that reason.
   const toggleSelectAll = () => {
-    setSelectedIds(allFilteredSelected ? new Set() : new Set(sortedLeads.map((l) => l.id)));
+    if (selectAllMatchingActive) {
+      setSelectAllMatchingActive(false);
+    } else {
+      setSelectAllMatchingActive(true);
+      setSelectedLeads(new Map());
+    }
   };
 
-  // Actually commits one undo-window batch to the DB — fires 10s after
-  // confirmation unless cancelled first via undoBulkDelete.
+  const bulkSelectionCount = selectAllMatchingActive ? visibleTotalCount : selectedLeads.size;
+
+  // Chunked so a very large "select all matching" delete never sends a
+  // single request with thousands of ids — DELETE ... WHERE id IN (...)
+  // encodes the id list into the URL, which has practical length limits
+  // long before a few thousand UUIDs would fit.
+  const DELETE_CHUNK_SIZE = 500;
+
   const commitBulkDelete = async (batchId: string, targets: Lead[]) => {
     pendingDeleteTimersRef.current.delete(batchId);
     try {
       const ids = targets.map((l) => l.id);
-      const { error } = await supabase.from('leads').delete().in('id', ids);
-      if (error) throw error;
+      for (let i = 0; i < ids.length; i += DELETE_CHUNK_SIZE) {
+        const chunk = ids.slice(i, i + DELETE_CHUNK_SIZE);
+        const { error } = await supabase.from('leads').delete().in('id', chunk);
+        if (error) throw error;
+      }
 
-      await supabase.from('audit_logs').insert(
-        targets.map((l) => ({
-          action: 'lead_deleted',
-          target_table: 'leads',
-          target_id: l.id,
-          performed_by: user?.id,
-          old_value: { name: l.name, phone: l.phone, owner_id: l.owner_id },
-        }))
-      );
+      for (let i = 0; i < targets.length; i += DELETE_CHUNK_SIZE) {
+        const chunk = targets.slice(i, i + DELETE_CHUNK_SIZE);
+        await supabase.from('audit_logs').insert(
+          chunk.map((l) => ({
+            action: 'lead_deleted',
+            target_table: 'leads',
+            target_id: l.id,
+            performed_by: user?.id,
+            old_value: { name: l.name, phone: l.phone, owner_id: l.owner_id },
+          }))
+        );
+      }
     } catch {
       toast.error('Could not delete the selected leads.');
     } finally {
-      // Either the realtime reload already dropped these rows (success), or
-      // it failed and they need to reappear instead of staying hidden
-      // forever — both cases mean the optimistic hide should end now.
       setPendingBulkDeletes((prev) => prev.filter((b) => b.id !== batchId));
     }
   };
@@ -410,20 +514,18 @@ export default function Leads() {
     if (!user?.email || !bulkDeletePassword) return;
     setBulkDeleting(true);
     try {
-      // Re-authenticating with the typed password IS the confirmation check
-      // — same pattern Settings.tsx uses for deleting one's own account.
-      // signInWithPassword doesn't disturb the current session either way.
       const { error: verifyErr } = await supabase.auth.signInWithPassword({ email: user.email, password: bulkDeletePassword });
       if (verifyErr) { toast.error('Password is incorrect.'); return; }
 
-      const targets = sortedLeads.filter((l) => selectedIds.has(l.id));
-      if (targets.length === 0) return;
+      const targets = selectAllMatchingActive
+        ? await fetchAllMatchingLeads(currentFilters)
+        : Array.from(selectedLeads.values());
+      if (targets.length === 0) { toast.error('No leads to delete.'); return; }
       const batchId = crypto.randomUUID();
 
-      // Hide immediately (optimistic) and close the confirm dialog — the
-      // actual delete is scheduled, not run yet, so it can still be undone.
       setPendingBulkDeletes((prev) => [...prev, { id: batchId, leads: targets }]);
-      setSelectedIds(new Set());
+      setSelectedLeads(new Map());
+      setSelectAllMatchingActive(false);
       setBulkDeleteOpen(false);
       setBulkDeletePassword('');
 
@@ -443,10 +545,22 @@ export default function Leads() {
     }
   };
 
-  // Reads the file, maps ONLY the columns in IMPORT_COLUMNS (anything else
-  // in the spreadsheet is never looked at), and stops at a preview — the
-  // actual insert only happens if the user confirms it in confirmImport()
-  // below, so a wrong column mapping never silently writes bad leads.
+  // Export always means "every lead matching the current filter," same as
+  // it did when the whole table lived in the browser — so it fetches on
+  // demand rather than being limited to whatever's on the visible page.
+  const handleExport = async (exportFn: (leads: Lead[]) => void) => {
+    setExporting(true);
+    try {
+      const rows = await fetchAllMatchingLeads(currentFilters);
+      if (rows.length === 0) { toast.error('No leads to export.'); return; }
+      exportFn(rows.map((l) => ({ ...l, owner_name: nameOf(l.owner_id) })));
+    } catch {
+      toast.error('Could not export leads.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user?.id) return;
@@ -530,31 +644,31 @@ export default function Leads() {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between md:justify-end gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between md:justify-end">
         <div className="md:hidden">
-          <h1 className="text-xl md:text-2xl font-semibold text-foreground">{t('leads.title')}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{t('leads.subtitle')}</p>
+          <h1 className="text-xl font-semibold md:text-2xl text-foreground">{t('leads.title')}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t('leads.subtitle')}</p>
         </div>
-        <div className="flex items-center flex-wrap justify-end gap-2 shrink-0">
+        <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
           <input ref={importFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} className="hidden" />
-          {isSuperAdmin && filteredLeads.length > 0 && (
+          {isSuperAdmin && visibleTotalCount > 0 && (
             <>
               <Button
                 variant="outline"
                 onClick={toggleSelectAll}
                 className="h-11 md:h-12 gap-2 active:scale-[0.98] transition-transform"
               >
-                {allFilteredSelected ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4" />}
-                <span className="hidden sm:inline">{allFilteredSelected ? 'Deselect All' : 'Select All'}</span>
+                {selectAllMatchingActive ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4" />}
+                <span className="hidden sm:inline">{selectAllMatchingActive ? 'Deselect All' : 'Select All'}</span>
               </Button>
-              {selectedIds.size > 0 && (
+              {bulkSelectionCount > 0 && (
                 <Button
                   variant="destructive"
                   onClick={() => setBulkDeleteOpen(true)}
                   className="h-11 md:h-12 gap-2 active:scale-[0.98] transition-transform"
                 >
                   <Trash2 className="w-4 h-4" />
-                  Delete Selected ({selectedIds.size})
+                  Delete Selected ({bulkSelectionCount})
                 </Button>
               )}
             </>
@@ -568,29 +682,29 @@ export default function Leads() {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
-                disabled={filteredLeads.length === 0}
+                disabled={visibleTotalCount === 0 || exporting}
                 className="h-11 md:h-12 gradient-primary hover:gradient-primary-hover text-white font-medium transition-all duration-300 hover:shadow-card-hover shrink-0 gap-2 active:scale-[0.98]"
               >
-                <Download className="w-4 h-4" />
+                {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                 Export
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-52">
               {agentFilter !== 'all' && (
                 <div className="px-2 py-1.5 text-xs text-muted-foreground border-b border-border mb-1">
-                  {agentFilter} · {filteredLeads.length} lead{filteredLeads.length > 1 ? 's' : ''}
+                  {agentFilter} · {visibleTotalCount} lead{visibleTotalCount > 1 ? 's' : ''}
                 </div>
               )}
-              <DropdownMenuItem onClick={() => exportAsExcel(filteredLeads)} className="gap-2 cursor-pointer">
+              <DropdownMenuItem onClick={() => handleExport(exportAsExcel)} className="gap-2 cursor-pointer">
                 <FileSpreadsheet className="w-4 h-4 text-success" /> Excel
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => exportAsPDF(filteredLeads)} className="gap-2 cursor-pointer">
+              <DropdownMenuItem onClick={() => handleExport(exportAsPDF)} className="gap-2 cursor-pointer">
                 <FileText className="w-4 h-4 text-destructive" /> PDF
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => exportAsHTML(filteredLeads)} className="gap-2 cursor-pointer">
+              <DropdownMenuItem onClick={() => handleExport(exportAsHTML)} className="gap-2 cursor-pointer">
                 <FileCode className="w-4 h-4 text-info" /> HTML
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => exportAsCSV(filteredLeads)} className="gap-2 cursor-pointer">
+              <DropdownMenuItem onClick={() => handleExport(exportAsCSV)} className="gap-2 cursor-pointer">
                 <FileText className="w-4 h-4 text-primary" /> CSV
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -599,17 +713,17 @@ export default function Leads() {
       </div>
 
       {/* Search & Filters */}
-      <Card className="shadow-card rounded-xl border-0">
+      <Card className="border-0 shadow-card rounded-xl">
         <CardContent className="p-4 md:p-5">
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-3">
               <div className="relative flex-1 min-w-0">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Search className="absolute w-4 h-4 -translate-y-1/2 left-3 top-1/2 text-muted-foreground" />
                 <Input
                   placeholder="Search by name, phone, or sales person…"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 h-12"
+                  className="h-12 pl-9"
                 />
               </div>
               {/* One-tap self filter — a manager sees their whole team's
@@ -641,32 +755,33 @@ export default function Leads() {
                   >
                     <SlidersHorizontal className="w-4 h-4" />
                     <span className="hidden sm:inline">Filters</span>
-                    {(statusFilter !== 'all' || projectFilter !== 'all' || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all') && (
+                    {(statusFilter !== 'all' || projectFilters.length > 0 || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all' || dateFilter) && (
                       <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
-                        {[statusFilter, projectFilter, deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length}
+                        {[statusFilter, deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0) + (dateFilter ? 1 : 0)}
                       </span>
                     )}
                   </button>
                 </SheetTrigger>
                 <SheetContent side="bottom" className="rounded-t-2xl border-t border-border px-6 pt-6 pb-8 max-h-[85dvh] overflow-y-auto">
                   <SheetHeader className="pb-4">
-                    <SheetTitle className="text-base font-semibold flex items-center gap-2">
+                    <SheetTitle className="flex items-center gap-2 text-base font-semibold">
                       <Filter className="w-4 h-4 text-primary" /> Search / Filter
                     </SheetTitle>
                   </SheetHeader>
                   <div className="space-y-5">
                     <FilterFields
                       statusFilter={statusFilter} setStatusFilter={setStatusFilter}
-                      projectFilter={projectFilter} setProjectFilter={setProjectFilter}
+                      projectFilters={projectFilters} setProjectFilters={setProjectFilters} toggleProjectFilter={toggleProjectFilter}
                       deptFilter={deptFilter} setDeptFilter={setDeptFilter}
                       teamFilter={teamFilter} setTeamFilter={setTeamFilter}
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
+                      dateFilter={dateFilter} setDateFilter={setDateFilter}
                       sortBy={sortBy} setSortBy={setSortBy}
-                      leads={leads} uniqueAgents={uniqueAgents} departments={departments} teamOptions={teamOptions}
+                      uniqueAgents={uniqueAgents} uniqueProjects={uniqueProjects} departments={departments} teamOptions={teamOptions}
                       showDept={showDeptFilter}
                     />
                     <SheetClose asChild>
-                      <button type="button" className="w-full h-12 rounded-lg bg-primary text-primary-foreground font-medium text-sm transition-colors hover:bg-primary/90 active:bg-primary/80">
+                      <button type="button" className="w-full h-12 text-sm font-medium transition-colors rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80">
                         Done
                       </button>
                     </SheetClose>
@@ -676,7 +791,7 @@ export default function Leads() {
             </div>
 
             {/* Desktop / tablet inline filters */}
-            <div className="hidden md:flex flex-wrap gap-3 shrink-0">
+            <div className="flex-wrap hidden gap-3 md:flex shrink-0">
               <Select value={statusFilter} onValueChange={setStatusFilter}>
                 <SelectTrigger className="w-[160px] h-11">
                   <Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
@@ -687,18 +802,41 @@ export default function Leads() {
                   {LEAD_STAGES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
                 </SelectContent>
               </Select>
-              <Select value={projectFilter} onValueChange={setProjectFilter}>
-                <SelectTrigger className="w-[180px] h-11">
-                  <Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
-                  <SelectValue placeholder="Project" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All projects</SelectItem>
-                  {Array.from(new Set(leads.map((l) => l.preferred_project).filter(Boolean))).sort().map((p) => (
-                    <SelectItem key={p as string} value={p as string}>{p}</SelectItem>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex h-11 w-[180px] items-center justify-between whitespace-nowrap rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background focus:outline-none focus:ring-1 focus:ring-ring"
+                  >
+                    <span className="flex items-center min-w-0">
+                      <Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground shrink-0" />
+                      <span className={`truncate ${projectFilters.length === 0 ? 'text-muted-foreground' : ''}`}>
+                        {projectFilters.length === 0 ? 'All projects' : projectFilters.length === 1 ? projectFilters[0] : `${projectFilters.length} projects`}
+                      </span>
+                    </span>
+                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0 ml-1" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-56 max-h-72 overflow-y-auto">
+                  <DropdownMenuItem
+                    className="cursor-pointer"
+                    onSelect={(e) => { e.preventDefault(); setProjectFilters([]); }}
+                  >
+                    All projects
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  {uniqueProjects.map((p) => (
+                    <DropdownMenuCheckboxItem
+                      key={p}
+                      checked={projectFilters.includes(p)}
+                      onSelect={(e) => e.preventDefault()}
+                      onCheckedChange={() => toggleProjectFilter(p)}
+                    >
+                      {p}
+                    </DropdownMenuCheckboxItem>
                   ))}
-                </SelectContent>
-              </Select>
+                </DropdownMenuContent>
+              </DropdownMenu>
               {showDeptFilter && (
                 <Select value={deptFilter} onValueChange={setDeptFilter}>
                   <SelectTrigger className="w-[140px] h-11">
@@ -746,12 +884,35 @@ export default function Leads() {
                   <SelectItem value="grade">Grade (A–C)</SelectItem>
                 </SelectContent>
               </Select>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button
+                  variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label="Previous day"
+                  onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <div className="flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="h-11 w-[150px] text-sm" />
+                </div>
+                <Button
+                  variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label="Next day"
+                  disabled={(dateFilter || todayStr()) >= todayStr()}
+                  onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+                {dateFilter && (
+                  <Button variant="ghost" className="h-11 px-3 text-xs font-medium text-primary" onClick={() => setDateFilter('')}>
+                    All dates
+                  </Button>
+                )}
+              </div>
             </div>
 
-            <div className="md:hidden flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 md:hidden">
               {[
                 ['status', statusFilter, setStatusFilter, statusFilter !== 'all' ? stageLabel(statusFilter) : ''],
-                ['project', projectFilter, setProjectFilter, projectFilter],
                 ['dept', deptFilter, setDeptFilter, deptFilter !== 'all' ? getDepartmentLabel(deptFilter) : ''],
                 ['team', teamFilter, setTeamFilter, teamFilter !== 'all' ? (teamOptions.find((tm) => tm.id === teamFilter)?.name || '') : ''],
                 ['agent', agentFilter, setAgentFilter, agentFilter],
@@ -768,18 +929,39 @@ export default function Leads() {
                   </button>
                 ) : null
               )}
+              {projectFilters.map((p) => (
+                <button
+                  key={`project-${p}`}
+                  type="button"
+                  onClick={() => toggleProjectFilter(p)}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
+                >
+                  {p}
+                  <X className="w-3 h-3" />
+                </button>
+              ))}
+              {dateFilter && (
+                <button
+                  type="button"
+                  onClick={() => setDateFilter('')}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
+                >
+                  {dateFilter}
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
           </div>
         </CardContent>
       </Card>
 
       {/* Mobile: Card List | Desktop: Table */}
-      <Card ref={leadsCardRef} className="shadow-card rounded-xl border-0 overflow-hidden">
+      <Card ref={leadsCardRef} className="overflow-hidden border-0 shadow-card rounded-xl">
         <CardHeader className="px-6 py-4 border-b border-border/40 bg-muted/10">
-          <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground/90">
+          <CardTitle className="flex items-center gap-2 text-sm font-semibold text-foreground/90">
             <FileText className="w-4 h-4 text-muted-foreground/80" />
             All Leads
-            <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2 py-0.5 rounded-full ml-1 tabular-nums">{filteredLeads.length}</span>
+            <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2 py-0.5 rounded-full ml-1 tabular-nums">{visibleTotalCount}</span>
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -788,11 +970,11 @@ export default function Leads() {
               <div className="flex flex-col items-center justify-center h-52 gap-2.5 text-muted-foreground">
                 <Loader2 className="w-7 h-7 animate-spin text-primary" />
               </div>
-            ) : filteredLeads.length === 0 ? (
+            ) : visibleTotalCount === 0 ? (
               <div className="flex flex-col items-center justify-center h-56 text-muted-foreground bg-muted/5">
-                <FileText className="w-9 h-9 mb-2 opacity-40" />
+                <FileText className="mb-2 w-9 h-9 opacity-40" />
                 <p className="text-sm font-medium">No leads found</p>
-                <p className="text-xs mt-1">Try adjusting your search or filters</p>
+                <p className="mt-1 text-xs">Try adjusting your search or filters</p>
               </div>
             ) : (
               <>
@@ -803,7 +985,7 @@ export default function Leads() {
                       <TableRow className="hover:bg-transparent bg-muted/30">
                         {isSuperAdmin && (
                           <TableHead className={`${TH_STYLE} pl-5 w-10`}>
-                            <Checkbox checked={allFilteredSelected} onCheckedChange={toggleSelectAll} aria-label="Select all leads" />
+                            <Checkbox checked={selectAllMatchingActive} onCheckedChange={toggleSelectAll} aria-label="Select all leads" />
                           </TableHead>
                         )}
                         <TableHead className={`${TH_STYLE} ${isSuperAdmin ? 'pl-3' : 'pl-5'}`}>Customer</TableHead>
@@ -816,16 +998,21 @@ export default function Leads() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {pagedLeads.map((lead) => (
-                        <TableRow key={lead.id} className="table-row-interactive table-row-zebra cursor-pointer border-border/40" onClick={() => navigate(`/lead/${lead.id}`)}>
+                      {visibleLeads.map((lead) => (
+                        <TableRow key={lead.id} className="cursor-pointer table-row-interactive table-row-zebra border-border/40" onClick={() => navigate(`/lead/${lead.id}`)}>
                           {isSuperAdmin && (
                             <TableCell className="pl-5 pr-0 py-2.5" onClick={(e) => e.stopPropagation()}>
-                              <Checkbox checked={selectedIds.has(lead.id)} onCheckedChange={() => toggleSelectLead(lead.id)} aria-label={`Select ${lead.name}`} />
+                              <Checkbox
+                                checked={selectAllMatchingActive || selectedLeads.has(lead.id)}
+                                disabled={selectAllMatchingActive}
+                                onCheckedChange={() => toggleSelectLead(lead)}
+                                aria-label={`Select ${lead.name}`}
+                              />
                             </TableCell>
                           )}
                           <TableCell className={`${isSuperAdmin ? 'pl-3' : 'pl-5'} pr-4 py-2.5`}>
                             <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
+                              <div className="flex items-center justify-center text-xs font-semibold rounded-full w-9 h-9 bg-primary/10 text-primary shrink-0">
                                 {initialsOf(lead.name)}
                               </div>
                               <div className="min-w-0">
@@ -854,15 +1041,15 @@ export default function Leads() {
                           <TableCell className="pl-4 pr-5 py-2.5 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
                             <div className="inline-flex items-center gap-0.5">
                               {lead.latitude && lead.longitude && (
-                                <Button variant="ghost" size="icon" title="View map" aria-label="View map" className="h-8 w-8 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => openMap(lead)}>
+                                <Button variant="ghost" size="icon" title="View map" aria-label="View map" className="w-8 h-8 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => openMap(lead)}>
                                   <MapPin className="w-4 h-4" />
                                 </Button>
                               )}
-                              <Button variant="ghost" size="icon" title="View details" aria-label="View details" className="h-8 w-8 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => navigate(`/lead/${lead.id}`)}>
+                              <Button variant="ghost" size="icon" title="View details" aria-label="View details" className="w-8 h-8 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => navigate(`/lead/${lead.id}`)}>
                                 <Eye className="w-4 h-4" />
                               </Button>
                               {canDeleteRow(lead) && (
-                                <Button variant="ghost" size="icon" title="Delete lead" aria-label="Delete lead" className="h-8 w-8 min-h-0 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteTarget(lead)}>
+                                <Button variant="ghost" size="icon" title="Delete lead" aria-label="Delete lead" className="w-8 h-8 min-h-0 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteTarget(lead)}>
                                   <Trash2 className="w-4 h-4" />
                                 </Button>
                               )}
@@ -875,12 +1062,17 @@ export default function Leads() {
                 </div>
 
                 {/* Mobile card list */}
-                <div className="md:hidden divide-y divide-border">
-                  {pagedLeads.map((lead) => (
+                <div className="divide-y md:hidden divide-border">
+                  {visibleLeads.map((lead) => (
                     <div key={lead.id} className="flex items-start gap-3 p-4 min-h-[72px] transition-colors hover:bg-muted/30 active:bg-muted/50">
                       {isSuperAdmin && (
                         <div className="pt-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                          <Checkbox checked={selectedIds.has(lead.id)} onCheckedChange={() => toggleSelectLead(lead.id)} aria-label={`Select ${lead.name}`} />
+                          <Checkbox
+                            checked={selectAllMatchingActive || selectedLeads.has(lead.id)}
+                            disabled={selectAllMatchingActive}
+                            onCheckedChange={() => toggleSelectLead(lead)}
+                            aria-label={`Select ${lead.name}`}
+                          />
                         </div>
                       )}
                       {/* A plain div (not <button>) — it needs to contain the
@@ -889,14 +1081,14 @@ export default function Leads() {
                           <button> per HTML semantics. */}
                       <div role="button" tabIndex={0} onClick={() => navigate(`/lead/${lead.id}`)} onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/lead/${lead.id}`); }} className="flex-1 min-w-0 space-y-2 text-left cursor-pointer">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-foreground truncate">{lead.name}</span>
+                          <span className="text-sm font-semibold truncate text-foreground">{lead.name}</span>
                           <StatusBadge status={stageLabel(lead.status)} color={statusColors?.[lead.status] || '#8FA3BF'} />
                         </div>
-                        <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                           <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{lead.phone || '—'}</span>
                           {lead.preferred_project && (<span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{lead.preferred_project}</span>)}
                         </div>
-                        <div className="flex items-center gap-2 flex-wrap">
+                        <div className="flex flex-wrap items-center gap-2">
                           <LeadLevelBadge grade={lead.lead_grade} />
                           {lead.owner_id ? (
                             <NameLink id={lead.owner_id} name={lead.owner_name || '—'} size="sm" showAvatar={false} className="text-xs text-muted-foreground" />
@@ -910,7 +1102,7 @@ export default function Leads() {
                           </div>
                         )}
                         {lead.latitude && lead.longitude && (
-                          <button type="button" onClick={(e) => { e.stopPropagation(); openMap(lead); }} className="inline-flex items-center gap-1 text-xs text-primary font-medium mt-1">
+                          <button type="button" onClick={(e) => { e.stopPropagation(); openMap(lead); }} className="inline-flex items-center gap-1 mt-1 text-xs font-medium text-primary">
                             <MapPin className="w-3 h-3" /> View map
                           </button>
                         )}
@@ -933,13 +1125,13 @@ export default function Leads() {
           {/* Pager — always shown once there's a result to page through, on
               both mobile and desktop; stacks to two rows on narrow screens
               instead of squeezing everything onto one. */}
-          {!loading && sortedLeads.length > 0 && (
+          {!loading && visibleTotalCount > 0 && (
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 md:px-6 py-3.5 border-t border-border/60 bg-muted/5">
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 <span>
                   Showing <span className="font-medium text-foreground tabular-nums">{(page - 1) * pageSize + 1}</span>
-                  –<span className="font-medium text-foreground tabular-nums">{Math.min(page * pageSize, sortedLeads.length)}</span>
-                  {' '}of <span className="font-medium text-foreground tabular-nums">{sortedLeads.length}</span>
+                  –<span className="font-medium text-foreground tabular-nums">{Math.min(page * pageSize, visibleTotalCount)}</span>
+                  {' '}of <span className="font-medium text-foreground tabular-nums">{visibleTotalCount}</span>
                 </span>
                 <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
                   <SelectTrigger className="h-8 w-[100px] text-xs"><SelectValue /></SelectTrigger>
@@ -949,17 +1141,17 @@ export default function Leads() {
                 </Select>
               </div>
               <div className="flex items-center gap-1">
-                <Button variant="outline" size="icon" className="h-8 w-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage(1)} aria-label="First page">
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage(1)} aria-label="First page">
                   <ChevronsLeft className="w-4 h-4" />
                 </Button>
-                <Button variant="outline" size="icon" className="h-8 w-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
                 <span className="px-2 text-xs font-medium text-foreground tabular-nums whitespace-nowrap">Page {page} of {totalPages}</span>
-                <Button variant="outline" size="icon" className="h-8 w-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
                   <ChevronRight className="w-4 h-4" />
                 </Button>
-                <Button variant="outline" size="icon" className="h-8 w-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage(totalPages)} aria-label="Last page">
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage(totalPages)} aria-label="Last page">
                   <ChevronsRight className="w-4 h-4" />
                 </Button>
               </div>
@@ -974,15 +1166,15 @@ export default function Leads() {
       <Dialog open={!!importPreview} onOpenChange={(open) => !open && !importing && setImportPreview(null)}>
         <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md rounded-xl p-6 border border-border/60 shadow-xl bg-card gap-0">
           <DialogHeader className="pb-4 border-b border-border/60">
-            <DialogTitle className="text-base font-semibold flex items-center gap-2"><ListPlus className="w-5 h-5 text-primary" /> Import Preview</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-base font-semibold"><ListPlus className="w-5 h-5 text-primary" /> Import Preview</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 mt-5">
+          <div className="mt-5 space-y-4">
             <p className="text-sm text-muted-foreground">
               Only these columns are ever read from your file — anything else in the spreadsheet is ignored.
             </p>
             <div className="space-y-1.5">
               {importPreview?.columnMap.map((col) => (
-                <div key={col.key} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-border bg-muted/20">
+                <div key={col.key} className="flex items-center justify-between gap-3 px-3 py-2 border rounded-lg border-border bg-muted/20">
                   <span className="text-sm font-medium text-foreground">{col.label}</span>
                   {col.header ? (
                     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> "{col.header}"</span>
@@ -1000,7 +1192,7 @@ export default function Leads() {
             </div>
             <div className="flex gap-3 pt-2">
               <Button type="button" variant="outline" className="flex-1 h-11" disabled={importing} onClick={() => setImportPreview(null)}>Cancel</Button>
-              <Button type="button" className="flex-1 h-11 gradient-primary text-white font-medium" disabled={importing} onClick={confirmImport}>
+              <Button type="button" className="flex-1 font-medium text-white h-11 gradient-primary" disabled={importing} onClick={confirmImport}>
                 {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : `Import ${importPreview?.rows.length ?? ''} Lead${importPreview?.rows.length === 1 ? '' : 's'}`}
               </Button>
             </div>
@@ -1016,10 +1208,10 @@ export default function Leads() {
           </DialogHeader>
           {selectedLead?.latitude && selectedLead?.longitude && (
             <div className="px-6 pb-6">
-              <p className="text-sm text-muted-foreground mb-3">
+              <p className="mb-3 text-sm text-muted-foreground">
                 Lat: {Number(selectedLead.latitude).toFixed(5)}, Lng: {Number(selectedLead.longitude).toFixed(5)}
               </p>
-              <div className="w-full aspect-video rounded-lg overflow-hidden border border-border">
+              <div className="w-full overflow-hidden border rounded-lg aspect-video border-border">
                 <iframe
                   title="Lead Location" width="100%" height="100%" style={{ border: 0 }} loading="lazy" allowFullScreen
                   referrerPolicy="no-referrer-when-downgrade"
@@ -1037,7 +1229,7 @@ export default function Leads() {
           {actionSheetLead && (
             <div className="space-y-1">
               <div className="px-6 pt-5 pb-3 border-b border-border">
-                <p className="text-base font-semibold text-foreground truncate">{actionSheetLead.name}</p>
+                <p className="text-base font-semibold truncate text-foreground">{actionSheetLead.name}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">{actionSheetLead.phone || 'No phone number'}</p>
               </div>
               <div className="px-2 py-2 space-y-1">
@@ -1046,24 +1238,24 @@ export default function Leads() {
                   onClick={() => { setActionSheetLead(null); navigate(`/lead/${actionSheetLead.id}`); }}
                   className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium text-foreground hover:bg-muted/50 active:bg-muted transition-colors"
                 >
-                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Eye className="w-4 h-4 text-primary" /></div>
+                  <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10 shrink-0"><Eye className="w-4 h-4 text-primary" /></div>
                   View details
                 </button>
                 {actionSheetLead.phone && (
                   <a href={`tel:${actionSheetLead.phone}`} onClick={() => setActionSheetLead(null)} className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium text-foreground hover:bg-muted/50 active:bg-muted transition-colors">
-                    <div className="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center shrink-0"><PhoneCall className="w-4 h-4 text-success" /></div>
+                    <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-success/10 shrink-0"><PhoneCall className="w-4 h-4 text-success" /></div>
                     Call
                   </a>
                 )}
                 {actionSheetLead.latitude && actionSheetLead.longitude && (
                   <button type="button" onClick={() => { openMap(actionSheetLead); setActionSheetLead(null); }} className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium text-foreground hover:bg-muted/50 active:bg-muted transition-colors">
-                    <div className="w-10 h-10 rounded-lg bg-info/10 flex items-center justify-center shrink-0"><Navigation className="w-4 h-4 text-info" /></div>
+                    <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-info/10 shrink-0"><Navigation className="w-4 h-4 text-info" /></div>
                     View location
                   </button>
                 )}
                 {canDeleteRow(actionSheetLead) && (
                   <button type="button" onClick={() => { setDeleteTarget(actionSheetLead); setActionSheetLead(null); }} className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium text-destructive hover:bg-destructive/5 active:bg-destructive/10 transition-colors">
-                    <div className="w-10 h-10 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0"><Trash2 className="w-4 h-4 text-destructive" /></div>
+                    <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-destructive/10 shrink-0"><Trash2 className="w-4 h-4 text-destructive" /></div>
                     Delete lead
                   </button>
                 )}
@@ -1109,7 +1301,7 @@ export default function Leads() {
       >
         <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {selectedIds.size} selected lead{selectedIds.size === 1 ? '' : 's'}?</AlertDialogTitle>
+            <AlertDialogTitle>Delete {bulkSelectionCount} selected lead{bulkSelectionCount === 1 ? '' : 's'}?</AlertDialogTitle>
             <AlertDialogDescription>
               This deletes every currently-selected lead — matching only what your active
               search and filters show — along with all of their follow-ups, warnings and history.
@@ -1136,7 +1328,7 @@ export default function Leads() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {bulkDeleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
-              {bulkDeleting ? 'Deleting…' : `Delete ${selectedIds.size}`}
+              {bulkDeleting ? 'Deleting…' : `Delete ${bulkSelectionCount}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1145,13 +1337,13 @@ export default function Leads() {
   );
 }
 
-function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProjectFilter, deptFilter, setDeptFilter, teamFilter, setTeamFilter, agentFilter, setAgentFilter, sortBy, setSortBy, leads, uniqueAgents, departments, teamOptions, showDept = true }: any) {
+function FilterFields({ statusFilter, setStatusFilter, projectFilters, toggleProjectFilter, setProjectFilters, deptFilter, setDeptFilter, teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter, sortBy, setSortBy, uniqueAgents, uniqueProjects, departments, teamOptions, showDept = true }: any) {
   return (
     <>
       <div className="space-y-2">
         <label className="text-sm font-medium text-foreground">Status</label>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="h-12 w-full"><SelectValue placeholder="Select status" /></SelectTrigger>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All statuses</SelectItem>
             {LEAD_STAGES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
@@ -1160,21 +1352,29 @@ function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProject
       </div>
       <div className="space-y-2">
         <label className="text-sm font-medium text-foreground">Project</label>
-        <Select value={projectFilter} onValueChange={setProjectFilter}>
-          <SelectTrigger className="h-12 w-full"><SelectValue placeholder="Select project" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All projects</SelectItem>
-            {Array.from(new Set(leads.map((l: Lead) => l.preferred_project).filter(Boolean))).sort().map((p) => (
-              <SelectItem key={p as string} value={p as string}>{p as string}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="max-h-48 overflow-y-auto rounded-md border border-input divide-y divide-border">
+          {uniqueProjects.length === 0 ? (
+            <p className="text-xs text-muted-foreground p-3">No projects yet</p>
+          ) : (
+            uniqueProjects.map((p: string) => (
+              <label key={p} className="flex items-center gap-2.5 px-3 py-2.5 text-sm cursor-pointer">
+                <Checkbox checked={projectFilters.includes(p)} onCheckedChange={() => toggleProjectFilter(p)} />
+                <span className="truncate">{p}</span>
+              </label>
+            ))
+          )}
+        </div>
+        {projectFilters.length > 0 && (
+          <button type="button" onClick={() => setProjectFilters([])} className="text-xs font-medium text-primary">
+            Clear projects
+          </button>
+        )}
       </div>
       {showDept && (
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">Department</label>
           <Select value={deptFilter} onValueChange={setDeptFilter}>
-            <SelectTrigger className="h-12 w-full"><SelectValue placeholder="Select department" /></SelectTrigger>
+            <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select department" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All departments</SelectItem>
               {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
@@ -1186,7 +1386,7 @@ function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProject
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">Team</label>
           <Select value={teamFilter} onValueChange={setTeamFilter}>
-            <SelectTrigger className="h-12 w-full"><SelectValue placeholder="Select team" /></SelectTrigger>
+            <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select team" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All teams</SelectItem>
               {teamOptions.map((tm: { id: string; name: string }) => (<SelectItem key={tm.id} value={tm.id}>{tm.name}</SelectItem>))}
@@ -1197,7 +1397,7 @@ function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProject
       <div className="space-y-2">
         <label className="text-sm font-medium text-foreground">Sales Person</label>
         <Select value={agentFilter} onValueChange={setAgentFilter}>
-          <SelectTrigger className="h-12 w-full"><SelectValue placeholder="Select sales person" /></SelectTrigger>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select sales person" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All sales people</SelectItem>
             {uniqueAgents.map((a: string) => (<SelectItem key={a} value={a}>{a}</SelectItem>))}
@@ -1207,7 +1407,7 @@ function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProject
       <div className="space-y-2">
         <label className="text-sm font-medium text-foreground">Sort By</label>
         <Select value={sortBy} onValueChange={setSortBy}>
-          <SelectTrigger className="h-12 w-full"><SelectValue placeholder="Sort" /></SelectTrigger>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Sort" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="newest">Newest first</SelectItem>
             <SelectItem value="oldest">Oldest first</SelectItem>
@@ -1216,6 +1416,30 @@ function FilterFields({ statusFilter, setStatusFilter, projectFilter, setProject
             <SelectItem value="grade">Grade (A–C)</SelectItem>
           </SelectContent>
         </Select>
+      </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-foreground">Date Added</label>
+        <div className="flex items-center gap-1.5">
+          <Button
+            type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Previous day"
+            onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
+          <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="w-full h-12 text-sm" />
+          <Button
+            type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Next day"
+            disabled={(dateFilter || todayStr()) >= todayStr()}
+            onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
+          >
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+        </div>
+        {dateFilter && (
+          <button type="button" onClick={() => setDateFilter('')} className="text-xs font-medium text-primary">
+            Clear — show all dates
+          </button>
+        )}
       </div>
     </>
   );

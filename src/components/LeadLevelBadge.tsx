@@ -1,4 +1,3 @@
-import React from 'react';
 import type { LeadGrade } from '@/types';
 
 interface LeadLevelBadgeProps {

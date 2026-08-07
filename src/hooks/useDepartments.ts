@@ -1,18 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/db/supabase';
+import { cacheGet, cacheSet } from '@/lib/localCache';
 import { setDepartmentsCache, type DepartmentRecord } from '@/lib/departments';
 
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_KEY = 'departments-list';
+
 /** Departments are managed data (public.departments), not a fixed list —
- * this hook is the single place every department <Select> should read from. */
+ * this hook is the single place every department <Select> should read from.
+ * Visible identically to every authenticated user (departments_select RLS
+ * has no per-viewer scoping), so the cache doesn't need to be user-keyed. */
 export function useDepartments() {
-  const [departments, setDepartments] = useState<DepartmentRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cached = cacheGet<DepartmentRecord[]>(CACHE_KEY, CACHE_TTL_MS);
+  if (cached) setDepartmentsCache(cached);
+  const [departments, setDepartments] = useState<DepartmentRecord[]>(cached ?? []);
+  const [loading, setLoading] = useState(cached === undefined);
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('departments').select('code, name, is_active').eq('is_active', true).order('name');
     const list = (data || []) as DepartmentRecord[];
     setDepartments(list);
     setDepartmentsCache(list);
+    cacheSet(CACHE_KEY, list);
     setLoading(false);
   }, []);
 

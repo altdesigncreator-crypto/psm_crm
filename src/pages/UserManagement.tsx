@@ -28,14 +28,19 @@ import { useTeams } from '@/hooks/useTeams';
 import { WARNING_REASONS, type WarningReason } from '@/types';
 import type { Profile } from '@/types';
 import { toast } from 'sonner';
+import { cacheGet, cacheSetDebounced } from '@/lib/localCache';
+
+const STAFF_CACHE_TTL_MS = 5 * 60 * 1000;
+const staffCacheKey = (userId: string) => `staff-directory:${userId}`;
 
 export default function UserManagement() {
   const { user, role } = useAuth();
   const { departments } = useDepartments();
   const { teams, teamsOf, teamsManagedBy, membersOf } = useTeams();
   usePageHeader('Staff', 'Manage and track your active staff');
-  const [staff, setStaff] = useState<Profile[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cachedStaff = user ? cacheGet<Profile[]>(staffCacheKey(user.id), STAFF_CACHE_TTL_MS) : undefined;
+  const [staff, setStaff] = useState<Profile[]>(cachedStaff ?? []);
+  const [loading, setLoading] = useState(cachedStaff === undefined);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [deptFilter, setDeptFilter] = useState('all');
@@ -69,14 +74,9 @@ export default function UserManagement() {
   const [warningMessage, setWarningMessage] = useState('');
   const [savingWarning, setSavingWarning] = useState(false);
 
-  // Boss/Super Admin can create, edit, and deactivate staff accounts (FRD).
-  // Admin can open this page too, but only to view the directory and issue
-  // warnings — not to manage accounts.
   const canManageStaff = isExec(role);
   const canView = isAdminOrAbove(role);
 
-  // Teams this Manager runs, and everyone on those teams — narrows "Warn"
-  // from whole-department to just the people they actually manage.
   const managedPersonIds = useMemo(() => {
     if (role !== 'manager' || !user) return [];
     return teamsManagedBy(user.id).flatMap((t) => membersOf(t.id));
@@ -92,19 +92,34 @@ export default function UserManagement() {
   }, [departments, newDept]);
 
   useEffect(() => {
-    if (!canView) return;
+    if (!canView || !user) return;
     let active = true;
+    const writeCache = (list: Profile[]) => { cacheSetDebounced(staffCacheKey(user.id), list); return list; };
     const load = async () => {
       const { data, error } = await supabase.from('profiles').select('*').order('name');
       if (!active) return;
       if (error) toast.error('Could not load staff.');
-      else setStaff((data || []) as Profile[]);
+      else setStaff(writeCache((data || []) as Profile[]));
       setLoading(false);
     };
     load();
-    const channel = supabase.channel('user-management').on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => load()).subscribe();
+    const channel = supabase
+      .channel('user-management')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'profiles' }, (payload) => {
+        const row = payload.new as Profile;
+        setStaff((prev) => writeCache(prev.some((s) => s.id === row.id) ? prev : [...prev, row].sort((a, b) => a.name.localeCompare(b.name))));
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, (payload) => {
+        const row = payload.new as Profile;
+        setStaff((prev) => writeCache(prev.map((s) => (s.id === row.id ? row : s)).sort((a, b) => a.name.localeCompare(b.name))));
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'profiles' }, (payload) => {
+        const oldId = (payload.old as { id: string }).id;
+        setStaff((prev) => writeCache(prev.filter((s) => s.id !== oldId)));
+      })
+      .subscribe();
     return () => { active = false; supabase.removeChannel(channel); };
-  }, [canView]);
+  }, [canView, user?.id]);
 
   if (!canView) {
     return (

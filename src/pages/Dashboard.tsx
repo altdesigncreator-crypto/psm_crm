@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/db/supabase';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -17,11 +17,16 @@ import { LEAD_STAGES, type Lead } from '@/types';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
+import { useAuth } from '@/contexts/AuthContext';
 import StatusColorDialog from '@/components/StatusColorDialog';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
 import { exportAsExcel, exportAsPDF, exportAsHTML } from '@/lib/exportUtils';
 import { toast } from 'sonner';
+import { cacheGet, cacheSetDebounced } from '@/lib/localCache';
+
+const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
+const dashboardCacheKey = (userId: string) => `dashboard-leads:${userId}`;
 
 ChartJS.register(ArcElement, ChartTooltip, ChartLegend, CategoryScale, LinearScale, BarElement);
 
@@ -58,29 +63,44 @@ function filterLeadsByDate(leads: Lead[], filter: DateFilter): Lead[] {
 }
 
 export default function Dashboard() {
-  const [rawLeads, setRawLeads] = useState<Lead[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const cachedLeads = user ? cacheGet<Lead[]>(dashboardCacheKey(user.id), DASHBOARD_CACHE_TTL_MS) : undefined;
+  const [rawLeads, setRawLeads] = useState<Lead[]>(cachedLeads ?? []);
+  const [loading, setLoading] = useState(cachedLeads === undefined);
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const { colors: statusColors, saveColors } = useStatusColors();
   const { nameOf } = useProfiles();
   usePageHeader('Dashboard', 'Executive overview of sales performance');
 
   useEffect(() => {
+    if (!user) return;
     let active = true;
+    const writeCache = (list: Lead[]) => { cacheSetDebounced(dashboardCacheKey(user.id), list); return list; };
     const load = async () => {
       const { data, error } = await supabase.from('leads').select('*').order('created_at', { ascending: false });
       if (!active) return;
       if (error) toast.error('Could not load dashboard data.');
-      else setRawLeads((data || []) as Lead[]);
+      else setRawLeads(writeCache((data || []) as Lead[]));
       setLoading(false);
     };
     load();
     const channel = supabase
       .channel('dashboard-leads')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, () => load())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'leads' }, (payload) => {
+        const row = payload.new as Lead;
+        setRawLeads((prev) => writeCache(prev.some((l) => l.id === row.id) ? prev : [row, ...prev]));
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'leads' }, (payload) => {
+        const row = payload.new as Lead;
+        setRawLeads((prev) => writeCache(prev.map((l) => (l.id === row.id ? row : l))));
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'leads' }, (payload) => {
+        const oldId = (payload.old as { id: string }).id;
+        setRawLeads((prev) => writeCache(prev.filter((l) => l.id !== oldId)));
+      })
       .subscribe();
     return () => { active = false; supabase.removeChannel(channel); };
-  }, []);
+  }, [user?.id]);
 
   const filteredLeads = useMemo(() => filterLeadsByDate(rawLeads, dateFilter), [rawLeads, dateFilter]);
 
@@ -143,8 +163,6 @@ export default function Dashboard() {
   };
 
   const agentPerformance = useMemo(() => {
-    // Keyed by owner_id (not the resolved name string) so each row can link
-    // to that agent's profile — a name-keyed map would discard the id.
     const agents: Record<string, { name: string; count: number }> = {};
     for (const l of soldLeads) {
       if (!l.owner_id) continue;

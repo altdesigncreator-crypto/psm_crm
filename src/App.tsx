@@ -26,27 +26,14 @@ const AppContent: React.FC = () => {
   const stillLoading = loading || maintenanceLoading;
   const handleSplashFinish = useCallback(() => setSplashDone(true), []);
 
-  // The branded intro doubles as the loading screen while the Supabase
-  // auth session settles and the maintenance check resolves — one loading
-  // experience. It stays mounted (rather than being swapped out the instant
-  // loading flips false) so it can finish its own race-to-100%/fade-out
-  // animation and only then hand control back via onFinish.
   if (!splashDone) {
     return <SplashScreen loading={stillLoading} onFinish={handleSplashFinish} />;
   }
 
-  // Site-wide maintenance gate — blocks every visitor, signed in or not,
-  // even one with the app already open (useMaintenanceStatus updates live).
-  // /system-banner-admin is the one route that must never be blocked, since
-  // that's the only place this can be turned back off.
   if (maintenanceOn && !location.pathname.startsWith('/system-banner-admin')) {
     return <MaintenancePage settings={maintenanceSettings} />;
   }
 
-  // A "Remember me" session was silently restored on this app load and the
-  // user enrolled Face ID / Fingerprint on this device — let them choose to
-  // sign in with biometrics or fall back to email & password. A fresh
-  // password login never lands here (see AuthContext).
   if (user && needsBiometricUnlock) {
     return <BiometricLock onUnlock={completeBiometricUnlock} />;
   }

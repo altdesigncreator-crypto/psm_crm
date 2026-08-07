@@ -1,4 +1,3 @@
-import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Shield, ShieldAlert, Check, X } from 'lucide-react';
@@ -17,9 +16,6 @@ const ACCESS_STYLE: Record<Access, string> = {
   view: 'bg-muted text-muted-foreground border-border',
 };
 
-// Mirrors the FRD's Permission Matrix (section 5) and the RLS policies in
-// database/crm.sql — this page is a read-only reference, not a live editor,
-// since the actual enforcement lives in Postgres RLS + src/lib/permissions.ts.
 const MATRIX: { feature: string; access: Record<string, Access> }[] = [
   { feature: 'Dashboard', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'branch', sale: 'own' } },
   { feature: 'Lead Management', access: { boss: 'yes', super_admin: 'yes', admin: 'yes', manager: 'branch', sale: 'own' } },

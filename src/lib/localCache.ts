@@ -26,8 +26,6 @@ export function cacheSet<T>(key: string, data: T): void {
     const envelope: CacheEnvelope<T> = { v: CACHE_VERSION, t: Date.now(), data };
     localStorage.setItem(PREFIX + key, JSON.stringify(envelope));
   } catch {
-    // Storage full, disabled, or unavailable (private browsing) — caching is
-    // a pure speed optimization, never a requirement, so fail silently.
   }
 }
 
@@ -52,4 +50,24 @@ export function cacheClear(key: string): void {
   } catch {
     // noop — nothing to clean up if storage isn't available.
   }
+}
+
+const pendingWrites = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Same as cacheSet, but coalesces bursts of rapid calls for the same key
+ * into a single write. Realtime patch handlers call this on every single
+ * INSERT/UPDATE/DELETE — during a bulk import or bulk delete that's dozens
+ * of events within milliseconds, and without coalescing that's dozens of
+ * full JSON.stringify + localStorage.setItem passes over an array that's
+ * already gotten large, each one a synchronous main-thread stall for no
+ * visible benefit (the UI itself updates instantly via React state on every
+ * event regardless — only the persistence step is delayed). Only the last
+ * write in a burst actually reaches storage. */
+export function cacheSetDebounced<T>(key: string, data: T, delayMs = 150): void {
+  const existing = pendingWrites.get(key);
+  if (existing) clearTimeout(existing);
+  pendingWrites.set(key, setTimeout(() => {
+    pendingWrites.delete(key);
+    cacheSet(key, data);
+  }, delayMs));
 }

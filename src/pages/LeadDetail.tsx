@@ -8,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  ArrowLeft, User, Phone, Mail, MapPin, Building2, DollarSign, Target, Calendar,
+  ArrowLeft, User, Phone, Mail, MapPin, Building2, DollarSign, Target,
   TrendingUp, MessageSquare, Navigation, Clock, FileText, Loader2,
   Plus, AlertTriangle, ArrowRightLeft, History, Trash2, Camera, CalendarClock, X, Eye, RefreshCw,
   Edit2, Check,
@@ -29,7 +29,7 @@ import { useProfiles } from '@/hooks/useProfiles';
 import { useTeams } from '@/hooks/useTeams';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
-import { canEditLead, canAddFollowUp, canAssignLead, canIssueWarning, canMonitorLead, canDeleteLead, isManagerOrAbove } from '@/lib/permissions';
+import { canEditLead, canAddFollowUp, canAssignLead, canIssueWarning, canMonitorLead, canDeleteLead } from '@/lib/permissions';
 import { supabase } from '@/db/supabase';
 import { toast } from 'sonner';
 import StatusBadge from '@/components/StatusBadge';
@@ -117,12 +117,6 @@ export default function LeadDetail() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // Reassignment candidates come from the lead's own team, not a flat
-  // department roster — a manager only ever reaches this block for a lead
-  // filed under a team they run (see canReassign below), and a sales
-  // person's home department can differ from a team's. A team-less lead
-  // (legacy data, or admin/exec working outside any team) falls back to the
-  // department roster, the only case that still reaches this branch.
   const teamStaff = lead?.team_id ? membersOf(lead.team_id) : null;
   const departmentStaff = teamStaff
     ? profiles.filter((p) => teamStaff.includes(p.id) && p.role === 'sale')
@@ -154,12 +148,7 @@ export default function LeadDetail() {
   const canFollowUp = canAddFollowUp(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
   const canWarn = canIssueWarning(currentUser) && canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
   const canReassign = canAssignLead(currentUser) && canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
-  // Exec can delete any lead; Manager/Sale only a lead they currently own —
-  // matches the leads_delete RLS policy.
   const canDelete = canDeleteLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
-  // Mirrors can_manage_lead_photos() in crm.sql — deliberately not gated by
-  // lead.status the way `editable` is, since attaching a visit/appointment
-  // photo (evidence, not lead data) is still meaningful after a sale closes.
   const canManagePhotos = canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id }) || lead.created_by === user?.id;
 
   const startEdit = () => {

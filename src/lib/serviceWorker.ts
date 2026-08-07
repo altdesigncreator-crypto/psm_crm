@@ -13,7 +13,6 @@ export async function registerServiceWorker(): Promise<void> {
 
   try {
     const registration = await navigator.serviceWorker.register(SW_PATH);
-    console.log('[SW] Registered:', registration.scope);
 
     // Listen for updates
     registration.addEventListener('updatefound', () => {
@@ -22,9 +21,6 @@ export async function registerServiceWorker(): Promise<void> {
 
       newWorker.addEventListener('statechange', () => {
         if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-          // New content is available; show refresh prompt (optional)
-          console.log('[SW] New version available. Refresh to update.');
-          // Could dispatch a custom event here for a UI "Update" button
           window.dispatchEvent(new CustomEvent('sw-update-available'));
         }
       });

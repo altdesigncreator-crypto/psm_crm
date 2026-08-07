@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
@@ -22,10 +22,6 @@ import { LEAD_STAGES, FOLLOWUP_STATUSES, type Lead, type FollowUp, type Profile 
 
 function initialsOf(name: string): string {
   return name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('') || '?';
-}
-
-function stageLabel(status: string) {
-  return LEAD_STAGES.find((s) => s.value === status)?.label || status;
 }
 
 function followUpStatusLabel(status: string) {
@@ -96,17 +92,11 @@ export default function Profile() {
     totalFollowUps: followUps.length,
   };
 
-  // Daily Activity — what this person did on a given day: leads added and
-  // follow-ups logged. Derived from the already-loaded full history above
-  // (no extra query needed), filtered to the selected day.
   const [day, setDay] = useState(todayStr());
   const isToday = day === todayStr();
   const dayLeads = useMemo(() => leads.filter((l) => localDateStr(l.created_at) === day), [leads, day]);
   const dayFollowUps = useMemo(() => followUps.filter((f) => localDateStr(f.created_at) === day), [followUps, day]);
 
-  // Sales Person → the teams they're on (and each team's manager). Manager →
-  // the teams they run. Admin/Boss/Super Admin aren't part of the team model
-  // (see the recent department→team restructure), so show their scope instead.
   const mySalesTeams = useMemo(() => {
     if (!profile || profile.role !== 'sale') return [];
     const ids = teamsOf(profile.id);

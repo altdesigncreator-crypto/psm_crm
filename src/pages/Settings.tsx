@@ -94,9 +94,6 @@ export default function Settings() {
     toast.success('Profile updated.');
   };
 
-  // Picking a photo only opens the crop dialog (handleAvatarCropped does the
-  // actual upload) — orientation-corrected first so the crop preview isn't
-  // sideways on photos straight from a phone camera.
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user?.id) return;
@@ -141,8 +138,6 @@ export default function Settings() {
 
     setChangingPw(true);
     try {
-      // Supabase's updateUser doesn't ask for the old password, so verify it
-      // ourselves by re-authenticating before allowing the change.
       const { error: verifyErr } = await supabase.auth.signInWithPassword({ email: user.email, password: pwCurrent });
       if (verifyErr) { toast.error('Current password is incorrect.'); return; }
 
@@ -176,8 +171,6 @@ export default function Settings() {
 
       disableBiometric(user.id);
       toast.success('Your account has been deleted.');
-      // Plain signOut (not context logout) — the profile row is gone, so the
-      // audit-logged logout would fail its foreign key.
       await supabase.auth.signOut();
     } catch (err: any) {
       toast.error(err.message || 'Could not delete your account.');
@@ -188,11 +181,6 @@ export default function Settings() {
     }
   };
 
-  // Edge Functions can't shell out to pg_dump, so this calls a function that
-  // triggers the real db-backup.yml GitHub Actions workflow, waits for it to
-  // finish (~30-90s), and relays the resulting artifact straight back —
-  // fetch() directly (not supabase.functions.invoke) so the zip comes back
-  // as a blob instead of being parsed as JSON.
   const handleDownloadBackup = async () => {
     setDownloadingBackup(true);
     toast.info('Generating backup… this can take up to a minute.');
@@ -268,8 +256,6 @@ export default function Settings() {
     const { code, name } = deptDeleteTarget;
     setDeletingDept(true);
     try {
-      // Current staff or leads in the department block deletion — those must
-      // be moved deliberately, not orphaned.
       const [{ count: staffCount }, { count: leadCount }] = await Promise.all([
         supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('department_code', code),
         supabase.from('leads').select('id', { count: 'exact', head: true }).eq('department_code', code),
@@ -281,8 +267,6 @@ export default function Settings() {
 
       const error = await deleteDepartment(code);
       if (error) {
-        // FK violation: historical rows still reference the code — deactivate
-        // instead so history keeps its labels.
         if ((error as { code?: string }).code === '23503') {
           const softErr = await deactivateDepartment(code);
           if (softErr) { toast.error(softErr.message || 'Could not remove the department.'); return; }

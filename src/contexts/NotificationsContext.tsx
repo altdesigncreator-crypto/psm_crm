@@ -29,14 +29,6 @@ const NotificationsContext = createContext<NotificationsContextType | undefined>
 
 function getTodayStr() { return new Date().toISOString().slice(0, 10); }
 
-// Follow-up reminders (due-today/overdue/upcoming) aren't real rows — they're
-// recomputed from leads.next_follow_up_at on every load and every realtime
-// change, so there's nothing in the database to persist "read" against.
-// Read state for them lives here instead, keyed per user so switching
-// accounts on the same browser never leaks one person's read state into
-// another's. IDs are type-prefixed (due-X/overdue-X/upcoming-X), so a lead
-// that slides from "upcoming" to "overdue" correctly reappears as unread —
-// that's a materially more urgent notification, not the same one.
 function computedReadKey(userId: string) { return `psm_read_computed_notifs_${userId}`; }
 
 function loadComputedReadIds(userId: string): Set<string> {
@@ -92,19 +84,19 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     return () => { active = false; supabase.removeChannel(channel); };
   }, [user?.id]);
 
+  const leadsWithFollowUpRef = useRef<Map<string, Pick<Lead, 'id' | 'name' | 'phone' | 'next_follow_up_at'>>>(new Map());
+
   useEffect(() => {
     if (!user?.id) { setFollowUpNotifications([]); return; }
     computedReadIdsRef.current = loadComputedReadIds(user.id);
     let active = true;
-    const load = async () => {
-      const { data } = await supabase.from('leads').select('id, name, phone, next_follow_up_at').not('next_follow_up_at', 'is', null);
-      if (!active) return;
-      const leads = (data || []) as Pick<Lead, 'id' | 'name' | 'phone' | 'next_follow_up_at'>[];
+
+    const recompute = () => {
       const today = getTodayStr();
       const computed: Notification[] = [];
       const isRead = (id: string) => computedReadIdsRef.current.has(id);
 
-      leads.forEach((lead) => {
+      leadsWithFollowUpRef.current.forEach((lead) => {
         if (!lead.next_follow_up_at) return;
         const followDate = lead.next_follow_up_at.slice(0, 10);
         const cmp = followDate.localeCompare(today);
@@ -136,8 +128,36 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       initializedRef.current = true;
       setFollowUpNotifications(computed.sort((a, b) => (a.date || '').localeCompare(b.date || '')));
     };
+
+    const load = async () => {
+      const { data } = await supabase.from('leads').select('id, name, phone, next_follow_up_at').not('next_follow_up_at', 'is', null);
+      if (!active) return;
+      const leads = (data || []) as Pick<Lead, 'id' | 'name' | 'phone' | 'next_follow_up_at'>[];
+      leadsWithFollowUpRef.current = new Map(leads.map((l) => [l.id, l]));
+      recompute();
+    };
     load();
-    const channel = supabase.channel('followup-reminders').on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, () => load()).subscribe();
+
+    const channel = supabase
+      .channel('followup-reminders')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'leads' }, (payload) => {
+        const row = payload.new as Lead;
+        if (row.next_follow_up_at) leadsWithFollowUpRef.current.set(row.id, row);
+        recompute();
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'leads' }, (payload) => {
+        const row = payload.new as Lead;
+        if (row.next_follow_up_at) leadsWithFollowUpRef.current.set(row.id, row);
+        else leadsWithFollowUpRef.current.delete(row.id);
+        recompute();
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'leads' }, (payload) => {
+        const oldId = (payload.old as { id: string }).id;
+        leadsWithFollowUpRef.current.delete(oldId);
+        recompute();
+      })
+      .subscribe();
+
     return () => { active = false; supabase.removeChannel(channel); };
   }, [user?.id]);
 

@@ -177,29 +177,17 @@ export function canAccessRoute(role: RoleTier | null | undefined, routeKey: Rout
     case 'settings':
       return true; // personal profile/preferences page; system-config section within it is exec-gated
     case 'user-management':
-      // FRD: creating/editing/deactivating staff accounts is Boss/Super Admin
-      // only. Admin can still open this page to view the directory and issue
-      // warnings (see canWarnStaff) — that's enforced inside the page itself,
-      // not by blocking the route.
       return isAdminOrAbove(role);
     case 'role-management':
       return isExec(role);
     case 'team-management':
-      // Admin manages their own department's team structure (RLS scopes the
-      // writes); exec can manage any department. Manager/Sales don't get
-      // this page — they see their team membership reflected elsewhere.
       return isAdminOrAbove(role);
     case 'kpi-board':
     case 'analytics':
       return isExec(role);
     case 'profile':
-      // Open to every signed-in tier — RLS on profiles/leads/follow_ups is
-      // the real gate (exec: all, admin: department, manager: their team,
-      // sale: self), same pattern as 'lead-detail' above.
       return true;
     case 'team-activity':
-      // Daily staff-activity monitor — management tool; RLS scopes what each
-      // tier sees (exec: all, admin/manager: own department).
       return isManagerOrAbove(role);
     default:
       return false;

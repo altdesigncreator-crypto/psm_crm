@@ -4,8 +4,6 @@ import { cacheGet, cacheSet } from '@/lib/localCache';
 import type { MaintenanceSettings } from '@/types';
 
 const CACHE_KEY = 'maintenance_settings';
-// Backstop only — the Realtime subscription below already keeps this live,
-// and every mount re-fetches in the background regardless of the cache hit.
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
 /** Whether the site-wide maintenance gate is currently on — checked before

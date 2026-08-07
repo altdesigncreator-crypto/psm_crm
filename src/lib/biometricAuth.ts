@@ -1,13 +1,3 @@
-// Biometric app-unlock via the WebAuthn platform authenticator (Face ID /
-// Touch ID on iOS Safari, fingerprint / face unlock on Android Chrome).
-//
-// This does NOT create a brand-new Supabase session from nothing — there is
-// no server-side relying-party verification here, only the browser-native
-// "was this device's biometric sensor satisfied?" check. It is used purely
-// as a local re-authentication gate on top of an already-persisted Supabase
-// session (see "Remember me" in src/db/supabase.ts + BiometricLock.tsx):
-// the session is what actually keeps the user signed in; biometrics decide
-// whether *this* person is allowed to look at it right now.
 
 const STORAGE_KEY = 'psm_biometric_credentials';
 

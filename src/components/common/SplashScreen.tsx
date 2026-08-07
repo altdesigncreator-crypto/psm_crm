@@ -41,13 +41,6 @@ const SplashScreen: React.FC<{ loading: boolean; onFinish?: () => void }> = ({ l
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  // Ease toward a 96% ceiling on a real wall-clock curve (not a fixed tick
-  // count) — a fast load and a slow load both approach the ceiling on the
-  // same exponential curve, so a load that takes 10s still visibly climbs
-  // the whole time instead of hitting a hard stop after ~3s and sitting
-  // frozen for however much longer the real work takes. It never reaches
-  // 100% on its own; that only happens once the real work is actually done
-  // (below).
   useEffect(() => {
     if (!loading) return;
     const start = Date.now();
@@ -61,21 +54,9 @@ const SplashScreen: React.FC<{ loading: boolean; onFinish?: () => void }> = ({ l
     return () => clearInterval(tick);
   }, [loading]);
 
-  // Parent components (context providers etc.) can re-render often, which
-  // would hand this component a brand-new `onFinish` function identity each
-  // time. Reading it through a ref — instead of depending on it directly —
-  // keeps the finishing effect below from tearing down and resetting on
-  // every unrelated re-render, which used to clear its pending timer before
-  // it fired and leave the screen stuck at 100%, never handing control back.
   const onFinishRef = useRef(onFinish);
   useEffect(() => { onFinishRef.current = onFinish; }, [onFinish]);
 
-  // The moment real loading finishes, race to 100%. The CSS width
-  // transition below animates the jump in a fixed 300ms regardless of how
-  // far progress has to travel — so a fast load (still near 4%) covers more
-  // distance in that same window and reads as "rapidly to 100%", while a
-  // slow load (already near 90%) finishes with a short, gentle final step.
-  // Either way it lands on exactly 100% right when loading actually ends.
   useEffect(() => {
     if (loading || finishedRef.current) return;
     finishedRef.current = true;
@@ -94,8 +75,6 @@ const SplashScreen: React.FC<{ loading: boolean; onFinish?: () => void }> = ({ l
   const textClass = isDark ? 'text-white' : 'text-[#0A2540]';
   const subTextClass = isDark ? 'text-white/50' : 'text-[#0A2540]/50';
   const trackClass = isDark ? 'bg-white/10' : 'bg-[#0A2540]/10';
-  // Gold is the PSM accent in both themes now (matching the sidebar's gold
-  // active-state accent) so the brand mark reads the same everywhere.
   const fillClass = isDark
     ? 'bg-gradient-to-r from-[#D4AF37] to-[#F0D878]'
     : 'bg-gradient-to-r from-[#C99A2E] to-[#E4C468]';

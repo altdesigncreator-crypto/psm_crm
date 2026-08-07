@@ -61,8 +61,6 @@ export default function TeamManagement() {
     [teams, selectedDept]
   );
 
-  const nameOf = (id: string | null) => profiles.find((p) => p.id === id)?.name || '—';
-
   if (!selectedDept && !isBoss) {
     return (
       <div className="flex flex-col items-center justify-center h-[60dvh] text-center px-4 animate-fade-in">

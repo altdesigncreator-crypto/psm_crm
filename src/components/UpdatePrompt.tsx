@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { skipWaitingUpdate } from '@/lib/serviceWorker';
 
@@ -29,8 +29,6 @@ export default function UpdatePrompt() {
   const handleRefresh = async () => {
     setUpdating(true);
     await skipWaitingUpdate();
-    // Fallback in case this browser never fires controllerchange for some
-    // reason — don't leave the button spinning forever.
     setTimeout(() => window.location.reload(), 2000);
   };
 

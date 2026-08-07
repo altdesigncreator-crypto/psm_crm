@@ -185,11 +185,6 @@ export const FOLLOWUP_STATUSES: { value: FollowUpStatus; label: string }[] = [
   { value: 'lost', label: 'Lost' },
 ];
 
-// Follow-up status and lead grade are one signal, not two — this mirrors
-// the public.followup_status_to_grade() DB function exactly. Every time a
-// follow-up is recorded, database/crm.sql's trg_followups_sync_grade
-// trigger recomputes the lead's grade from this same mapping, so the two
-// can never drift apart regardless of which page added the follow-up.
 export const FOLLOWUP_STATUS_TO_GRADE: Record<FollowUpStatus, LeadGrade> = {
   booking: 'A',
   site_visit: 'A',

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProfiles } from '@/hooks/useProfiles';
@@ -33,8 +33,6 @@ interface DeptStats {
   agentCount: number;
 }
 
-// Departments are dynamic (see useDepartments) so we can't map a fixed
-// icon/color per code — cycle a small palette by position instead.
 const DEPT_PALETTE = [
   { bg: 'bg-amber-50 dark:bg-amber-900/20', text: 'text-amber-600 dark:text-amber-400' },
   { bg: 'bg-sky-50 dark:bg-sky-900/20', text: 'text-sky-600 dark:text-sky-400' },

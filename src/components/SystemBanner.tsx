@@ -8,8 +8,6 @@ const DISMISS_KEY = 'psm_banner_dismissed';
 const TYPE_ICON: Record<SystemMessageType, React.ComponentType<{ className?: string }>> = {
   info: Info, warning: AlertTriangle, maintenance: Wrench, critical: Siren,
 };
-// Left accent + soft fill for the bar, solid color for the icon badge —
-// keeps the message text itself neutral/readable instead of tinted.
 const TYPE_STYLE: Record<SystemMessageType, { bar: string; badge: string }> = {
   info: { bar: 'border-l-info bg-info/5', badge: 'bg-info' },
   warning: { bar: 'border-l-warning bg-warning/5', badge: 'bg-warning' },

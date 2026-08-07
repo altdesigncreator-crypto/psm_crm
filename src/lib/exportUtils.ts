@@ -1,5 +1,3 @@
-// xlsx and jspdf are heavy (~1MB+ together) — they are loaded on demand
-// inside each export function so they never weigh down the initial bundle.
 import { type Lead, LEAD_STAGES, LEAD_GRADES } from '@/types';
 import { getDepartmentLabel } from '@/lib/permissions';
 

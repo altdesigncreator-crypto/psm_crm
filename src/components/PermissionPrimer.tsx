@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Camera, MapPin, Loader2, ShieldCheck } from 'lucide-react';
@@ -27,8 +27,6 @@ export default function PermissionPrimer() {
   const requestPermissions = async () => {
     setBusy(true);
 
-    // Camera: open a throwaway stream just to trigger the permission prompt,
-    // then stop it immediately — photo uploads use the native camera app.
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       stream.getTracks().forEach((t) => t.stop());

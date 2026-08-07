@@ -53,8 +53,6 @@ async function loadProfile(userId: string): Promise<StaffUser> {
     .single();
 
   if (error || !data) {
-    // PGRST116 = zero rows: the profile genuinely doesn't exist. Anything
-    // else (network drop, timeout, transient API error) is retryable.
     const missing = (error as { code?: string } | null)?.code === 'PGRST116';
     throw new ProfileLoadError('Could not load your staff profile. Contact your administrator.', missing);
   }
@@ -73,9 +71,6 @@ async function loadProfile(userId: string): Promise<StaffUser> {
   };
 }
 
-// Backstop only — the background revalidation on every hydrate() call (and
-// the Realtime-driven refreshes elsewhere) keep this fresh long before a
-// cache this old would ever actually be read.
 const PROFILE_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const profileCacheKey = (userId: string) => `profile:${userId}`;
 const teamsCacheKey = (userId: string) => `teams:${userId}`;
@@ -92,9 +87,6 @@ async function loadMyTeamIds(userId: string, role: RoleTier): Promise<string[]> 
   return [];
 }
 
-// Set once biometrics (or a password login) verified this browser session —
-// sessionStorage survives refreshes but not closing the browser/app, so the
-// biometric prompt appears once per session instead of on every refresh.
 const BIO_UNLOCKED_FLAG = 'psm_bio_unlocked';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -110,15 +102,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Boot instantly from the last known-good profile for this device, if
-    // we have one, instead of blocking first paint on a network round trip
-    // every single launch — this is the "super fast next time" path. It's
-    // only ever a placeholder: Postgres RLS is the real access boundary
-    // (see permissions.ts), so showing a few-second-stale name/role/avatar
-    // is harmless, and the real fetch below still runs to confirm or
-    // correct it. Skipped when force-refreshing right after the user
-    // changed their own profile (Settings) — applying stale cache there
-    // would flash the old value back before the real fetch corrects it.
     const cachedProfile = opts?.force ? undefined : cacheGet<StaffUser>(profileCacheKey(sessionUserId), PROFILE_CACHE_TTL_MS);
     if (cachedProfile) {
       setUser(cachedProfile);
@@ -126,9 +109,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const revalidate = async () => {
-      // Retry transient failures — a flaky mobile connection on app start
-      // used to hit the catch below and sign the user out, permanently
-      // destroying the "Remember me" session over a hiccup.
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const profile = await loadProfile(sessionUserId);
@@ -151,17 +131,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (attempt < 2) await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
         }
       }
-      // Still failing after retries (offline?): if we already had a cached
-      // profile on screen, leave it there rather than yanking the user back
-      // to the login screen over a transient blip — only a genuine cache
-      // miss falls back to signed-out.
       if (!cachedProfile) setUser(null);
     };
 
     if (cachedProfile) {
-      // Cached data is already live on screen — don't make the caller (and
-      // therefore the splash screen) wait on this; it's a background
-      // revalidation now, not a blocking load.
       void revalidate();
     } else {
       await revalidate();
@@ -172,10 +145,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let active = true;
     supabase.auth.getSession().then(({ data }) => {
       const restoredUserId = data.session?.user.id ?? null;
-      // Session came back from storage without the user typing anything —
-      // if they enrolled biometrics, offer the biometric sign-in gate, but
-      // only once per browser session: a plain refresh after unlocking
-      // must not ask again.
       if (
         restoredUserId
         && isBiometricEnabledFor(restoredUserId)
@@ -211,8 +180,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setMyTeamIds(teamIds);
     cacheSet(profileCacheKey(profile.id), profile);
     cacheSet(teamsCacheKey(profile.id), teamIds);
-    // Signing in with email/password IS the authentication — never stack
-    // the biometric gate on top of it, and count it as this session's unlock.
     setNeedsBiometricUnlock(false);
     sessionStorage.setItem(BIO_UNLOCKED_FLAG, profile.id);
     await supabase.from('audit_logs').insert({ action: 'login', performed_by: profile.id });

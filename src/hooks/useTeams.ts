@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/db/supabase';
+import { useAuth } from '@/contexts/AuthContext';
+import { cacheGet, cacheSet } from '@/lib/localCache';
 import type { Team, TeamMember } from '@/types';
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const cacheKey = (userId: string) => `teams-and-members:${userId}`;
+
+interface TeamsCache { teams: Team[]; members: TeamMember[]; }
 
 /** Teams are the layer between Department and individual staff — a
  * department has many teams, each with one Manager and any number of Sales
@@ -8,19 +15,24 @@ import type { Team, TeamMember } from '@/types';
  * department or all; Manager: teams they run; Sales Person: teams they're
  * in), so this hook just reflects whatever rows come back. */
 export function useTeams() {
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const cached = user ? cacheGet<TeamsCache>(cacheKey(user.id), CACHE_TTL_MS) : undefined;
+  const [teams, setTeams] = useState<Team[]>(cached?.teams ?? []);
+  const [members, setMembers] = useState<TeamMember[]>(cached?.members ?? []);
+  const [loading, setLoading] = useState(cached === undefined);
 
   const load = useCallback(async () => {
     const [{ data: teamRows }, { data: memberRows }] = await Promise.all([
       supabase.from('teams').select('id, name, department_code, manager_id, is_active, created_at').order('name'),
       supabase.from('team_members').select('team_id, sale_person_id, added_at'),
     ]);
-    setTeams((teamRows || []) as Team[]);
-    setMembers((memberRows || []) as TeamMember[]);
+    const teamsList = (teamRows || []) as Team[];
+    const membersList = (memberRows || []) as TeamMember[];
+    setTeams(teamsList);
+    setMembers(membersList);
     setLoading(false);
-  }, []);
+    if (user) cacheSet(cacheKey(user.id), { teams: teamsList, members: membersList });
+  }, [user?.id]);
 
   useEffect(() => {
     load();

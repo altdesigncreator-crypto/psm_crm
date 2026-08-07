@@ -89,7 +89,6 @@ function readExifOrientation(file: File): Promise<number> {
       let offset = 2;
       while (offset < length) {
         if (view.getUint16(offset, false) === 0xFFE1) {
-          const segLength = view.getUint16(offset + 2, false);
           const tiffOffset = offset + 10;
           const endian = view.getUint16(tiffOffset, false);
           const little = endian === 0x4949;

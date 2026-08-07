@@ -54,10 +54,6 @@ export default function AddLead() {
   const [leadLng, setLeadLng] = useState<number | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
 
-  // Both optional — uploaded (if provided) only after the lead itself is
-  // saved, since storage access is gated by the lead actually existing (see
-  // can_manage_lead_photos in crm.sql). Skipping either here just leaves it
-  // to be added later from the lead's own page.
   const [visitPhotoFile, setVisitPhotoFile] = useState<File | null>(null);
   const [visitPhotoPreview, setVisitPhotoPreview] = useState<string | null>(null);
   const visitPhotoInputRef = useRef<HTMLInputElement>(null);
@@ -74,12 +70,6 @@ export default function AddLead() {
 
   const canAssign = isManagerOrAbove(role);
 
-  // Team comes first, then who on that team owns the lead — a manager can
-  // run more than one team (in more than one department) and a salesperson
-  // can sit on more than one team, so "team" can never be reliably inferred
-  // from a flat department roster. Each tier only ever sees teams it's
-  // actually entitled to assign into; RLS enforces the same boundary
-  // server-side regardless of what this list shows.
   const teamOptions = useMemo(() => {
     const active = teams.filter((t) => t.is_active !== false);
     if (role === 'manager') return active.filter((t) => t.manager_id === user?.id);
@@ -87,9 +77,6 @@ export default function AddLead() {
     return user ? active.filter((t) => teamsOf(user.id).includes(t.id)) : []; // sale: teams they're on
   }, [teams, role, user, teamsOf]);
 
-  // Auto-select when there's only one possible team so it's zero extra taps
-  // for the common case; only becomes a visible choice when genuinely
-  // ambiguous.
   useEffect(() => {
     if (teamOptions.length === 1) setTeamId(teamOptions[0].id);
     else if (!teamOptions.some((t) => t.id === teamId)) setTeamId('');
@@ -100,9 +87,6 @@ export default function AddLead() {
   const teamMemberIds = teamId ? membersOf(teamId) : [];
   const teamMemberProfiles = profiles.filter((p) => teamMemberIds.includes(p.id) && p.role === 'sale');
 
-  // If the chosen team changes and the previously-picked owner isn't on it
-  // (and isn't "myself"), drop the stale pick rather than silently submit a
-  // lead whose owner doesn't belong to its own team.
   useEffect(() => {
     if (ownerId && ownerId !== user?.id && !teamMemberIds.includes(ownerId)) setOwnerId('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -130,9 +114,6 @@ export default function AddLead() {
     purpose: purpose || null,
     lead_source: leadSource || null,
     lead_grade: leadGrade || null,
-    // A team can belong to a different department than the creator's own —
-    // the lead's department always follows the team it's filed under, not
-    // whoever happens to be creating it.
     department_code: selectedTeam?.department_code || department || 'house',
     team_id: teamId || null,
     owner_id: ownerId || user?.id,
@@ -192,9 +173,6 @@ export default function AddLead() {
     setPreview(URL.createObjectURL(file));
   };
 
-  // Storage access is keyed by lead id (see can_manage_lead_photos in
-  // crm.sql), which only exists once the lead row itself has been inserted —
-  // so photos always upload AFTER the insert below, never before.
   const uploadLeadPhoto = async (leadId: string, file: File, kind: 'visit' | 'appointment') => {
     const path = `${leadId}/${kind}-${Date.now()}.jpg`;
     const { error } = await supabase.storage.from('lead-photos').upload(path, file);
@@ -214,8 +192,6 @@ export default function AddLead() {
         if (appointmentPhotoFile) updates.appointment_photo_url = await uploadLeadPhoto(leadId, appointmentPhotoFile, 'appointment');
         await supabase.from('leads').update(updates).eq('id', leadId);
       } catch {
-        // The lead itself is already saved — a failed photo upload shouldn't
-        // block the rest of the flow, just needs a retry from the lead's page.
         toast.error("Lead saved, but the photo upload failed — you can add it later from the lead's page.");
       }
     }
