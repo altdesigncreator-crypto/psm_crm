@@ -15,6 +15,8 @@ import { exportAnalyticsAsExcel, exportAnalyticsAsPDF, exportAnalyticsAsHTML } f
 import { LEAD_STAGES, type Lead } from '@/types';
 import { toast } from 'sonner';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { usePeriodFilter } from '@/hooks/usePeriodFilter';
+import PeriodFilterBar from '@/components/PeriodFilterBar';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, ArcElement, Title, Tooltip, Legend, Filler);
 
@@ -25,6 +27,7 @@ export default function AdminAnalytics() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   usePageHeader('Analytics', 'Company-wide lead and revenue analytics');
+  const { period, setPeriod, isCurrentPeriod, shiftPeriod, periodLabel, matchesPeriod } = usePeriodFilter();
 
   useEffect(() => {
     if (!isExec(role)) { setLoading(false); return; }
@@ -48,34 +51,36 @@ export default function AdminAnalytics() {
     );
   }
 
-  const totalLeads = leads.length;
-  const soldCount = leads.filter((l) => l.status === 'sold').length;
+  const periodLeads = useMemo(() => leads.filter((l) => matchesPeriod(l.created_at)), [leads, matchesPeriod]);
+
+  const totalLeads = periodLeads.length;
+  const soldCount = periodLeads.filter((l) => l.status === 'sold').length;
   const conversionRate = totalLeads > 0 ? Math.round((soldCount / totalLeads) * 100) : 0;
   const avgDealSize = useMemo(() => {
-    const deals = leads.filter((l) => l.status === 'sold' && l.sale_amount);
+    const deals = periodLeads.filter((l) => l.status === 'sold' && l.sale_amount);
     if (deals.length === 0) return 0;
     return Math.round(deals.reduce((acc, l) => acc + (l.sale_amount || 0), 0) / deals.length);
-  }, [leads]);
+  }, [periodLeads]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    leads.forEach((l) => { const label = LEAD_STAGES.find((s) => s.value === l.status)?.label || l.status; counts[label] = (counts[label] || 0) + 1; });
+    periodLeads.forEach((l) => { const label = LEAD_STAGES.find((s) => s.value === l.status)?.label || l.status; counts[label] = (counts[label] || 0) + 1; });
     return counts;
-  }, [leads]);
+  }, [periodLeads]);
   const statusLabels = Object.keys(statusCounts);
   const palette = ['rgba(59,130,246,0.8)', 'rgba(34,197,94,0.8)', 'rgba(234,179,8,0.8)', 'rgba(168,85,247,0.8)', 'rgba(249,115,22,0.8)', 'rgba(239,68,68,0.8)', 'rgba(14,165,233,0.8)', 'rgba(236,72,153,0.8)', 'rgba(100,116,139,0.8)'];
   const doughnutData = { labels: statusLabels, datasets: [{ data: statusLabels.map((s) => statusCounts[s]), backgroundColor: palette, borderWidth: 2, borderColor: 'rgba(255,255,255,0.8)' }] };
 
   const agentPerf = useMemo(() => {
     const map: Record<string, { total: number; closed: number }> = {};
-    leads.forEach((l) => {
+    periodLeads.forEach((l) => {
       const a = l.owner_id ? nameOf(l.owner_id) : 'Unassigned';
       if (!map[a]) map[a] = { total: 0, closed: 0 };
       map[a].total += 1;
       if (l.status === 'sold') map[a].closed += 1;
     });
     return Object.entries(map).sort((a, b) => b[1].closed - a[1].closed).slice(0, 8);
-  }, [leads, nameOf]);
+  }, [periodLeads, nameOf]);
 
   const agentBarData = {
     labels: agentPerf.map(([name]) => name),
@@ -87,7 +92,7 @@ export default function AdminAnalytics() {
 
   const monthlyTrend = useMemo(() => {
     const map: Record<string, { new: number; closed: number }> = {};
-    leads.forEach((l) => {
+    periodLeads.forEach((l) => {
       const date = new Date(l.created_at);
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       if (!map[key]) map[key] = { new: 0, closed: 0 };
@@ -100,7 +105,7 @@ export default function AdminAnalytics() {
       }
     });
     return Object.entries(map).sort(([a], [b]) => a.localeCompare(b)).slice(-12);
-  }, [leads]);
+  }, [periodLeads]);
 
   const lineData = {
     labels: monthlyTrend.map(([m]) => m),
@@ -112,12 +117,12 @@ export default function AdminAnalytics() {
 
   const sourceRevenue = useMemo(() => {
     const map: Record<string, number> = {};
-    leads.filter((l) => l.status === 'sold' && l.sale_amount).forEach((l) => {
+    periodLeads.filter((l) => l.status === 'sold' && l.sale_amount).forEach((l) => {
       const src = l.lead_source || 'Unknown';
       map[src] = (map[src] || 0) + (l.sale_amount || 0);
     });
     return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  }, [leads]);
+  }, [periodLeads]);
 
   const revenueBarData = { labels: sourceRevenue.map(([s]) => s), datasets: [{ label: 'Revenue', data: sourceRevenue.map(([, v]) => v), backgroundColor: 'rgba(234,179,8,0.7)', borderRadius: 6 }] };
 
@@ -155,6 +160,12 @@ export default function AdminAnalytics() {
           <Button variant="outline" className="h-12 border-border gap-2 shrink-0 active:scale-[0.98]" onClick={() => handleExport('html')} disabled={totalLeads === 0}><FileText className="w-4 h-4 text-info" /><span className="hidden sm:inline">HTML</span></Button>
         </div>
       </div>
+
+      <Card className="shadow-card rounded-xl border-0">
+        <CardContent className="p-3">
+          <PeriodFilterBar period={period} setPeriod={setPeriod} periodLabel={periodLabel} isCurrentPeriod={isCurrentPeriod} shiftPeriod={shiftPeriod} />
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         <Card className="shadow-card rounded-xl border-0 h-full flex flex-col"><CardContent className="p-4 flex flex-col flex-1"><div className="flex items-center gap-2 mb-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Users className="w-4 h-4 text-primary" /></div><p className="text-xs text-muted-foreground">Total Leads</p></div><p className="text-2xl font-bold text-foreground tabular-nums">{totalLeads}</p></CardContent></Card>

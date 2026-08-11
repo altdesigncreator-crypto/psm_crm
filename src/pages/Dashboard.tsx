@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -9,7 +10,7 @@ import { Pie, Bar } from 'react-chartjs-2';
 import {
   Users, PhoneCall, TrendingUp, Calendar, Trophy, Activity, Clock, ArrowUpRight,
   ChevronRight, Download, FileSpreadsheet, FileText as FileTextIcon, File as FilePdf,
-  CheckCircle2,
+  CheckCircle2, Percent,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -39,8 +40,6 @@ const FILTER_LABELS: Record<DateFilter, string> = {
   all: 'All', thisMonth: 'This Month', lastMonth: 'Last Month', thisYear: 'This Year', levelA: 'Grade A Only',
 };
 
-function formatNumber(num: number): string { return num.toLocaleString('en-US'); }
-
 function filterLeadsByDate(leads: Lead[], filter: DateFilter): Lead[] {
   if (filter === 'levelA') return leads.filter((l) => l.lead_grade === 'A');
   if (filter === 'all') return leads;
@@ -64,6 +63,7 @@ function filterLeadsByDate(leads: Lead[], filter: DateFilter): Lead[] {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const cachedLeads = user ? cacheGet<Lead[]>(dashboardCacheKey(user.id), DASHBOARD_CACHE_TTL_MS) : undefined;
   const [rawLeads, setRawLeads] = useState<Lead[]>(cachedLeads ?? []);
@@ -114,7 +114,7 @@ export default function Dashboard() {
   const soldCount = soldLeads.length;
   const levelACount = filteredLeads.filter((l) => l.lead_grade === 'A').length;
 
-  const totalRevenue = useMemo(() => soldLeads.reduce((sum, l) => sum + (l.sale_amount || 0), 0), [soldLeads]);
+  const conversionRate = totalLeads > 0 ? Math.round((soldCount / totalLeads) * 1000) / 10 : 0;
 
   const statusCounts = LEAD_STAGES.map((s) => filteredLeads.filter((l) => l.status === s.value).length);
 
@@ -230,9 +230,15 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI Cards — each links through to the Leads list pre-filtered to
+          match, so a count is never a dead end. */}
       <div className="flex md:grid md:grid-cols-2 lg:grid-cols-5 gap-3 overflow-x-auto md:overflow-visible pb-2 md:pb-0 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
-        <Card className="shadow-card hover:shadow-card-hover transition-shadow duration-300 rounded-xl border-0 min-w-[160px] md:min-w-0 snap-start flex-1">
+        <Card
+          role="button" tabIndex={0}
+          onClick={() => navigate('/leads')}
+          onKeyDown={(e) => { if (e.key === 'Enter') navigate('/leads'); }}
+          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[160px] md:min-w-0 snap-start flex-1 cursor-pointer active:scale-[0.98]"
+        >
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0"><p className="text-xs font-medium text-muted-foreground">Total Leads</p><p className="text-xl md:text-2xl font-bold text-foreground mt-0.5 tabular-nums">{totalLeads}</p></div>
@@ -240,7 +246,12 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
-        <Card className="shadow-card hover:shadow-card-hover transition-shadow duration-300 rounded-xl border-0 min-w-[160px] md:min-w-0 snap-start flex-1">
+        <Card
+          role="button" tabIndex={0}
+          onClick={() => navigate('/follow-ups')}
+          onKeyDown={(e) => { if (e.key === 'Enter') navigate('/follow-ups'); }}
+          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[160px] md:min-w-0 snap-start flex-1 cursor-pointer active:scale-[0.98]"
+        >
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0"><p className="text-xs font-medium text-muted-foreground">Follow Up</p><p className="text-xl md:text-2xl font-bold text-foreground mt-0.5 tabular-nums">{followUpCount}</p></div>
@@ -248,7 +259,12 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
-        <Card className="shadow-card hover:shadow-card-hover transition-shadow duration-300 rounded-xl border-0 min-w-[160px] md:min-w-0 snap-start flex-1">
+        <Card
+          role="button" tabIndex={0}
+          onClick={() => navigate('/leads?grade=A')}
+          onKeyDown={(e) => { if (e.key === 'Enter') navigate('/leads?grade=A'); }}
+          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[160px] md:min-w-0 snap-start flex-1 cursor-pointer active:scale-[0.98]"
+        >
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0"><p className="text-xs font-medium text-muted-foreground">Grade A</p><p className="text-xl md:text-2xl font-bold text-foreground mt-0.5 tabular-nums">{levelACount}</p></div>
@@ -256,7 +272,12 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
-        <Card className="shadow-card hover:shadow-card-hover transition-shadow duration-300 rounded-xl border-0 min-w-[160px] md:min-w-0 snap-start flex-1">
+        <Card
+          role="button" tabIndex={0}
+          onClick={() => navigate('/leads?status=sold')}
+          onKeyDown={(e) => { if (e.key === 'Enter') navigate('/leads?status=sold'); }}
+          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[160px] md:min-w-0 snap-start flex-1 cursor-pointer active:scale-[0.98]"
+        >
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0"><p className="text-xs font-medium text-muted-foreground">Sold</p><p className="text-xl md:text-2xl font-bold text-foreground mt-0.5 tabular-nums">{soldCount}</p></div>
@@ -264,15 +285,20 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
-        <Card className="shadow-card hover:shadow-card-hover transition-shadow duration-300 rounded-xl border-0 min-w-[180px] md:min-w-0 snap-start flex-1 relative overflow-hidden">
+        <Card
+          role="button" tabIndex={0}
+          onClick={() => navigate('/kpi-board')}
+          onKeyDown={(e) => { if (e.key === 'Enter') navigate('/kpi-board'); }}
+          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[180px] md:min-w-0 snap-start flex-1 relative overflow-hidden cursor-pointer active:scale-[0.98]"
+        >
           <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-primary/10 to-transparent rounded-bl-full pointer-events-none" />
           <CardContent className="p-4 relative">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-xs font-medium text-muted-foreground">Revenue</p>
-                <p className="text-lg md:text-2xl font-bold text-foreground mt-0.5 tabular-nums">{formatNumber(totalRevenue)}</p>
+                <p className="text-xs font-medium text-muted-foreground">Conversion Rate</p>
+                <p className="text-lg md:text-2xl font-bold text-foreground mt-0.5 tabular-nums">{conversionRate}%</p>
               </div>
-              <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><TrendingUp className="w-4 h-4 text-primary" /></div>
+              <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Percent className="w-4 h-4 text-primary" /></div>
             </div>
           </CardContent>
         </Card>

@@ -13,10 +13,11 @@ import {
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetClose,
 } from '@/components/ui/sheet';
-import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode, Trash2, CheckCircle2, XCircle, ListPlus, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckSquare, Square, ChevronDown } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode, Trash2, CheckCircle2, XCircle, ListPlus, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckSquare, Square } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { LEAD_STAGES, type Lead, type Profile } from '@/types';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
@@ -35,13 +36,16 @@ import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
 
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuCheckboxItem, DropdownMenuSeparator,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { exportAsCSV, exportAsExcel, exportAsPDF, exportAsHTML } from '@/lib/exportUtils';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { usePeriodFilter } from '@/hooks/usePeriodFilter';
+import PeriodFilterBar from '@/components/PeriodFilterBar';
 
 function stageLabel(status: string) {
+  if (status === FOLLOWUP_SENTINEL) return 'Follow Up';
   return LEAD_STAGES.find((s) => s.value === status)?.label || status;
 }
 
@@ -83,11 +87,13 @@ function sortSpec(sortBy: SortBy): { column: string; ascending: boolean; nullsFi
 
 interface LeadFilters {
   statusFilter: string;
+  gradeFilter: string;
   projectFilters: string[];
   deptFilter: string;
   teamFilter: string;
   agentFilter: string;
   dateFilter: string;
+  periodRange: { gte: string; lt: string } | null;
   search: string;
   teamMemberIds: string[];
   teamManagerId: string | null;
@@ -95,6 +101,13 @@ interface LeadFilters {
 }
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+// A synthetic status value (not a real LeadStage) — one selectable option
+// standing in for "any of the actively-being-worked stages," so the
+// Dashboard's "Follow Up" tile can deep-link here with a single ?status=
+// value instead of needing true multi-select on this filter.
+const FOLLOWUP_SENTINEL = 'followup';
+const FOLLOWUP_STAGE_VALUES = ['contacted', 'qualified', 'negotiation'];
 
 /** Applies every active Leads-list filter directly to a Supabase query —
  * shared by the paginated list fetch, the "select/export everything
@@ -105,7 +118,9 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 function applyLeadFilters<Q extends { eq: any; in: any; or: any; gte: any; lt: any }>(query: Q, f: LeadFilters): Q {
   let q = query;
 
-  if (f.statusFilter !== 'all') q = q.eq('status', f.statusFilter);
+  if (f.statusFilter === FOLLOWUP_SENTINEL) q = q.in('status', FOLLOWUP_STAGE_VALUES);
+  else if (f.statusFilter !== 'all') q = q.eq('status', f.statusFilter);
+  if (f.gradeFilter !== 'all') q = q.eq('lead_grade', f.gradeFilter);
   if (f.projectFilters.length > 0) q = q.in('preferred_project', f.projectFilters);
   if (f.deptFilter !== 'all') q = q.eq('department_code', f.deptFilter);
 
@@ -125,6 +140,7 @@ function applyLeadFilters<Q extends { eq: any; in: any; or: any; gte: any; lt: a
     const { startISO, endISO } = localDayRangeUTC(f.dateFilter);
     q = q.gte('created_at', startISO).lt('created_at', endISO);
   }
+  if (f.periodRange) q = q.gte('created_at', f.periodRange.gte).lt('created_at', f.periodRange.lt);
 
   const term = f.search.trim();
   if (term) {
@@ -224,6 +240,7 @@ interface ImportPreview {
 
 export default function Leads() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { t } = useTranslation();
   usePageHeader(t('leads.title'), t('leads.subtitle'));
   const { user, role, department, myTeamIds } = useAuth();
@@ -251,7 +268,8 @@ export default function Leads() {
   const leadsCardRef = useRef<HTMLDivElement>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || 'all');
+  const [gradeFilter, setGradeFilter] = useState(() => searchParams.get('grade') || 'all');
   const [projectFilters, setProjectFilters] = useState<string[]>([]);
   const [deptFilter, setDeptFilter] = useState('all');
   const [teamFilter, setTeamFilter] = useState('all');
@@ -260,6 +278,7 @@ export default function Leads() {
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'followup' | 'grade'>('newest');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const { period, setPeriod, selectedMonth, selectedYear, isCurrentPeriod, shiftPeriod, periodLabel, periodRange } = usePeriodFilter();
 
   const isSuperAdmin = role === 'super_admin';
   // Individually-checked rows keep the full Lead object (not just its id) —
@@ -286,8 +305,8 @@ export default function Leads() {
   const teamManagerId = useMemo(() => (teamFilter === 'all' ? null : teams.find((t) => t.id === teamFilter)?.manager_id ?? null), [teamFilter, teams]);
 
   const currentFilters: LeadFilters = {
-    statusFilter, projectFilters, deptFilter, teamFilter, agentFilter, dateFilter,
-    search: debouncedSearch, teamMemberIds, teamManagerId, profiles,
+    statusFilter, gradeFilter, projectFilters, deptFilter, teamFilter, agentFilter, dateFilter,
+    periodRange: periodRange(), search: debouncedSearch, teamMemberIds, teamManagerId, profiles,
   };
 
   // Every staff member can be a filter option, whether or not they
@@ -350,8 +369,9 @@ export default function Leads() {
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    user?.id, page, pageSize, sortBy, statusFilter, projectFilters, deptFilter,
-    teamFilter, agentFilter, dateFilter, debouncedSearch, teamMemberIds, teamManagerId, profiles,
+    user?.id, page, pageSize, sortBy, statusFilter, gradeFilter, projectFilters, deptFilter,
+    teamFilter, agentFilter, dateFilter, period, selectedMonth, selectedYear, debouncedSearch,
+    teamMemberIds, teamManagerId, profiles,
   ]);
 
   // Realtime just invalidates — any change anywhere on the leads table
@@ -400,7 +420,7 @@ export default function Leads() {
     setPage(1);
     setSelectedLeads(new Map());
     setSelectAllMatchingActive(false);
-  }, [debouncedSearch, statusFilter, projectFilters, deptFilter, teamFilter, agentFilter, dateFilter, sortBy, pageSize]);
+  }, [debouncedSearch, statusFilter, gradeFilter, projectFilters, deptFilter, teamFilter, agentFilter, dateFilter, period, selectedMonth, selectedYear, sortBy, pageSize]);
 
   useEffect(() => {
     setPage((p) => Math.min(p, totalPages));
@@ -712,24 +732,28 @@ export default function Leads() {
         </div>
       </div>
 
-      {/* Search & Filters */}
-      <Card className="border-0 shadow-card rounded-xl">
-        <CardContent className="p-4 md:p-5">
+      {/* Period + Search & Filters */}
+      <Card className="border-0 shadow-card rounded-xl overflow-hidden">
+        <CardContent className="p-4 md:p-5 space-y-4">
+          <div className="pb-4 border-b border-border/60">
+            <PeriodFilterBar period={period} setPeriod={setPeriod} periodLabel={periodLabel} isCurrentPeriod={isCurrentPeriod} shiftPeriod={shiftPeriod} />
+          </div>
+
           <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-3">
-              <div className="relative flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute w-4 h-4 -translate-y-1/2 left-3 top-1/2 text-muted-foreground" />
                 <Input
                   placeholder="Search by name, phone, or sales person…"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-12 pl-9"
+                  className="h-11 pl-9 rounded-lg bg-muted/40 border-transparent focus-visible:bg-card focus-visible:border-input transition-colors"
                 />
               </div>
               {/* One-tap self filter — a manager sees their whole team's
                   leads via team-scoped RLS, so this is the fast way back to
                   just the ones they personally own, without opening the
-                  filter sheet and hunting for their own name in the agent
+                  filter panel and hunting for their own name in the agent
                   list. Reuses the existing agentFilter/owner_name filtering
                   rather than adding a parallel filter path. */}
               {role === 'manager' && user?.name && (
@@ -737,7 +761,7 @@ export default function Leads() {
                   type="button"
                   onClick={() => setAgentFilter((prev) => (prev === user.name ? 'all' : user.name))}
                   aria-pressed={agentFilter === user.name}
-                  className={`flex items-center gap-1.5 px-3.5 h-12 rounded-lg border text-sm font-medium transition-colors shrink-0 ${
+                  className={`flex items-center gap-1.5 px-3.5 h-11 rounded-lg border text-sm font-medium transition-colors shrink-0 ${
                     agentFilter === user.name
                       ? 'bg-primary text-primary-foreground border-primary'
                       : 'border-border bg-card text-foreground hover:bg-muted'
@@ -747,17 +771,90 @@ export default function Leads() {
                   <span className="hidden sm:inline">My Leads</span>
                 </button>
               )}
+
+              {/* Desktop/tablet: compact always-visible Sort + Date, plus a
+                  single Filters popover for the remaining category filters —
+                  replaces what used to be six separate dropdowns wrapping
+                  across the row. */}
+              <div className="hidden md:flex items-center gap-2 shrink-0">
+                <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+                  <SelectTrigger className="w-[150px] h-11 rounded-lg bg-muted/40 border-transparent">
+                    <ArrowUpDown className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
+                    <SelectValue placeholder="Sort" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="newest">Newest first</SelectItem>
+                    <SelectItem value="oldest">Oldest first</SelectItem>
+                    <SelectItem value="name">Name (A–Z)</SelectItem>
+                    <SelectItem value="followup">Next follow-up</SelectItem>
+                    <SelectItem value="grade">Grade (A–C)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center gap-0.5 rounded-lg bg-muted/40 p-1 shrink-0">
+                  <Button
+                    variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label="Previous day"
+                    onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="h-9 w-[130px] text-sm border-0 bg-transparent shadow-none focus-visible:ring-0" />
+                  <Button
+                    variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label="Next day"
+                    disabled={(dateFilter || todayStr()) >= todayStr()}
+                    onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+                {dateFilter && (
+                  <Button variant="ghost" className="h-9 px-2.5 text-xs font-medium text-primary" onClick={() => setDateFilter('')}>
+                    All dates
+                  </Button>
+                )}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex items-center gap-1.5 px-3.5 h-11 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
+                    >
+                      <SlidersHorizontal className="w-4 h-4" />
+                      Filters
+                      {(statusFilter !== 'all' || gradeFilter !== 'all' || projectFilters.length > 0 || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all') && (
+                        <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                          {[statusFilter, gradeFilter, deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0)}
+                        </span>
+                      )}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-[380px] p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+                    <FilterFields
+                      statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+                      gradeFilter={gradeFilter} setGradeFilter={setGradeFilter}
+                      projectFilters={projectFilters} setProjectFilters={setProjectFilters} toggleProjectFilter={toggleProjectFilter}
+                      deptFilter={deptFilter} setDeptFilter={setDeptFilter}
+                      teamFilter={teamFilter} setTeamFilter={setTeamFilter}
+                      agentFilter={agentFilter} setAgentFilter={setAgentFilter}
+                      dateFilter={dateFilter} setDateFilter={setDateFilter}
+                      sortBy={sortBy} setSortBy={setSortBy}
+                      uniqueAgents={uniqueAgents} uniqueProjects={uniqueProjects} departments={departments} teamOptions={teamOptions}
+                      showDept={showDeptFilter} showSortDate={false}
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              {/* Mobile: single Filters sheet with everything, including Sort/Date */}
               <Sheet>
                 <SheetTrigger asChild>
                   <button
                     type="button"
-                    className="md:hidden flex items-center gap-1.5 px-3.5 h-12 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
+                    className="md:hidden flex items-center gap-1.5 px-3.5 h-11 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
                   >
                     <SlidersHorizontal className="w-4 h-4" />
                     <span className="hidden sm:inline">Filters</span>
-                    {(statusFilter !== 'all' || projectFilters.length > 0 || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all' || dateFilter) && (
+                    {(statusFilter !== 'all' || gradeFilter !== 'all' || projectFilters.length > 0 || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all' || dateFilter) && (
                       <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
-                        {[statusFilter, deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0) + (dateFilter ? 1 : 0)}
+                        {[statusFilter, gradeFilter, deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0) + (dateFilter ? 1 : 0)}
                       </span>
                     )}
                   </button>
@@ -771,6 +868,7 @@ export default function Leads() {
                   <div className="space-y-5">
                     <FilterFields
                       statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+                      gradeFilter={gradeFilter} setGradeFilter={setGradeFilter}
                       projectFilters={projectFilters} setProjectFilters={setProjectFilters} toggleProjectFilter={toggleProjectFilter}
                       deptFilter={deptFilter} setDeptFilter={setDeptFilter}
                       teamFilter={teamFilter} setTeamFilter={setTeamFilter}
@@ -790,129 +888,13 @@ export default function Leads() {
               </Sheet>
             </div>
 
-            {/* Desktop / tablet inline filters */}
-            <div className="flex-wrap hidden gap-3 md:flex shrink-0">
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-[160px] h-11">
-                  <Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  {LEAD_STAGES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
-                </SelectContent>
-              </Select>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="flex h-11 w-[180px] items-center justify-between whitespace-nowrap rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background focus:outline-none focus:ring-1 focus:ring-ring"
-                  >
-                    <span className="flex items-center min-w-0">
-                      <Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground shrink-0" />
-                      <span className={`truncate ${projectFilters.length === 0 ? 'text-muted-foreground' : ''}`}>
-                        {projectFilters.length === 0 ? 'All projects' : projectFilters.length === 1 ? projectFilters[0] : `${projectFilters.length} projects`}
-                      </span>
-                    </span>
-                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0 ml-1" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-56 max-h-72 overflow-y-auto">
-                  <DropdownMenuItem
-                    className="cursor-pointer"
-                    onSelect={(e) => { e.preventDefault(); setProjectFilters([]); }}
-                  >
-                    All projects
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  {uniqueProjects.map((p) => (
-                    <DropdownMenuCheckboxItem
-                      key={p}
-                      checked={projectFilters.includes(p)}
-                      onSelect={(e) => e.preventDefault()}
-                      onCheckedChange={() => toggleProjectFilter(p)}
-                    >
-                      {p}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-              {showDeptFilter && (
-                <Select value={deptFilter} onValueChange={setDeptFilter}>
-                  <SelectTrigger className="w-[140px] h-11">
-                    <Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
-                    <SelectValue placeholder="Department" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All departments</SelectItem>
-                    {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
-                  </SelectContent>
-                </Select>
-              )}
-              {teamOptions.length > 0 && (
-                <Select value={teamFilter} onValueChange={setTeamFilter}>
-                  <SelectTrigger className="w-[160px] h-11">
-                    <Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
-                    <SelectValue placeholder="Team" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All teams</SelectItem>
-                    {teamOptions.map((tm) => (<SelectItem key={tm.id} value={tm.id}>{tm.name}</SelectItem>))}
-                  </SelectContent>
-                </Select>
-              )}
-              <Select value={agentFilter} onValueChange={setAgentFilter}>
-                <SelectTrigger className="w-[180px] h-11">
-                  <UserIcon className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
-                  <SelectValue placeholder="Sales person" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All sales people</SelectItem>
-                  {uniqueAgents.map((a) => (<SelectItem key={a} value={a}>{a}</SelectItem>))}
-                </SelectContent>
-              </Select>
-              <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
-                <SelectTrigger className="w-[170px] h-11">
-                  <ArrowUpDown className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
-                  <SelectValue placeholder="Sort" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="newest">Newest first</SelectItem>
-                  <SelectItem value="oldest">Oldest first</SelectItem>
-                  <SelectItem value="name">Name (A–Z)</SelectItem>
-                  <SelectItem value="followup">Next follow-up</SelectItem>
-                  <SelectItem value="grade">Grade (A–C)</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <Button
-                  variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label="Previous day"
-                  onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <div className="flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="h-11 w-[150px] text-sm" />
-                </div>
-                <Button
-                  variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label="Next day"
-                  disabled={(dateFilter || todayStr()) >= todayStr()}
-                  onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
-                {dateFilter && (
-                  <Button variant="ghost" className="h-11 px-3 text-xs font-medium text-primary" onClick={() => setDateFilter('')}>
-                    All dates
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2 md:hidden">
+            {/* Active filter chips — quick visibility + one-tap removal
+                without opening the panel. Date is excluded on desktop since
+                it already has its own always-visible control above. */}
+            <div className="flex flex-wrap gap-2">
               {[
                 ['status', statusFilter, setStatusFilter, statusFilter !== 'all' ? stageLabel(statusFilter) : ''],
+                ['grade', gradeFilter, setGradeFilter, gradeFilter !== 'all' ? `Grade ${gradeFilter}` : ''],
                 ['dept', deptFilter, setDeptFilter, deptFilter !== 'all' ? getDepartmentLabel(deptFilter) : ''],
                 ['team', teamFilter, setTeamFilter, teamFilter !== 'all' ? (teamOptions.find((tm) => tm.id === teamFilter)?.name || '') : ''],
                 ['agent', agentFilter, setAgentFilter, agentFilter],
@@ -922,7 +904,7 @@ export default function Leads() {
                     key={key as string}
                     type="button"
                     onClick={() => (setter as (v: string) => void)('all')}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 active:bg-primary/20 transition-colors"
                   >
                     {label as string}
                     <X className="w-3 h-3" />
@@ -934,7 +916,7 @@ export default function Leads() {
                   key={`project-${p}`}
                   type="button"
                   onClick={() => toggleProjectFilter(p)}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 active:bg-primary/20 transition-colors"
                 >
                   {p}
                   <X className="w-3 h-3" />
@@ -944,7 +926,7 @@ export default function Leads() {
                 <button
                   type="button"
                   onClick={() => setDateFilter('')}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
+                  className="md:hidden inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 active:bg-primary/20 transition-colors"
                 >
                   {dateFilter}
                   <X className="w-3 h-3" />
@@ -1337,7 +1319,7 @@ export default function Leads() {
   );
 }
 
-function FilterFields({ statusFilter, setStatusFilter, projectFilters, toggleProjectFilter, setProjectFilters, deptFilter, setDeptFilter, teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter, sortBy, setSortBy, uniqueAgents, uniqueProjects, departments, teamOptions, showDept = true }: any) {
+function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilter, projectFilters, toggleProjectFilter, setProjectFilters, deptFilter, setDeptFilter, teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter, sortBy, setSortBy, uniqueAgents, uniqueProjects, departments, teamOptions, showDept = true, showSortDate = true }: any) {
   return (
     <>
       <div className="space-y-2">
@@ -1346,7 +1328,20 @@ function FilterFields({ statusFilter, setStatusFilter, projectFilters, togglePro
           <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value={FOLLOWUP_SENTINEL}>Follow Up (Contacted, Qualified, Negotiation)</SelectItem>
             {LEAD_STAGES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-foreground">Grade</label>
+        <Select value={gradeFilter} onValueChange={setGradeFilter}>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select grade" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All grades</SelectItem>
+            <SelectItem value="A">Grade A</SelectItem>
+            <SelectItem value="B">Grade B</SelectItem>
+            <SelectItem value="C">Grade C</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -1404,43 +1399,47 @@ function FilterFields({ statusFilter, setStatusFilter, projectFilters, togglePro
           </SelectContent>
         </Select>
       </div>
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Sort By</label>
-        <Select value={sortBy} onValueChange={setSortBy}>
-          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Sort" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="newest">Newest first</SelectItem>
-            <SelectItem value="oldest">Oldest first</SelectItem>
-            <SelectItem value="name">Name (A–Z)</SelectItem>
-            <SelectItem value="followup">Next follow-up</SelectItem>
-            <SelectItem value="grade">Grade (A–C)</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Date Added</label>
-        <div className="flex items-center gap-1.5">
-          <Button
-            type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Previous day"
-            onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
-          <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="w-full h-12 text-sm" />
-          <Button
-            type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Next day"
-            disabled={(dateFilter || todayStr()) >= todayStr()}
-            onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
-          >
-            <ChevronRight className="w-4 h-4" />
-          </Button>
-        </div>
-        {dateFilter && (
-          <button type="button" onClick={() => setDateFilter('')} className="text-xs font-medium text-primary">
-            Clear — show all dates
-          </button>
-        )}
-      </div>
+      {showSortDate && (
+        <>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Sort By</label>
+            <Select value={sortBy} onValueChange={setSortBy}>
+              <SelectTrigger className="w-full h-12"><SelectValue placeholder="Sort" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest first</SelectItem>
+                <SelectItem value="oldest">Oldest first</SelectItem>
+                <SelectItem value="name">Name (A–Z)</SelectItem>
+                <SelectItem value="followup">Next follow-up</SelectItem>
+                <SelectItem value="grade">Grade (A–C)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Date Added</label>
+            <div className="flex items-center gap-1.5">
+              <Button
+                type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Previous day"
+                onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="w-full h-12 text-sm" />
+              <Button
+                type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Next day"
+                disabled={(dateFilter || todayStr()) >= todayStr()}
+                onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
+              >
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+            {dateFilter && (
+              <button type="button" onClick={() => setDateFilter('')} className="text-xs font-medium text-primary">
+                Clear — show all dates
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </>
   );
 }

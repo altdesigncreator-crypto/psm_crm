@@ -10,11 +10,13 @@ import NameLink from '@/components/NameLink';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Trophy, Users, TrendingUp, Target, ArrowUpRight, BarChart3, Eye,
-  Building2, FileSpreadsheet, FileText, ChevronLeft, ChevronRight,
+  Building2, FileSpreadsheet, FileText,
 } from 'lucide-react';
 import type { Lead } from '@/types';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { toast } from 'sonner';
+import { usePeriodFilter } from '@/hooks/usePeriodFilter';
+import PeriodFilterBar from '@/components/PeriodFilterBar';
 
 interface AgentStats {
   id: string;
@@ -42,9 +44,6 @@ const DEPT_PALETTE = [
   { bg: 'bg-rose-50 dark:bg-rose-900/20', text: 'text-rose-600 dark:text-rose-400' },
 ];
 
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-type Period = 'monthly' | 'yearly' | 'overall';
-
 export default function KPIBoard() {
   const navigate = useNavigate();
   const { role } = useAuth();
@@ -54,37 +53,12 @@ export default function KPIBoard() {
   const [deptFilter, setDeptFilter] = useState<string>('all');
   usePageHeader('KPI Board', 'Sales performance leaderboard');
 
-  const now = new Date();
-  const [period, setPeriod] = useState<Period>('monthly');
-  const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const { period, setPeriod, isCurrentPeriod, shiftPeriod, periodLabel, matchesPeriod } = usePeriodFilter();
 
-  const isCurrentPeriod = period === 'overall'
-    ? true
-    : period === 'yearly'
-      ? selectedYear === now.getFullYear()
-      : selectedYear === now.getFullYear() && selectedMonth === now.getMonth();
-
-  const shiftPeriod = (delta: number) => {
-    if (period === 'yearly') { setSelectedYear((y) => y + delta); return; }
-    let m = selectedMonth + delta;
-    let y = selectedYear;
-    if (m < 0) { m = 11; y -= 1; }
-    if (m > 11) { m = 0; y += 1; }
-    setSelectedMonth(m);
-    setSelectedYear(y);
-  };
-
-  const periodLabel = period === 'yearly' ? String(selectedYear) : `${MONTH_NAMES[selectedMonth]} ${selectedYear}`;
-
-  const periodLeads = useMemo(() => {
-    if (period === 'overall') return leads;
-    return leads.filter((l) => {
-      const d = new Date(l.created_at);
-      if (period === 'yearly') return d.getFullYear() === selectedYear;
-      return d.getFullYear() === selectedYear && d.getMonth() === selectedMonth;
-    });
-  }, [leads, period, selectedMonth, selectedYear]);
+  const periodLeads = useMemo(
+    () => leads.filter((l) => matchesPeriod(l.created_at)),
+    [leads, period, matchesPeriod]
+  );
 
   useEffect(() => {
     if (!isExec(role)) return;
@@ -175,30 +149,8 @@ export default function KPIBoard() {
       </div>
 
       <Card className="shadow-card rounded-xl border-0">
-        <CardContent className="p-3 flex items-center gap-2 flex-wrap">
-          <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/30 shrink-0">
-            {(['monthly', 'yearly', 'overall'] as const).map((p) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => setPeriod(p)}
-                className={`px-3.5 h-9 rounded-md text-xs font-semibold capitalize transition-colors ${period === p ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                {p}
-              </button>
-            ))}
-          </div>
-          {period !== 'overall' && (
-            <div className="flex items-center gap-1">
-              <Button variant="outline" size="icon" className="h-9 w-9 min-h-0" aria-label="Previous period" onClick={() => shiftPeriod(-1)}>
-                <ChevronLeft className="w-4 h-4" />
-              </Button>
-              <span className="text-sm font-medium tabular-nums px-1.5 min-w-[110px] text-center">{periodLabel}</span>
-              <Button variant="outline" size="icon" className="h-9 w-9 min-h-0" aria-label="Next period" disabled={isCurrentPeriod} onClick={() => shiftPeriod(1)}>
-                <ChevronRight className="w-4 h-4" />
-              </Button>
-            </div>
-          )}
+        <CardContent className="p-3">
+          <PeriodFilterBar period={period} setPeriod={setPeriod} periodLabel={periodLabel} isCurrentPeriod={isCurrentPeriod} shiftPeriod={shiftPeriod} />
         </CardContent>
       </Card>
 

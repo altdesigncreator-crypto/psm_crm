@@ -16,14 +16,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetClose } from '@/components/ui/sheet';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuCheckboxItem, DropdownMenuSeparator,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
   Search, Filter, Phone, User, MapPin, DollarSign, Calendar, MessageSquare, Eye,
   Loader2, Plus, ListChecks, HelpCircle, Upload, Download, FileSpreadsheet, FileText, Users,
-  SlidersHorizontal, ArrowUpDown, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X,
+  SlidersHorizontal, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X,
 } from 'lucide-react';
 import { FOLLOWUP_TYPES, FOLLOWUP_STATUSES, getGradeForFollowUpStatus, type Lead, type FollowUp, type FollowUpStatus, type FollowUpType, type LeadGrade } from '@/types';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
@@ -31,6 +32,8 @@ import NameLink from '@/components/NameLink';
 import { toast } from 'sonner';
 import { cacheGet, cacheSetDebounced } from '@/lib/localCache';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { usePeriodFilter } from '@/hooks/usePeriodFilter';
+import PeriodFilterBar from '@/components/PeriodFilterBar';
 
 const FOLLOWUPS_CACHE_TTL_MS = 5 * 60 * 1000;
 const leadsCacheKey = (userId: string) => `followups-leads:${userId}`;
@@ -150,6 +153,7 @@ export default function FollowUps() {
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'grade'>('newest');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const { period, setPeriod, selectedMonth, selectedYear, isCurrentPeriod, shiftPeriod, periodLabel, matchesPeriod } = usePeriodFilter();
 
   const [activeLead, setActiveLead] = useState<LeadWithFollowUps | null>(null);
   const [formType, setFormType] = useState('phone');
@@ -209,12 +213,17 @@ export default function FollowUps() {
     return () => { active = false; supabase.removeChannel(channel); };
   }, [user?.id]);
 
-  const rows = useMemo<LeadWithFollowUps[]>(() => {
+  const allRows = useMemo<LeadWithFollowUps[]>(() => {
     return leads.map((lead) => ({
       ...lead,
       followUps: followUps.filter((f) => f.lead_id === lead.id),
     }));
   }, [leads, followUps]);
+
+  const rows = useMemo(
+    () => allRows.filter((r) => matchesPeriod(r.created_at)),
+    [allRows, matchesPeriod]
+  );
 
   const uniqueProjects = useMemo(
     () => Array.from(new Set(leads.map((l) => l.preferred_project).filter(Boolean))).sort() as string[],
@@ -275,7 +284,7 @@ export default function FollowUps() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, deptFilter, statusFilter, projectFilters, teamFilter, agentFilter, dateFilter, sortBy, pageSize]);
+  }, [searchQuery, deptFilter, statusFilter, projectFilters, teamFilter, agentFilter, dateFilter, period, selectedMonth, selectedYear, sortBy, pageSize]);
 
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   useEffect(() => {
@@ -533,19 +542,87 @@ export default function FollowUps() {
         </Card>
       </div>
 
-      <Card className="shadow-card rounded-xl border-0">
-        <CardContent className="p-4 md:p-5">
+      {/* Period + Search & Filters */}
+      <Card className="shadow-card rounded-xl border-0 overflow-hidden">
+        <CardContent className="p-4 md:p-5 space-y-4">
+          <div className="pb-4 border-b border-border/60">
+            <PeriodFilterBar period={period} setPeriod={setPeriod} periodLabel={periodLabel} isCurrentPeriod={isCurrentPeriod} shiftPeriod={shiftPeriod} />
+          </div>
+
           <div className="flex flex-col gap-3">
-            <div className="flex items-center gap-3">
-              <div className="relative flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input placeholder="Search by customer, phone, or sales person…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 h-12" />
+                <Input placeholder="Search by customer, phone, or sales person…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 h-11 rounded-lg bg-muted/40 border-transparent focus-visible:bg-card focus-visible:border-input transition-colors" />
               </div>
+
+              {/* Desktop/tablet: compact always-visible Sort + Date, plus a
+                  single Filters popover for the remaining category filters. */}
+              <div className="hidden md:flex items-center gap-2 shrink-0">
+                <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+                  <SelectTrigger className="w-[150px] h-11 rounded-lg bg-muted/40 border-transparent"><ArrowUpDown className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Sort" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="newest">Newest first</SelectItem>
+                    <SelectItem value="oldest">Oldest first</SelectItem>
+                    <SelectItem value="name">Name (A–Z)</SelectItem>
+                    <SelectItem value="grade">Grade (A–C)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center gap-0.5 rounded-lg bg-muted/40 p-1 shrink-0">
+                  <Button variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label="Previous day" onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}>
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="h-9 w-[130px] text-sm border-0 bg-transparent shadow-none focus-visible:ring-0" />
+                  <Button
+                    variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label="Next day"
+                    disabled={(dateFilter || todayStr()) >= todayStr()}
+                    onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+                {dateFilter && (
+                  <Button variant="ghost" className="h-9 px-2.5 text-xs font-medium text-primary" onClick={() => setDateFilter('')}>
+                    All dates
+                  </Button>
+                )}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex items-center gap-1.5 px-3.5 h-11 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
+                    >
+                      <SlidersHorizontal className="w-4 h-4" />
+                      Filters
+                      {(deptFilter !== 'all' || statusFilter !== 'all' || projectFilters.length > 0 || teamFilter !== 'all' || agentFilter !== 'all') && (
+                        <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                          {[deptFilter, statusFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0)}
+                        </span>
+                      )}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-[380px] p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+                    <FollowUpFilterFields
+                      deptFilter={deptFilter} setDeptFilter={setDeptFilter}
+                      statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+                      projectFilters={projectFilters} toggleProjectFilter={toggleProjectFilter} setProjectFilters={setProjectFilters}
+                      teamFilter={teamFilter} setTeamFilter={setTeamFilter}
+                      agentFilter={agentFilter} setAgentFilter={setAgentFilter}
+                      dateFilter={dateFilter} setDateFilter={setDateFilter}
+                      sortBy={sortBy} setSortBy={setSortBy}
+                      uniqueAgents={uniqueAgents} uniqueProjects={uniqueProjects} departments={departments} teamOptions={teamOptions}
+                      showDept={!isDepartmentScoped(role)} showSortDate={false}
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              {/* Mobile: single Filters sheet with everything, including Sort/Date */}
               <Sheet>
                 <SheetTrigger asChild>
                   <button
                     type="button"
-                    className="md:hidden flex items-center gap-1.5 px-3.5 h-12 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
+                    className="md:hidden flex items-center gap-1.5 px-3.5 h-11 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
                   >
                     <SlidersHorizontal className="w-4 h-4" />
                     <span className="hidden sm:inline">Filters</span>
@@ -584,101 +661,7 @@ export default function FollowUps() {
               </Sheet>
             </div>
 
-            {/* Desktop / tablet inline filters */}
-            <div className="hidden md:flex flex-wrap gap-3 shrink-0">
-              {!isDepartmentScoped(role) && (
-                <Select value={deptFilter} onValueChange={setDeptFilter}>
-                  <SelectTrigger className="w-[160px] h-11"><Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Department" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All departments</SelectItem>
-                    {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
-                  </SelectContent>
-                </Select>
-              )}
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-[180px] h-11"><SelectValue placeholder="Follow-up status" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  <SelectItem value="none">No follow-up yet</SelectItem>
-                  {FOLLOWUP_STATUSES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
-                </SelectContent>
-              </Select>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="flex h-11 w-[180px] items-center justify-between whitespace-nowrap rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background focus:outline-none focus:ring-1 focus:ring-ring"
-                  >
-                    <span className="flex items-center min-w-0">
-                      <Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground shrink-0" />
-                      <span className={`truncate ${projectFilters.length === 0 ? 'text-muted-foreground' : ''}`}>
-                        {projectFilters.length === 0 ? 'All projects' : projectFilters.length === 1 ? projectFilters[0] : `${projectFilters.length} projects`}
-                      </span>
-                    </span>
-                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0 ml-1" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-56 max-h-72 overflow-y-auto">
-                  <DropdownMenuItem className="cursor-pointer" onSelect={(e) => { e.preventDefault(); setProjectFilters([]); }}>
-                    All projects
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  {uniqueProjects.map((p) => (
-                    <DropdownMenuCheckboxItem key={p} checked={projectFilters.includes(p)} onSelect={(e) => e.preventDefault()} onCheckedChange={() => toggleProjectFilter(p)}>
-                      {p}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-              {teamOptions.length > 0 && (
-                <Select value={teamFilter} onValueChange={setTeamFilter}>
-                  <SelectTrigger className="w-[160px] h-11"><Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Team" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All teams</SelectItem>
-                    {teamOptions.map((tm) => (<SelectItem key={tm.id} value={tm.id}>{tm.name}</SelectItem>))}
-                  </SelectContent>
-                </Select>
-              )}
-              <Select value={agentFilter} onValueChange={setAgentFilter}>
-                <SelectTrigger className="w-[180px] h-11"><User className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Sales person" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All sales people</SelectItem>
-                  {uniqueAgents.map((a) => (<SelectItem key={a} value={a}>{a}</SelectItem>))}
-                </SelectContent>
-              </Select>
-              <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
-                <SelectTrigger className="w-[170px] h-11"><ArrowUpDown className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Sort" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="newest">Newest first</SelectItem>
-                  <SelectItem value="oldest">Oldest first</SelectItem>
-                  <SelectItem value="name">Name (A–Z)</SelectItem>
-                  <SelectItem value="grade">Grade (A–C)</SelectItem>
-                </SelectContent>
-              </Select>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <Button variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label="Previous day" onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}>
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <div className="flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="h-11 w-[150px] text-sm" />
-                </div>
-                <Button
-                  variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label="Next day"
-                  disabled={(dateFilter || todayStr()) >= todayStr()}
-                  onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
-                {dateFilter && (
-                  <Button variant="ghost" className="h-11 px-3 text-xs font-medium text-primary" onClick={() => setDateFilter('')}>
-                    All dates
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2 md:hidden">
+            <div className="flex flex-wrap gap-2">
               {[
                 ['dept', deptFilter, setDeptFilter, deptFilter !== 'all' ? getDepartmentLabel(deptFilter) : ''],
                 ['status', statusFilter, setStatusFilter, statusFilter !== 'all' ? (statusFilter === 'none' ? 'No follow-up yet' : followUpStatusLabel(statusFilter)) : ''],
@@ -690,7 +673,7 @@ export default function FollowUps() {
                     key={key as string}
                     type="button"
                     onClick={() => (setter as (v: string) => void)('all')}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 active:bg-primary/20 transition-colors"
                   >
                     {label as string}
                     <X className="w-3 h-3" />
@@ -702,7 +685,7 @@ export default function FollowUps() {
                   key={`project-${p}`}
                   type="button"
                   onClick={() => toggleProjectFilter(p)}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 active:bg-primary/20 transition-colors"
                 >
                   {p}
                   <X className="w-3 h-3" />
@@ -712,7 +695,7 @@ export default function FollowUps() {
                 <button
                   type="button"
                   onClick={() => setDateFilter('')}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium active:bg-primary/20"
+                  className="md:hidden inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 active:bg-primary/20 transition-colors"
                 >
                   {dateFilter}
                   <X className="w-3 h-3" />
@@ -952,7 +935,7 @@ export default function FollowUps() {
 function FollowUpFilterFields({
   deptFilter, setDeptFilter, statusFilter, setStatusFilter, projectFilters, toggleProjectFilter, setProjectFilters,
   teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter, sortBy, setSortBy,
-  uniqueAgents, uniqueProjects, departments, teamOptions, showDept = true,
+  uniqueAgents, uniqueProjects, departments, teamOptions, showDept = true, showSortDate = true,
 }: any) {
   return (
     <>
@@ -1021,42 +1004,46 @@ function FollowUpFilterFields({
           </SelectContent>
         </Select>
       </div>
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Sort By</label>
-        <Select value={sortBy} onValueChange={setSortBy}>
-          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Sort" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="newest">Newest first</SelectItem>
-            <SelectItem value="oldest">Oldest first</SelectItem>
-            <SelectItem value="name">Name (A–Z)</SelectItem>
-            <SelectItem value="grade">Grade (A–C)</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Date Added</label>
-        <div className="flex items-center gap-1.5">
-          <Button
-            type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Previous day"
-            onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
-          <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="w-full h-12 text-sm" />
-          <Button
-            type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Next day"
-            disabled={(dateFilter || todayStr()) >= todayStr()}
-            onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
-          >
-            <ChevronRight className="w-4 h-4" />
-          </Button>
-        </div>
-        {dateFilter && (
-          <button type="button" onClick={() => setDateFilter('')} className="text-xs font-medium text-primary">
-            Clear — show all dates
-          </button>
-        )}
-      </div>
+      {showSortDate && (
+        <>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Sort By</label>
+            <Select value={sortBy} onValueChange={setSortBy}>
+              <SelectTrigger className="w-full h-12"><SelectValue placeholder="Sort" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="newest">Newest first</SelectItem>
+                <SelectItem value="oldest">Oldest first</SelectItem>
+                <SelectItem value="name">Name (A–Z)</SelectItem>
+                <SelectItem value="grade">Grade (A–C)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Date Added</label>
+            <div className="flex items-center gap-1.5">
+              <Button
+                type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Previous day"
+                onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="w-full h-12 text-sm" />
+              <Button
+                type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Next day"
+                disabled={(dateFilter || todayStr()) >= todayStr()}
+                onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
+              >
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+            {dateFilter && (
+              <button type="button" onClick={() => setDateFilter('')} className="text-xs font-medium text-primary">
+                Clear — show all dates
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </>
   );
 }
