@@ -225,7 +225,9 @@ export default function AddLead() {
     setSubmitting(true);
     try {
       const leadId = await insertLead(buildLeadPayload());
-      navigate(`/lead/${leadId}`);
+      // Replace, not push — otherwise back returns to the just-submitted,
+      // now-stale empty form instead of wherever the user came from.
+      navigate(`/lead/${leadId}`, { replace: true });
     } catch (err: any) {
       setError(err.message || 'Could not save the lead. Please try again.');
     } finally {
@@ -238,7 +240,9 @@ export default function AddLead() {
     setSubmitting(true);
     try {
       const leadId = await insertLead(buildLeadPayload());
-      navigate(`/lead/${leadId}`);
+      // Replace, not push — otherwise back returns to the just-submitted,
+      // now-stale empty form instead of wherever the user came from.
+      navigate(`/lead/${leadId}`, { replace: true });
     } catch (err: any) {
       setError(err.message || 'Could not save the lead.');
     } finally {

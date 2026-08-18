@@ -29,7 +29,10 @@ export default function Login() {
       setRememberMe(remember);
       const staffUser = await login(email.toLowerCase().trim(), password);
       toast.success(`Welcome back, ${staffUser.name}`);
-      navigate('/dashboard');
+      // Replace, not push — otherwise /login stays in history and the
+      // system back button lands back on it, where the route guard just
+      // bounces you straight back to /dashboard (looks completely stuck).
+      navigate('/dashboard', { replace: true });
     } catch (err: any) {
       setError(err?.message || 'Unable to sign in.');
     } finally {

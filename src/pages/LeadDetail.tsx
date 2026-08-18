@@ -199,7 +199,9 @@ export default function LeadDetail() {
         old_value: { name: lead.name, phone: lead.phone, owner_id: lead.owner_id },
       });
       toast.success(`Lead "${lead.name}" deleted.`);
-      navigate('/leads');
+      // Replace, not push — the lead page we're leaving no longer exists,
+      // so back should return to the leads list, not to a dead lead page.
+      navigate('/leads', { replace: true });
     } catch {
       toast.error('Could not delete the lead.');
       setDeleting(false);
