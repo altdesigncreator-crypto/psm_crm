@@ -186,7 +186,11 @@ export default function Settings() {
     toast.info('Generating backup… this can take up to a minute.');
     try {
       const { data: sessionData } = await supabase.auth.getSession();
-      const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/trigger-db-backup`, {
+      // Same-origin proxy (see netlify.toml + src/db/supabase.ts) — some
+      // networks block the supabase.co hostname outright, and this call
+      // doesn't go through the Supabase client's fetch, so it needs the
+      // same fallback applied explicitly.
+      const res = await fetch(`${window.location.origin}/supabase-proxy/functions/v1/trigger-db-backup`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${sessionData.session?.access_token}`,

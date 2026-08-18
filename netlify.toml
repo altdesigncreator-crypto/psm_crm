@@ -7,6 +7,20 @@
   to = "/manifest.json"
   status = 200
 
+# Same-origin passthrough to Supabase. Some networks block *.supabase.co
+# outright (DNS/SNI-level filtering) rather than just being slow — no client
+# retry to that hostname can ever work around that. Routing through our own
+# domain instead means Netlify's edge makes the real request server-side,
+# which isn't subject to that client-side block. Must stay above the SPA
+# catch-all below, since redirects match top-down and /* would otherwise
+# swallow this first. See src/db/supabase.ts for the client-side fallback
+# that switches to this path when the direct connection fails.
+[[redirects]]
+  from = "/supabase-proxy/*"
+  to = "https://oabubrdgmhohlaamsrel.supabase.co/:splat"
+  status = 200
+  force = true
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

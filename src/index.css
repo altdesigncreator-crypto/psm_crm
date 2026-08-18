@@ -316,23 +316,3 @@
   background: hsl(var(--border));
   border-radius: 4px;
 }
-
-/* Ctrl+P is intercepted in JS, but this is the fallback for print paths JS
-   can't catch (browser print menu, OS-level print). Blanks the page instead
-   of rendering CRM data into a capturable print preview. */
-@media print {
-  body * {
-    visibility: hidden !important;
-  }
-  body::after {
-    content: 'Printing is restricted.';
-    visibility: visible;
-    position: fixed;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: sans-serif;
-    font-size: 20px;
-  }
-}

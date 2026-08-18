@@ -14,7 +14,6 @@ import { TranslationProvider } from '@/contexts/TranslationContext';
 import { PageHeaderProvider } from '@/contexts/PageHeaderContext';
 import { RouteGuard } from '@/components/common/RouteGuard';
 import AppLayout from '@/components/layouts/AppLayout';
-import ScreenshotGuard from '@/components/ScreenshotGuard';
 import { useMaintenanceStatus } from '@/hooks/useMaintenanceStatus';
 
 import { routes } from './routes';
@@ -87,21 +86,19 @@ const AppContent: React.FC = () => {
           path="/*"
           element={
             <PageHeaderProvider>
-              <ScreenshotGuard>
-                <AppLayout>
-                  <Suspense fallback={<PageLoader />}>
-                    <Routes>
-                      {routes
-                        .filter((r) => !r.public)
-                        .map((route, index) => (
-                          <Route key={index} path={route.path} element={route.element} />
-                        ))}
-                      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-                      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                    </Routes>
-                  </Suspense>
-                </AppLayout>
-              </ScreenshotGuard>
+              <AppLayout>
+                <Suspense fallback={<PageLoader />}>
+                  <Routes>
+                    {routes
+                      .filter((r) => !r.public)
+                      .map((route, index) => (
+                        <Route key={index} path={route.path} element={route.element} />
+                      ))}
+                    <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                  </Routes>
+                </Suspense>
+              </AppLayout>
             </PageHeaderProvider>
           }
         />

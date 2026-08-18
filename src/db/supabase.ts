@@ -37,10 +37,51 @@ const rememberAwareStorage = {
 // fast," which every caller already has to handle anyway.
 const FETCH_TIMEOUT_MS = 15_000;
 
-function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+// Some networks block the *.supabase.co hostname itself (DNS/SNI-level
+// filtering), not just connections generally — every request to it fails
+// or hangs, on every device, on every network, and no retry to that same
+// hostname ever helps. netlify.toml proxies /supabase-proxy/* to this same
+// project server-side, so requests through our own origin reach Supabase
+// even when the direct hostname is blocked client-side. This only ever
+// carries REST/Auth HTTP traffic — Realtime's WebSocket connection isn't
+// routed through fetch() at all, so it still dials the direct host and,
+// for users on a blocking network, simply won't connect (live updates
+// silently stop arriving; a normal page load/refetch is unaffected).
+const PROXY_BASE = `${window.location.origin}/supabase-proxy`;
+const USE_PROXY_KEY = 'psm_use_supabase_proxy';
+
+function toProxyUrl(url: string): string {
+  return PROXY_BASE + url.slice(supabaseUrl.length);
+}
+
+async function rawFetch(input: RequestInfo | URL, init: RequestInit | undefined): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  return fetch(input, { ...init, signal: init?.signal ?? controller.signal }).finally(() => clearTimeout(timeout));
+  try {
+    return await fetch(input, { ...init, signal: init?.signal ?? controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  const isDirectSupabaseUrl = url.startsWith(supabaseUrl);
+
+  // Already know this session needs the proxy — skip straight to it
+  // instead of re-waiting on a doomed direct attempt every single call.
+  if (isDirectSupabaseUrl && sessionStorage.getItem(USE_PROXY_KEY) === '1') {
+    return rawFetch(toProxyUrl(url), init);
+  }
+
+  try {
+    return await rawFetch(input, init);
+  } catch (err) {
+    if (!isDirectSupabaseUrl) throw err;
+    const response = await rawFetch(toProxyUrl(url), init);
+    sessionStorage.setItem(USE_PROXY_KEY, '1');
+    return response;
+  }
 }
 
 export const supabase = createClient(supabaseUrl, supabaseKey, {
