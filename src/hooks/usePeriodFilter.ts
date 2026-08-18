@@ -7,11 +7,17 @@ export const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-export function usePeriodFilter() {
+export interface PeriodFilterInit {
+  period?: Period;
+  selectedMonth?: number;
+  selectedYear?: number;
+}
+
+export function usePeriodFilter(init?: PeriodFilterInit) {
   const now = new Date();
-  const [period, setPeriod] = useState<Period>('monthly');
-  const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [period, setPeriod] = useState<Period>(init?.period ?? 'monthly');
+  const [selectedMonth, setSelectedMonth] = useState(init?.selectedMonth ?? now.getMonth());
+  const [selectedYear, setSelectedYear] = useState(init?.selectedYear ?? now.getFullYear());
 
   const isCurrentPeriod = period === 'overall'
     ? true

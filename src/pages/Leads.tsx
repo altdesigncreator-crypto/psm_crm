@@ -41,7 +41,7 @@ import {
 import { exportAsCSV, exportAsExcel, exportAsPDF, exportAsHTML } from '@/lib/exportUtils';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { usePeriodFilter } from '@/hooks/usePeriodFilter';
+import { usePeriodFilter, type Period } from '@/hooks/usePeriodFilter';
 import PeriodFilterBar from '@/components/PeriodFilterBar';
 
 function stageLabel(status: string) {
@@ -238,9 +238,37 @@ interface ImportPreview {
   skippedCount: number;
 }
 
+interface LeadsListUiState {
+  searchQuery: string;
+  statusFilter: string;
+  gradeFilter: string;
+  projectFilters: string[];
+  deptFilter: string;
+  teamFilter: string;
+  agentFilter: string;
+  dateFilter: string;
+  sortBy: SortBy;
+  page: number;
+  pageSize: number;
+  period: Period;
+  selectedMonth: number;
+  selectedYear: number;
+}
+
+/** Module-level (not React state) so it survives the Leads page unmounting
+ * when navigating to a lead's detail page and back — filters, sort, and
+ * pagination should return to exactly where the user left them, not reset
+ * to defaults, the same way Gmail/Github list views behave. Naturally
+ * resets on a hard reload/new tab, which is the right scope for this. */
+let cachedListState: LeadsListUiState | null = null;
+
 export default function Leads() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  // An explicit ?status=/?grade= deep link (e.g. from a Dashboard tile) is a
+  // fresh intent and should win over whatever was cached from a previous
+  // visit — only fall back to the cache when arriving with no query at all.
+  const restoredState = searchParams.get('status') || searchParams.get('grade') ? null : cachedListState;
   const { t } = useTranslation();
   usePageHeader(t('leads.title'), t('leads.subtitle'));
   const { user, role, department, myTeamIds } = useAuth();
@@ -267,18 +295,20 @@ export default function Leads() {
   const [importing, setImporting] = useState(false);
   const leadsCardRef = useRef<HTMLDivElement>(null);
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || 'all');
-  const [gradeFilter, setGradeFilter] = useState(() => searchParams.get('grade') || 'all');
-  const [projectFilters, setProjectFilters] = useState<string[]>([]);
-  const [deptFilter, setDeptFilter] = useState('all');
-  const [teamFilter, setTeamFilter] = useState('all');
-  const [agentFilter, setAgentFilter] = useState('all');
-  const [dateFilter, setDateFilter] = useState('');
-  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'followup' | 'grade'>('newest');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const { period, setPeriod, selectedMonth, selectedYear, isCurrentPeriod, shiftPeriod, periodLabel, periodRange } = usePeriodFilter();
+  const [searchQuery, setSearchQuery] = useState(() => restoredState?.searchQuery ?? '');
+  const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || restoredState?.statusFilter || 'all');
+  const [gradeFilter, setGradeFilter] = useState(() => searchParams.get('grade') || restoredState?.gradeFilter || 'all');
+  const [projectFilters, setProjectFilters] = useState<string[]>(() => restoredState?.projectFilters ?? []);
+  const [deptFilter, setDeptFilter] = useState(() => restoredState?.deptFilter ?? 'all');
+  const [teamFilter, setTeamFilter] = useState(() => restoredState?.teamFilter ?? 'all');
+  const [agentFilter, setAgentFilter] = useState(() => restoredState?.agentFilter ?? 'all');
+  const [dateFilter, setDateFilter] = useState(() => restoredState?.dateFilter ?? '');
+  const [sortBy, setSortBy] = useState<SortBy>(() => restoredState?.sortBy ?? 'newest');
+  const [page, setPage] = useState(() => restoredState?.page ?? 1);
+  const [pageSize, setPageSize] = useState(() => restoredState?.pageSize ?? 25);
+  const {
+    period, setPeriod, selectedMonth, selectedYear, isCurrentPeriod, shiftPeriod, periodLabel, periodRange,
+  } = usePeriodFilter(restoredState ? { period: restoredState.period, selectedMonth: restoredState.selectedMonth, selectedYear: restoredState.selectedYear } : undefined);
 
   const isSuperAdmin = role === 'super_admin';
   // Individually-checked rows keep the full Lead object (not just its id) —
@@ -416,13 +446,33 @@ export default function Leads() {
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
+  // Skips its first run on mount — otherwise a page number restored from
+  // cachedListState (e.g. page 3) would get reset back to 1 immediately,
+  // since this effect's dependencies are also "new" on the first render.
+  const isFirstFilterResetRef = useRef(true);
   useEffect(() => {
+    if (isFirstFilterResetRef.current) { isFirstFilterResetRef.current = false; return; }
     setPage(1);
     setSelectedLeads(new Map());
     setSelectAllMatchingActive(false);
   }, [debouncedSearch, statusFilter, gradeFilter, projectFilters, deptFilter, teamFilter, agentFilter, dateFilter, period, selectedMonth, selectedYear, sortBy, pageSize]);
 
+  // Persist the current filter/sort/pagination state so it can be restored
+  // if the user navigates to a lead's detail page and back.
   useEffect(() => {
+    cachedListState = {
+      searchQuery, statusFilter, gradeFilter, projectFilters, deptFilter, teamFilter,
+      agentFilter, dateFilter, sortBy, page, pageSize, period, selectedMonth, selectedYear,
+    };
+  }, [searchQuery, statusFilter, gradeFilter, projectFilters, deptFilter, teamFilter, agentFilter, dateFilter, sortBy, page, pageSize, period, selectedMonth, selectedYear]);
+
+  // Skips its first run too — on mount totalCount hasn't loaded yet
+  // (it starts at 0, so totalPages is briefly 1), which would otherwise
+  // clamp a restored page straight back down to 1 before the real count
+  // ever arrives.
+  const isFirstPageClampRef = useRef(true);
+  useEffect(() => {
+    if (isFirstPageClampRef.current) { isFirstPageClampRef.current = false; return; }
     setPage((p) => Math.min(p, totalPages));
   }, [totalPages]);
 
