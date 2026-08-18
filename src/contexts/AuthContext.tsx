@@ -45,6 +45,16 @@ class ProfileLoadError extends Error {
   }
 }
 
+/** True for the browser's own connectivity failures (request never got an
+ * HTTP response at all) rather than a real rejection from the server —
+ * covers Chrome's "Failed to fetch", Safari's "Load failed", and Firefox's
+ * "NetworkError when attempting to fetch resource." */
+function isNetworkError(message?: string): boolean {
+  if (!message) return false;
+  const m = message.toLowerCase();
+  return m.includes('failed to fetch') || m.includes('load failed') || m.includes('network');
+}
+
 async function loadProfile(userId: string): Promise<StaffUser> {
   const { data, error } = await supabase
     .from('profiles')
@@ -173,8 +183,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [hydrate]);
 
   const login = useCallback(async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    // A cellular handoff or brief signal drop mid-request surfaces as
+    // "Failed to fetch" — the underlying HTTP call never completed, not a
+    // rejected login. One silent retry clears most of these; if it's a
+    // real outage the second attempt fails the same way and falls through
+    // to the friendly message below instead of the raw browser error text.
+    let { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error && isNetworkError(error.message)) {
+      await new Promise((r) => setTimeout(r, 800));
+      ({ data, error } = await supabase.auth.signInWithPassword({ email, password }));
+    }
     if (error || !data.user) {
+      if (error && isNetworkError(error.message)) {
+        throw new Error("Can't reach the server. Check your internet connection and try again.");
+      }
       throw new Error(error?.message === 'Invalid login credentials'
         ? 'Incorrect email or password.'
         : error?.message || 'Unable to sign in.');
