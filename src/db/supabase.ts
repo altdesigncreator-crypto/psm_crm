@@ -29,11 +29,28 @@ const rememberAwareStorage = {
   },
 };
 
+// Mobile networks routinely stall a request mid-flight (switching towers,
+// weak signal, a backgrounded tab throttled by the OS) without the browser
+// ever surfacing an error — fetch() just hangs. Left unbounded, that hangs
+// every screen gated on this client (splash screen, route guard, etc.)
+// forever. Aborting after a timeout turns "hung forever" into "failed
+// fast," which every caller already has to handle anyway.
+const FETCH_TIMEOUT_MS = 15_000;
+
+function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  return fetch(input, { ...init, signal: init?.signal ?? controller.signal }).finally(() => clearTimeout(timeout));
+}
+
 export const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: {
     storage: rememberAwareStorage,
     persistSession: true,
     autoRefreshToken: true,
+  },
+  global: {
+    fetch: fetchWithTimeout,
   },
 });
 

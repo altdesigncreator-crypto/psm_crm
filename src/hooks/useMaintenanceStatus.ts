@@ -23,12 +23,20 @@ export function useMaintenanceStatus() {
   useEffect(() => {
     let active = true;
     const load = async () => {
-      const { data, error } = await supabase.from('maintenance_settings').select('*').eq('id', 1).maybeSingle();
-      if (!active) return;
-      const resolved = error ? null : (data as MaintenanceSettings) || null;
-      setSettings(resolved);
-      setLoading(false);
-      cacheSet(CACHE_KEY, resolved);
+      try {
+        const { data, error } = await supabase.from('maintenance_settings').select('*').eq('id', 1).maybeSingle();
+        if (!active) return;
+        const resolved = error ? null : (data as MaintenanceSettings) || null;
+        setSettings(resolved);
+        cacheSet(CACHE_KEY, resolved);
+      } catch {
+        // Network failure/timeout — fail open (see doc comment above)
+        // rather than leaving `loading` true and the splash screen stuck.
+        if (!active) return;
+        setSettings(null);
+      } finally {
+        if (active) setLoading(false);
+      }
     };
     load();
 

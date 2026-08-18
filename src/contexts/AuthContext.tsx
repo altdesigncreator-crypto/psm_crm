@@ -155,6 +155,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       hydrate(restoredUserId).finally(() => {
         if (active) setLoading(false);
       });
+    }).catch(() => {
+      // getSession() itself failed (network/timeout) — fail open into the
+      // logged-out state rather than leaving `loading` true forever, which
+      // would otherwise strand the app on the splash screen.
+      if (active) setLoading(false);
     });
 
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
