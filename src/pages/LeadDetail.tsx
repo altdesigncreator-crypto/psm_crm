@@ -144,7 +144,7 @@ export default function LeadDetail() {
     );
   }
 
-  const editable = canEditLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id }) && lead.status !== 'sold';
+  const editable = canEditLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
   const canFollowUp = canAddFollowUp(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
   const canWarn = canIssueWarning(currentUser) && canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
   const canReassign = canAssignLead(currentUser) && canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
@@ -236,9 +236,8 @@ export default function LeadDetail() {
   };
 
   const handleStageChange = async (newStage: string) => {
-    if (lead.status === 'sold') { toast.error('This lead is Sold — its stage can no longer be changed.'); return; }
     const { error } = await supabase.from('leads').update({ status: newStage }).eq('id', lead.id);
-    if (error) { toast.error(error.message.includes('Sold') ? error.message : 'Could not update stage.'); return; }
+    if (error) { toast.error('Could not update stage.'); return; }
     setLead((prev) => (prev ? { ...prev, status: newStage as Lead['status'] } : prev));
     toast.success('Pipeline stage updated.');
   };

@@ -20,7 +20,7 @@ import { canEditLead, isDepartmentScoped, getDepartmentLabel } from '@/lib/permi
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
 import {
-  Phone, MapPin, DollarSign, User, ArrowRight, ArrowLeft, Eye, MoveRight, Lock, Columns3,
+  Phone, MapPin, DollarSign, User, ArrowRight, ArrowLeft, Eye, MoveRight, Columns3,
   Search, Filter, SlidersHorizontal, ChevronLeft, ChevronRight, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -59,8 +59,8 @@ const FORWARD_STAGE_VALUES: LeadStage[] = ALL_STAGE_VALUES.filter((s) => s !== '
 const FALLBACK_COLOR = '#0463CA';
 
 const getStageIndex = (status: string) => FORWARD_STAGE_VALUES.indexOf(status as LeadStage);
-const canMoveForward = (status: string) => status !== 'sold' && getStageIndex(status) >= 0 && getStageIndex(status) < FORWARD_STAGE_VALUES.length - 1;
-const canMoveBackward = (status: string) => status !== 'sold' && getStageIndex(status) > 0;
+const canMoveForward = (status: string) => getStageIndex(status) >= 0 && getStageIndex(status) < FORWARD_STAGE_VALUES.length - 1;
+const canMoveBackward = (status: string) => getStageIndex(status) > 0;
 const getNextStatus = (status: string) => FORWARD_STAGE_VALUES[getStageIndex(status) + 1];
 const getPrevStatus = (status: string) => FORWARD_STAGE_VALUES[getStageIndex(status) - 1];
 
@@ -186,16 +186,12 @@ export default function PipelineBoard() {
     }
   }, [hiddenStages, visibleColumns, mobileStage]);
 
-  const handleMoveLead = async (leadId: string, newStatus: string, currentStatus?: string) => {
-    if (currentStatus === 'sold') {
-      toast.error('This lead is Sold — its stage can no longer be changed.');
-      return;
-    }
+  const handleMoveLead = async (leadId: string, newStatus: string) => {
     setMoving(true);
     const { error } = await supabase.from('leads').update({ status: newStatus }).eq('id', leadId);
     setMoving(false);
     if (error) {
-      toast.error(error.message.includes('Sold') ? error.message : 'Could not update the lead stage.');
+      toast.error('Could not update the lead stage.');
       return;
     }
     toast.success(`Lead moved to ${LEAD_STAGES.find((s) => s.value === newStatus)?.label}.`);
@@ -464,7 +460,7 @@ export default function PipelineBoard() {
                   <PipelineLeadCard
                     key={lead.id}
                     lead={lead}
-                    editable={canEditLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code }) && lead.status !== 'sold'}
+                    editable={canEditLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code })}
                     statusColors={statusColors}
                     nameOf={nameOf}
                     navigate={navigate}
@@ -504,7 +500,7 @@ export default function PipelineBoard() {
                       <PipelineLeadCard
                         key={lead.id}
                         lead={lead}
-                        editable={canEditLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code }) && lead.status !== 'sold'}
+                        editable={canEditLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code })}
                         statusColors={statusColors}
                         nameOf={nameOf}
                         navigate={navigate}
@@ -538,8 +534,7 @@ export default function PipelineBoard() {
             </p>
             <Select
               value={selectedLead?.status || ''}
-              disabled={selectedLead?.status === 'sold'}
-              onValueChange={(v) => { if (selectedLead && v !== selectedLead.status) handleMoveLead(selectedLead.id, v, selectedLead.status); }}
+              onValueChange={(v) => { if (selectedLead && v !== selectedLead.status) handleMoveLead(selectedLead.id, v); }}
             >
               <SelectTrigger className="h-12 rounded-xl"><SelectValue placeholder="Select stage" /></SelectTrigger>
               <SelectContent className="rounded-xl">
@@ -569,7 +564,7 @@ function PipelineLeadCard({
   nameOf: (id: string) => string;
   navigate: (path: string) => void;
   openMoveDialog: (lead: Lead) => void;
-  handleMoveLead: (leadId: string, newStatus: string, currentStatus?: string) => void;
+  handleMoveLead: (leadId: string, newStatus: string) => void;
   moving: boolean;
 }) {
   const nextStatus = getNextStatus(lead.status);
@@ -585,11 +580,6 @@ function PipelineLeadCard({
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-semibold text-foreground truncate">{lead.name}</span>
           <div className="flex items-center gap-1 shrink-0">
-            {lead.status === 'sold' && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-success/10 text-success border border-success/20" title="Sold — stage is locked">
-                <Lock className="w-2.5 h-2.5" /> Locked
-              </span>
-            )}
             <LeadLevelBadge grade={lead.lead_grade} />
           </div>
         </div>
@@ -635,7 +625,7 @@ function PipelineLeadCard({
             {canMoveBackward(lead.status) && (
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); handleMoveLead(lead.id, prevStatus, lead.status); }}
+                onClick={(e) => { e.stopPropagation(); handleMoveLead(lead.id, prevStatus); }}
                 disabled={moving}
                 className="h-9 min-h-0 px-2 rounded-md border border-border/60 text-xs text-muted-foreground hover:bg-muted active:bg-muted/80 transition-colors disabled:opacity-40 flex items-center justify-center gap-1"
               >
@@ -645,7 +635,7 @@ function PipelineLeadCard({
             {canMoveForward(lead.status) && (
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); handleMoveLead(lead.id, nextStatus, lead.status); }}
+                onClick={(e) => { e.stopPropagation(); handleMoveLead(lead.id, nextStatus); }}
                 disabled={moving}
                 className="h-9 min-h-0 px-2 rounded-md border text-xs flex items-center justify-center gap-1 transition-colors disabled:opacity-40"
                 style={{ borderColor: `${nextColor}40`, color: nextColor, backgroundColor: `${nextColor}08` }}

@@ -687,23 +687,13 @@ drop trigger if exists trg_leads_assignment on public.leads;
 create trigger trg_leads_assignment after insert or update of owner_id on public.leads
   for each row execute function public.log_lead_assignment();
 
--- Sold is a terminal pipeline stage — once a lead is marked Sold, its stage
--- can never change again (by anyone, including Boss/Super Admin). This is a
--- hard DB-level lock, not just a UI restriction, so it can't be bypassed by
--- calling the API directly.
-create or replace function public.prevent_sold_status_change() returns trigger
-language plpgsql as $$
-begin
-  if old.status = 'sold' and new.status is distinct from old.status then
-    raise exception 'This lead is marked Sold and its stage can no longer be changed.';
-  end if;
-  return new;
-end;
-$$;
-
+-- Sold used to be a terminal pipeline stage enforced by a hard DB-level
+-- lock (trg_leads_lock_sold / prevent_sold_status_change) — removed per
+-- updated business rule: any user with edit rights on a lead (see
+-- leads_update above / canEditLead in src/lib/permissions.ts) can move it
+-- out of Sold into any other stage, same as any other stage transition.
 drop trigger if exists trg_leads_lock_sold on public.leads;
-create trigger trg_leads_lock_sold before update of status on public.leads
-  for each row execute function public.prevent_sold_status_change();
+drop function if exists public.prevent_sold_status_change();
 
 create or replace function public.log_pipeline_change() returns trigger
 language plpgsql security definer set search_path = public as $$
