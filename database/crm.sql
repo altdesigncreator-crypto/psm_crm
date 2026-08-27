@@ -1739,5 +1739,59 @@ do $$ begin
 end $$;
 
 -- =============================================================================
+-- 17. PSM MAP PINS — lightweight location annotations staff drop on the
+-- PSM Map tab. Independent of psm-map's own parcel data (a separate
+-- product/database reached via API key, not Supabase Auth) — these are the
+-- CRM's own markers: visible to every signed-in staff member, but only
+-- editable/removable by whoever created them (or Boss/Super Admin).
+-- Replaces the earlier "edit a parcel" feature, which wrote to psm-map's
+-- database but never showed up again in this CRM's own (static-snapshot)
+-- map view — these pins live in the CRM's own database instead, so what
+-- you create here is what you see here.
+-- =============================================================================
+create table if not exists public.map_pins (
+  id           uuid primary key default gen_random_uuid(),
+  lat          double precision not null,
+  lng          double precision not null,
+  description  text not null,
+  created_by   uuid not null references public.profiles(id),
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists idx_map_pins_created_by on public.map_pins(created_by);
+
+alter table public.map_pins enable row level security;
+
+-- Every signed-in staff member sees every pin — these are shared map notes,
+-- not private to whoever dropped them.
+drop policy if exists map_pins_select on public.map_pins;
+create policy map_pins_select on public.map_pins for select
+  to authenticated using (true);
+
+drop policy if exists map_pins_insert on public.map_pins;
+create policy map_pins_insert on public.map_pins for insert
+  to authenticated with check (created_by = auth.uid());
+
+drop policy if exists map_pins_update on public.map_pins;
+create policy map_pins_update on public.map_pins for update
+  to authenticated using (created_by = auth.uid() or public.is_exec());
+
+drop policy if exists map_pins_delete on public.map_pins;
+create policy map_pins_delete on public.map_pins for delete
+  to authenticated using (created_by = auth.uid() or public.is_exec());
+
+-- Realtime so a pin dropped by one staff member appears live on everyone
+-- else's already-open map, matching the rest of the app's live-update
+-- conventions (leads, notifications, etc.).
+do $$ begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'map_pins'
+  ) then
+    execute 'alter publication supabase_realtime add table public.map_pins';
+  end if;
+end $$;
+
+-- =============================================================================
 -- End of database/crm.sql
 -- =============================================================================

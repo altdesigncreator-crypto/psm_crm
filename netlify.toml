@@ -31,3 +31,16 @@
   [headers.values]
     Content-Type = "application/javascript; charset=utf-8"
     X-Content-Type-Options = "nosniff"
+
+# Netlify doesn't know the .geojson extension by default and would fall
+# back to application/octet-stream, which also skips its automatic
+# gzip/brotli compression — explicit JSON content-type gets both a correct
+# MIME type and (since it's now recognized as text) real compression on a
+# ~48MB file. max-age is short-ish (30 min), not "immutable" — this file
+# gets overwritten on each fresh parcel export, not cache-busted by a
+# hashed filename, so it needs to actually revalidate periodically.
+[[headers]]
+  for = "/data/*.geojson"
+  [headers.values]
+    Content-Type = "application/geo+json; charset=utf-8"
+    Cache-Control = "public, max-age=1800, must-revalidate"

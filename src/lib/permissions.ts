@@ -156,7 +156,7 @@ export function canWarnStaff(
 /** Route names as used in src/routes.tsx / nav config. */
 export type RouteKey =
   | 'dashboard' | 'add-lead' | 'leads' | 'lead-detail' | 'pipeline' | 'follow-ups'
-  | 'notifications' | 'settings'
+  | 'notifications' | 'settings' | 'psm-map'
   | 'user-management' | 'role-management' | 'team-management'
   | 'kpi-board' | 'profile' | 'analytics' | 'team-activity';
 
@@ -173,6 +173,7 @@ export function canAccessRoute(role: RoleTier | null | undefined, routeKey: Rout
     case 'pipeline':
     case 'follow-ups':
     case 'notifications':
+    case 'psm-map':
       return true; // every authenticated tier has some view of these (own/branch/all, enforced by RLS)
     case 'settings':
       return true; // personal profile/preferences page; system-config section within it is exec-gated

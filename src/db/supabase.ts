@@ -47,8 +47,24 @@ const FETCH_TIMEOUT_MS = 15_000;
 // routed through fetch() at all, so it still dials the direct host and,
 // for users on a blocking network, simply won't connect (live updates
 // silently stop arriving; a normal page load/refetch is unaffected).
+//
+// That redirect is defined in netlify.toml, which only Netlify's own edge
+// evaluates — `vite dev` has no idea it exists, so /supabase-proxy/* is a
+// genuine 404 in local dev. Gated on PROD so a dev-mode network blip can
+// never "commit" the session to a proxy path that doesn't exist there
+// (which previously broke every request after the first failure — even
+// login — with a raw "Unexpected end of JSON input" from parsing that
+// 404's empty body as if it were a real API response).
 const PROXY_BASE = `${window.location.origin}/supabase-proxy`;
 const USE_PROXY_KEY = 'psm_use_supabase_proxy';
+const PROXY_FALLBACK_ENABLED = import.meta.env.PROD;
+
+if (!PROXY_FALLBACK_ENABLED) {
+  // Self-heal a session that got poisoned by this bug before this fix
+  // shipped — otherwise the flag survives page refreshes (sessionStorage)
+  // and keeps failing every request until the tab is closed.
+  sessionStorage.removeItem(USE_PROXY_KEY);
+}
 
 function toProxyUrl(url: string): string {
   return PROXY_BASE + url.slice(supabaseUrl.length);
@@ -65,6 +81,8 @@ async function rawFetch(input: RequestInfo | URL, init: RequestInit | undefined)
 }
 
 async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (!PROXY_FALLBACK_ENABLED) return rawFetch(input, init);
+
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   const isDirectSupabaseUrl = url.startsWith(supabaseUrl);
 

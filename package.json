@@ -56,6 +56,7 @@
     "jspdf-autotable": "^5.0.8",
     "ky": "^1.13.0",
     "lucide-react": "^0.576.0",
+    "maplibre-gl": "^6.5.0",
     "miaoda-react-devkit": "0.1.1-beta.14",
     "miaoda-sc-plugin": "1.0.62",
     "motion": "^12.23.25",

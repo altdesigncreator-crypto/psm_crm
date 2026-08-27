@@ -14,11 +14,13 @@ import {
   Download,
   Activity as ActivityIcon,
   UsersRound,
+  Map as MapIcon,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import PsmMapFrame from '@/components/PsmMapFrame';
 
 interface NavItem {
   /** Translation key — resolved through t() at render time. */
@@ -37,6 +39,7 @@ const NAV_SECTIONS: { tKey: string; items: NavItem[] }[] = [
       { tKey: 'nav.leads', path: '/leads', routeKey: 'leads', icon: Users },
       { tKey: 'nav.followUps', path: '/follow-ups', routeKey: 'follow-ups', icon: ListChecks },
       { tKey: 'nav.pipeline', path: '/pipeline', routeKey: 'pipeline', icon: Kanban },
+      { tKey: 'nav.psmMap', path: '/psm-map', routeKey: 'psm-map', icon: MapIcon },
     ],
   },
   {
@@ -64,7 +67,7 @@ const TAB_ITEMS = [
   { tKey: 'tab.leads', path: '/leads', icon: Users },
   { tKey: 'tab.add', path: '/add-lead', icon: Plus, isFab: true },
   { tKey: 'tab.followUps', path: '/follow-ups', icon: ListChecks },
-  { tKey: 'tab.pipeline', path: '/pipeline', icon: Kanban },
+  { tKey: 'tab.map', path: '/psm-map', icon: MapIcon },
 ];
 
 function initialsOf(name: string): string {
@@ -357,9 +360,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         <SystemBanner />
 
-        <main className="flex-1 min-h-0 overflow-y-auto p-4 md:p-6 lg:p-8 pb-24 md:pb-6">
-          {children}
-        </main>
+        <div className="relative flex-1 min-h-0">
+          <main className="h-full overflow-y-auto p-4 md:p-6 lg:p-8 pb-24 md:pb-6">
+            {children}
+          </main>
+          {/* Kept alive across navigation instead of unmounting with the
+              route — see PsmMapFrame for why. Overlays main full-bleed
+              (ignoring its padding) only while /psm-map is the active route. */}
+          <PsmMapFrame />
+        </div>
       </div>
 
       {/* Mobile-only bottom tab bar */}

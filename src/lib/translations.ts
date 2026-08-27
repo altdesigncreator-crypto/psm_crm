@@ -232,6 +232,7 @@ export const translations: Record<string, Record<Lang, string>> = {
   // Sidebar navigation
   'nav.followUps': { mm: 'Follow-up များ', en: 'Follow-ups' },
   'nav.pipeline': { mm: 'Pipeline', en: 'Pipeline' },
+  'nav.psmMap': { mm: 'PSM မြေပုံ', en: 'PSM Map' },
   'nav.teamActivity': { mm: 'နေ့စဉ် လုပ်ဆောင်ချက်', en: 'Daily Activity' },
   'nav.kpiBoard': { mm: 'KPI ဘုတ်', en: 'KPI Board' },
   'nav.staff': { mm: 'ဝန်ထမ်းများ', en: 'Staff' },
@@ -248,6 +249,7 @@ export const translations: Record<string, Record<Lang, string>> = {
   'tab.add': { mm: 'ထည့်ရန်', en: 'Add' },
   'tab.followUps': { mm: 'Follow-up များ', en: 'Follow-ups' },
   'tab.pipeline': { mm: 'Pipeline', en: 'Pipeline' },
+  'tab.map': { mm: 'မြေပုံ', en: 'Map' },
   // Page headers
   'leads.title': { mm: 'ဖောက်သည် Lead များ', en: 'Customer Leads' },
   'leads.subtitle': { mm: 'ဖောက်သည် Lead အားလုံးကို စီမံပြီး ခြေရာခံပါ', en: 'Manage and track all customer leads' },

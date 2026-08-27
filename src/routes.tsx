@@ -20,6 +20,7 @@ const RoleManagement = lazy(() => import('./pages/RoleManagement'));
 const SystemBannerAdmin = lazy(() => import('./pages/SystemBannerAdmin'));
 const TeamActivity = lazy(() => import('./pages/TeamActivity'));
 const TeamManagement = lazy(() => import('./pages/TeamManagement'));
+const PsmMap = lazy(() => import('./pages/PsmMap'));
 
 export interface RouteConfig {
   name: string;
@@ -180,6 +181,16 @@ export const routes: RouteConfig[] = [
     element: (
       <ProtectedRoute>
         <PipelineBoard />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    name: 'PSM Map',
+    path: '/psm-map',
+    routeKey: 'psm-map',
+    element: (
+      <ProtectedRoute>
+        <PsmMap />
       </ProtectedRoute>
     ),
   },
