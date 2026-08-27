@@ -377,37 +377,34 @@ export default function UserManagement() {
               </Select>
             </div>
 
-            {/* Password reset — exec only (this page already is), and only
-                for Admin/Manager/Sales targets; the edge function enforces
-                the same rule server-side so exec accounts can't be hijacked. */}
-            {(editRole === 'admin' || editRole === 'manager' || editRole === 'sale') && (
-              <div className="space-y-2 rounded-xl border border-warning/30 bg-warning/5 p-3.5 mt-1">
-                <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <KeyRound className="w-3.5 h-3.5 text-warning" /> Reset Password
-                </Label>
-                <p className="text-[11px] text-muted-foreground">Sets a new login password for this staff member immediately.</p>
-                <div className="flex gap-2">
-                  <Input
-                    type="text"
-                    value={resetPassword}
-                    onChange={(e) => setResetPassword(e.target.value)}
-                    placeholder="New password (min 6 characters)"
-                    className="h-11 flex-1"
-                    autoComplete="off"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={isResetting || resetPassword.length < 6}
-                    onClick={handleResetPassword}
-                    className="h-11 shrink-0 border-warning/40 text-warning hover:bg-warning/10 hover:text-warning gap-1.5"
-                  >
-                    {isResetting ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-                    Reset
-                  </Button>
-                </div>
+            {/* Password reset — exec only (this page already is). Any staff
+                role can be targeted, including Boss/Super Admin. */}
+            <div className="space-y-2 rounded-xl border border-warning/30 bg-warning/5 p-3.5 mt-1">
+              <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <KeyRound className="w-3.5 h-3.5 text-warning" /> Reset Password
+              </Label>
+              <p className="text-[11px] text-muted-foreground">Sets a new login password for this staff member immediately.</p>
+              <div className="flex gap-2">
+                <Input
+                  type="text"
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  placeholder="New password (min 6 characters)"
+                  className="h-11 flex-1"
+                  autoComplete="off"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isResetting || resetPassword.length < 6}
+                  onClick={handleResetPassword}
+                  className="h-11 shrink-0 border-warning/40 text-warning hover:bg-warning/10 hover:text-warning gap-1.5"
+                >
+                  {isResetting ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+                  Reset
+                </Button>
               </div>
-            )}
+            </div>
 
             {/* Danger zone — same target rule as password reset: only
                 Admin/Manager/Sales accounts, enforced server-side too. */}

@@ -20,11 +20,9 @@ interface ResetPasswordPayload {
 }
 
 /**
- * Boss/Super Admin reset a staff member's password. Only Admin / Manager /
- * Sales accounts can be targeted — exec passwords cannot be reset here, so
- * a Super Admin can't take over the Boss account (or another exec's).
- * Uses the service-role key because auth.admin.updateUserById is not
- * callable from the client.
+ * Boss/Super Admin reset any staff member's password, including other
+ * Boss/Super Admin accounts. Uses the service-role key because
+ * auth.admin.updateUserById is not callable from the client.
  */
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -65,7 +63,6 @@ serve(async (req) => {
       return json({ error: 'Password must be at least 6 characters.' }, 400);
     }
 
-    // Target must be Admin / Manager / Sales — never another exec.
     const { data: target, error: targetErr } = await admin
       .from('profiles')
       .select('id, role, email, name')
@@ -73,9 +70,6 @@ serve(async (req) => {
       .single();
 
     if (targetErr || !target) return json({ error: 'Staff member not found.' }, 404);
-    if (!['admin', 'manager', 'sale'].includes(target.role)) {
-      return json({ error: 'Passwords for Boss/Super Admin accounts cannot be reset here.' }, 403);
-    }
 
     const { error: updateErr } = await admin.auth.admin.updateUserById(payload.userId, {
       password: payload.newPassword,
