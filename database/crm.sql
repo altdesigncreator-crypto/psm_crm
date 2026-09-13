@@ -672,9 +672,10 @@ begin
     insert into public.lead_assignments (lead_id, assigned_to, assigned_by, note)
     values (new.id, new.owner_id, auth.uid(), case when tg_op = 'INSERT' then 'Initial assignment' else 'Reassigned' end);
 
-    insert into public.notifications (recipient_id, type, title, body, related_lead_id)
-    values (new.owner_id, 'new_lead_assigned', 'New lead assigned', new.name || ' has been assigned to you.', new.id);
-
+    -- No longer creates a 'new_lead_assigned' notification here — turned
+    -- off by request. Historical rows of that type are left alone; this
+    -- just stops new ones from being created. lead_assignments/audit_logs
+    -- above are untouched, unrelated to the notification.
     insert into public.audit_logs (action, target_table, target_id, performed_by, new_value)
     values (case when tg_op = 'INSERT' then 'lead_created' else 'lead_reassigned' end,
             'leads', new.id, auth.uid(), jsonb_build_object('owner_id', new.owner_id));
@@ -1447,7 +1448,7 @@ declare
     'sale', 'sale', 'sale'
   ]::role_tier[];
   v_depts text[] := array[
-    null, null, null,
+    null, null, 'house',
     'house', 'condo', 'project',
     'house', 'condo', 'project'
   ];
@@ -1791,6 +1792,45 @@ do $$ begin
     execute 'alter publication supabase_realtime add table public.map_pins';
   end if;
 end $$;
+
+-- =============================================================================
+-- 18. WEB PUSH SUBSCRIPTIONS — lets the System Banner Admin send a real
+-- OS-level push notification (arrives even if the CRM tab/app is closed),
+-- separate from the dismissible system_messages banner above. Each row is
+-- one browser/device's push endpoint for one CRM staff member (auth.users,
+-- NOT banner_admins — pushes go to regular app users; only the *sending* is
+-- gated behind the banner-admin login, from banner-messages'
+-- action:'send_push'). A user can have several rows (phone + laptop, etc).
+-- =============================================================================
+
+create table if not exists public.push_subscriptions (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  endpoint    text not null unique,
+  p256dh      text not null,
+  auth_key    text not null,
+  created_at  timestamptz not null default now()
+);
+
+create index if not exists idx_push_subscriptions_user on public.push_subscriptions(user_id);
+
+alter table public.push_subscriptions enable row level security;
+
+drop policy if exists push_subscriptions_select on public.push_subscriptions;
+create policy push_subscriptions_select on public.push_subscriptions for select
+  to authenticated using (auth.uid() = user_id);
+
+drop policy if exists push_subscriptions_insert on public.push_subscriptions;
+create policy push_subscriptions_insert on public.push_subscriptions for insert
+  to authenticated with check (auth.uid() = user_id);
+
+drop policy if exists push_subscriptions_update on public.push_subscriptions;
+create policy push_subscriptions_update on public.push_subscriptions for update
+  to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists push_subscriptions_delete on public.push_subscriptions;
+create policy push_subscriptions_delete on public.push_subscriptions for delete
+  to authenticated using (auth.uid() = user_id);
 
 -- =============================================================================
 -- End of database/crm.sql

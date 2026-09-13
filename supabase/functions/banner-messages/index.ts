@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
+import webpush from 'npm:web-push@3.6.7';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -17,7 +18,7 @@ function json(body: unknown, status = 200) {
 type MessageType = 'info' | 'warning' | 'maintenance' | 'critical';
 
 interface Payload {
-  action: 'list' | 'create' | 'update' | 'delete' | 'logout' | 'update_maintenance';
+  action: 'list' | 'create' | 'update' | 'delete' | 'logout' | 'update_maintenance' | 'send_push';
   id?: string;
   message?: string;
   type?: MessageType;
@@ -25,6 +26,9 @@ interface Payload {
   // update_maintenance only:
   is_enabled?: boolean;
   title?: string;
+  // send_push only:
+  body?: string;
+  url?: string;
 }
 
 /**
@@ -102,6 +106,48 @@ serve(async (req) => {
     case 'logout': {
       await admin.from('banner_sessions').delete().eq('token', token);
       return json({ ok: true });
+    }
+
+    case 'send_push': {
+      const title = payload.title?.trim();
+      const body = payload.body?.trim();
+      if (!title || !body) return json({ error: 'Title and body are required.' }, 400);
+
+      const vapidPublicKey = Deno.env.get('VAPID_PUBLIC_KEY');
+      const vapidPrivateKey = Deno.env.get('VAPID_PRIVATE_KEY');
+      const vapidSubject = Deno.env.get('VAPID_SUBJECT');
+      if (!vapidPublicKey || !vapidPrivateKey || !vapidSubject) {
+        return json({ error: 'Push notifications are not configured on the server.' }, 500);
+      }
+      webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+
+      const { data: subs, error: subsErr } = await admin
+        .from('push_subscriptions')
+        .select('id, endpoint, p256dh, auth_key');
+      if (subsErr) return json({ error: subsErr.message }, 500);
+      if (!subs || subs.length === 0) return json({ sent: 0, failed: 0 });
+
+      const payloadStr = JSON.stringify({ title, body, url: payload.url || '/' });
+      const staleIds: string[] = [];
+      let sent = 0;
+
+      await Promise.all(
+        subs.map(async (s) => {
+          try {
+            await webpush.sendNotification(
+              { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth_key } },
+              payloadStr
+            );
+            sent++;
+          } catch (err: any) {
+            if (err?.statusCode === 404 || err?.statusCode === 410) staleIds.push(s.id);
+          }
+        })
+      );
+
+      if (staleIds.length > 0) await admin.from('push_subscriptions').delete().in('id', staleIds);
+
+      return json({ sent, failed: subs.length - sent });
     }
 
     case 'update_maintenance': {

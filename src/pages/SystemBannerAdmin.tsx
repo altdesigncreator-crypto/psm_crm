@@ -4,11 +4,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Megaphone, Eye, EyeOff, LogOut, Plus, Trash2, Edit2, Loader2, Info, AlertTriangle, Wrench, Siren } from 'lucide-react';
+import { Megaphone, Eye, EyeOff, LogOut, Plus, Trash2, Edit2, Loader2, Info, AlertTriangle, Wrench, Siren, BellRing, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   getBannerToken, bannerLogin, bannerLogout, listMessages, createMessage, updateMessage, deleteMessage,
-  fetchMaintenanceSettings, saveMaintenanceSettings,
+  fetchMaintenanceSettings, saveMaintenanceSettings, sendPushNotification,
 } from '@/lib/bannerAdmin';
 import { SYSTEM_MESSAGE_TYPES, type SystemMessage, type SystemMessageType, type MaintenanceSettings } from '@/types';
 
@@ -226,6 +226,66 @@ function MaintenancePanel({ onSessionExpired }: { onSessionExpired: () => void }
   );
 }
 
+function PushPanel({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const handleSend = async () => {
+    if (!title.trim() || !body.trim()) { toast.error('Title and body are required.'); return; }
+    setSending(true);
+    try {
+      const result = await sendPushNotification(title.trim(), body.trim());
+      if (result.sent === 0) {
+        toast.warning('No devices are subscribed to push notifications yet.');
+      } else {
+        toast.success(`Push sent to ${result.sent} device${result.sent === 1 ? '' : 's'}${result.failed ? ` (${result.failed} failed)` : ''}.`);
+      }
+      setTitle('');
+      setBody('');
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not send push notification.');
+      if (err?.message?.includes('log in')) onSessionExpired();
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-lg shadow-card p-5 space-y-4">
+      <div className="flex items-center gap-2.5">
+        <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border bg-primary/10 text-primary border-primary/20">
+          <BellRing className="w-4 h-4" />
+        </div>
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Send Push Notification</h2>
+          <p className="text-xs text-muted-foreground">Real OS-level push — reaches every subscribed device even if the app is closed</p>
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label className="text-xs font-medium text-muted-foreground">Title</Label>
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. New leads assigned" className="h-10" />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label className="text-xs font-medium text-muted-foreground">Body</Label>
+        <textarea
+          value={body} onChange={(e) => setBody(e.target.value)} rows={3}
+          placeholder="e.g. 12 new leads were just imported and need follow-up."
+          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        />
+      </div>
+
+      <div className="flex justify-end pt-1">
+        <Button type="button" size="sm" disabled={sending || !title.trim() || !body.trim()} onClick={handleSend} className="gap-1.5">
+          {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function AdminPanel({ onLogout }: { onLogout: () => void }) {
   const [messages, setMessages] = useState<SystemMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -308,6 +368,8 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
         </div>
 
         <MaintenancePanel onSessionExpired={onLogout} />
+
+        <PushPanel onSessionExpired={onLogout} />
 
         <div className="bg-white rounded-lg shadow-card p-5 space-y-4">
           <div className="flex items-center justify-between">

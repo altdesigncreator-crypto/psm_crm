@@ -10,16 +10,17 @@ import {
   isPlatformAuthenticatorAvailable, isBiometricEnabledFor, registerBiometric, disableBiometric,
 } from '@/lib/biometricAuth';
 import { processCapturedImage } from '@/lib/cameraUtils';
+import { isPushSupported, hasActivePushSubscription, subscribeToPush, unsubscribeFromPush } from '@/lib/pushNotifications';
 import AvatarCropDialog from '@/components/AvatarCropDialog';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import {
-  ArrowLeft, User, Mail, Shield, Building2, Moon, Bell, Info, ChevronDown, Phone, MapPin,
+  ArrowLeft, User, Mail, Shield, Building2, Moon, Bell, Info, Phone, MapPin,
   HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern, KeyRound, Eye, EyeOff, Trash2, Edit2,
-  Camera, Download,
+  Camera, Download, ChevronRight,
 } from 'lucide-react';
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -27,6 +28,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { toast } from 'sonner';
+
+type SectionKey = 'profile' | 'preferences' | 'system' | 'about';
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -42,8 +45,9 @@ export default function Settings() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
   const [darkMode, setDarkMode] = useState(document.documentElement.classList.contains('dark'));
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [openSection, setOpenSection] = useState<'profile' | 'preferences' | 'system' | null>('profile');
+  const [notificationsEnabled, setNotificationsEnabled] = useState(false);
+  const [notificationsBusy, setNotificationsBusy] = useState(false);
+  const [activeSection, setActiveSection] = useState<SectionKey>('profile');
 
   const [biometricSupported, setBiometricSupported] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(user ? isBiometricEnabledFor(user.id) : false);
@@ -65,6 +69,33 @@ export default function Settings() {
     isPlatformAuthenticatorAvailable().then(setBiometricSupported);
   }, []);
 
+  useEffect(() => {
+    if (!isPushSupported()) return;
+    hasActivePushSubscription().then(setNotificationsEnabled);
+  }, []);
+
+  const handleToggleNotifications = async () => {
+    if (!user?.id || notificationsBusy) return;
+    if (!isPushSupported()) {
+      toast.error('Push notifications are not supported on this device/browser.');
+      return;
+    }
+    setNotificationsBusy(true);
+    try {
+      if (notificationsEnabled) {
+        await unsubscribeFromPush();
+        setNotificationsEnabled(false);
+      } else {
+        await subscribeToPush(user.id);
+        setNotificationsEnabled(true);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not update notification settings.');
+    } finally {
+      setNotificationsBusy(false);
+    }
+  };
+
   const [newDeptCode, setNewDeptCode] = useState('');
   const [newDeptName, setNewDeptName] = useState('');
   const [savingDept, setSavingDept] = useState(false);
@@ -73,8 +104,6 @@ export default function Settings() {
   const [savingDeptEdit, setSavingDeptEdit] = useState(false);
   const [deptDeleteTarget, setDeptDeleteTarget] = useState<{ code: string; name: string } | null>(null);
   const [deletingDept, setDeletingDept] = useState(false);
-
-  const toggleSection = (section: 'profile' | 'preferences' | 'system') => setOpenSection((prev) => (prev === section ? null : section));
 
   const handleToggleDarkMode = () => {
     const next = !darkMode;
@@ -306,143 +335,357 @@ export default function Settings() {
     setNewDeptName('');
   };
 
+  const SECTIONS: { key: SectionKey; label: string; description: string; icon: typeof User }[] = [
+    { key: 'profile', label: 'Profile', description: user?.email || '—', icon: User },
+    { key: 'preferences', label: 'Preferences', description: 'Theme, language, notifications', icon: Moon },
+    ...(isExec(role) ? [{ key: 'system' as const, label: 'System Configuration', description: 'Departments and backups', icon: SettingsIcon }] : []),
+    { key: 'about', label: 'About', description: 'Company info and app version', icon: Info },
+  ];
+
   return (
-    <div className="max-w-2xl mx-auto animate-fade-in-up space-y-5">
+    <div className="animate-fade-in-up space-y-5">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 active:bg-muted/50" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-5 h-5" /></Button>
         <div className="min-w-0 flex-1 md:hidden">
           <h1 className="text-xl md:text-2xl font-bold text-foreground">Settings</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Profile and system preferences</p>
         </div>
       </div>
 
-      <div className="md:hidden">
-        <button type="button" onClick={() => toggleSection('profile')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-all text-left">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center"><User className="w-4 h-4 text-primary" /></div>
-            <div><p className="text-sm font-semibold text-foreground">Profile</p><p className="text-xs text-muted-foreground">{user?.email || '—'}</p></div>
-          </div>
-          <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${openSection === 'profile' ? 'rotate-180' : ''}`} />
-        </button>
+      {/* Mobile: horizontal scrolling tab strip. Desktop: vertical sidebar
+          nav, below. Both drive the same activeSection state — only one
+          section's content ever renders, instead of the old
+          all-visible-on-desktop accordion stack. */}
+      <div className="flex lg:hidden items-center gap-2 overflow-x-auto pb-1 -mx-4 px-4">
+        {SECTIONS.map((s) => (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => setActiveSection(s.key)}
+            className={`shrink-0 flex items-center gap-2 px-3.5 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all duration-200 ${
+              activeSection === s.key ? 'bg-primary text-primary-foreground shadow-sm' : 'bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary/40'
+            }`}
+          >
+            <s.icon className="w-4 h-4" /> {s.label}
+          </button>
+        ))}
       </div>
 
-      <Card className="shadow-card rounded-xl border-0 md:block" style={{ display: openSection === 'profile' ? 'block' : undefined }}>
-        <CardHeader className="pb-3 hidden md:flex">
-          <CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><User className="w-4 h-4 text-primary" /></div>Profile</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="flex items-center gap-4">
-            <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
-            <button
-              type="button"
-              onClick={() => avatarInputRef.current?.click()}
-              disabled={uploadingAvatar}
-              className="relative w-14 h-14 rounded-full shrink-0 group"
-              aria-label="Change profile photo"
-            >
-              {user?.avatar_url ? (
-                <img src={user.avatar_url} alt={user.name} className="w-14 h-14 rounded-full object-cover" />
-              ) : (
-                <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center"><User className="w-7 h-7 text-primary" /></div>
-              )}
-              <div className="absolute inset-0 rounded-full bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
-                {uploadingAvatar && <Loader2 className="w-5 h-5 text-white animate-spin" />}
-              </div>
-              {!uploadingAvatar && (
-                <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-primary text-white flex items-center justify-center border-2 border-card">
-                  <Camera className="w-2.5 h-2.5" />
-                </div>
-              )}
-            </button>
-            <div className="min-w-0 flex-1">
-              <p className="text-base font-semibold text-foreground truncate">{user?.name || '—'}</p>
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
-                <span className="text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">{getRoleLabel(role)}</span>
-                {department && <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted text-muted-foreground border border-border">{getDepartmentLabel(department)}</span>}
-              </div>
-            </div>
-          </div>
-          <Separator />
-          <form onSubmit={handleUpdateProfile} className="space-y-4">
-            <div className="space-y-2"><Label className="text-sm font-medium">Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} required /></div>
-            <div className="space-y-2"><Label className="text-sm font-medium">Phone</Label><Input value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="09xxxxxxxxx" /></div>
-            <Button type="submit" disabled={isUpdating} className="w-full sm:w-auto h-10 gradient-primary text-white gap-2 mt-2">
-              {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes
-            </Button>
-          </form>
-          <Separator />
-          <form onSubmit={handleChangePassword} className="space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-warning/10 flex items-center justify-center"><KeyRound className="w-4 h-4 text-warning" /></div>
-              <p className="text-sm font-semibold text-foreground">Change Password</p>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">Current password</Label>
-              <Input type={showPw ? 'text' : 'password'} value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} required autoComplete="current-password" />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">New password</Label>
-              <div className="relative">
-                <Input type={showPw ? 'text' : 'password'} value={pwNew} onChange={(e) => setPwNew(e.target.value)} required minLength={6} autoComplete="new-password" className="pr-12" placeholder="At least 6 characters" />
+      <div className="grid grid-cols-1 lg:grid-cols-[270px_1fr] gap-6 items-start">
+        <div className="hidden lg:block sticky top-4">
+          <Card className="shadow-card rounded-xl border-0">
+            <CardContent className="p-2">
+              {SECTIONS.map((s) => (
                 <button
+                  key={s.key}
                   type="button"
-                  onClick={() => setShowPw((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 min-h-0 flex items-center justify-center rounded-full text-muted-foreground"
-                  aria-label={showPw ? 'Hide passwords' : 'Show passwords'}
+                  onClick={() => setActiveSection(s.key)}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors ${
+                    activeSection === s.key ? 'bg-primary/10 text-primary' : 'text-foreground/80 hover:bg-muted'
+                  }`}
                 >
-                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeSection === s.key ? 'bg-primary/15' : 'bg-muted'}`}><s.icon className="w-4 h-4" /></div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">{s.label}</p>
+                    <p className="text-xs text-muted-foreground leading-snug">{s.description}</p>
+                  </div>
+                  {activeSection === s.key && <ChevronRight className="w-4 h-4 shrink-0 mt-0.5" />}
                 </button>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-sm font-medium">Confirm new password</Label>
-              <Input type={showPw ? 'text' : 'password'} value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} required minLength={6} autoComplete="new-password" />
-            </div>
-            <Button type="submit" disabled={changingPw || !pwCurrent || !pwNew || !pwConfirm} className="w-full sm:w-auto h-10 gap-2 mt-2" variant="outline">
-              {changingPw ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-              {changingPw ? 'Changing…' : 'Change Password'}
-            </Button>
-          </form>
-          <Separator />
-          <div className="space-y-1 bg-muted/30 rounded-xl p-2">
-            {[
-              { icon: Mail, label: 'Email (cannot be changed)', value: user?.email || '—' },
-              { icon: Shield, label: 'Role', value: getRoleLabel(role) },
-              { icon: Building2, label: 'Department', value: department ? getDepartmentLabel(department) : 'All departments' },
-            ].map((item, idx) => (
-              <div key={idx} className="flex items-start gap-3 p-2.5 rounded-lg min-h-[48px]">
-                <item.icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                <div className="min-w-0"><p className="text-xs text-muted-foreground">{item.label}</p><p className="text-sm font-medium text-foreground/70 break-words">{item.value}</p></div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
 
-          {/* Danger zone — the Boss account can't self-delete; a Super Admin
-              can, unless they're the last executive (server enforces both). */}
-          {role !== 'boss' && (
-            <>
-              <Separator />
-              <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3.5">
-                <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                  <Trash2 className="w-4 h-4 text-destructive" /> Delete Account
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Permanently deletes your login and notifications. Leads you own must be
-                  reassigned by your manager first. This cannot be undone.
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setDeleteAccountOpen(true)}
-                  className="w-full sm:w-auto h-10 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive gap-1.5"
-                >
-                  <Trash2 className="w-4 h-4" /> Delete my account
-                </Button>
+        <div className="space-y-5 min-w-0">
+          {activeSection === 'profile' && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+              <div className="space-y-5">
+                <Card className="shadow-card rounded-xl border-0 overflow-hidden relative">
+                  <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.06] via-transparent to-transparent pointer-events-none" />
+                  <CardContent className="p-5 md:p-6 space-y-5 relative">
+                    <div className="flex items-center gap-4">
+                      <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
+                      <button
+                        type="button"
+                        onClick={() => avatarInputRef.current?.click()}
+                        disabled={uploadingAvatar}
+                        className="relative w-16 h-16 rounded-full shrink-0 group"
+                        aria-label="Change profile photo"
+                      >
+                        {user?.avatar_url ? (
+                          <img src={user.avatar_url} alt={user.name} className="w-16 h-16 rounded-full object-cover" />
+                        ) : (
+                          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center"><User className="w-8 h-8 text-primary" /></div>
+                        )}
+                        <div className="absolute inset-0 rounded-full bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+                          {uploadingAvatar && <Loader2 className="w-5 h-5 text-white animate-spin" />}
+                        </div>
+                        {!uploadingAvatar && (
+                          <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-primary text-white flex items-center justify-center border-2 border-card">
+                            <Camera className="w-2.5 h-2.5" />
+                          </div>
+                        )}
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-base font-semibold text-foreground truncate">{user?.name || '—'}</p>
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          <span className="text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">{getRoleLabel(role)}</span>
+                          {department && <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted text-muted-foreground border border-border">{getDepartmentLabel(department)}</span>}
+                        </div>
+                      </div>
+                    </div>
+                    <Separator />
+                    <form onSubmit={handleUpdateProfile} className="space-y-4">
+                      <div className="space-y-2"><Label className="text-sm font-medium">Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} required /></div>
+                      <div className="space-y-2"><Label className="text-sm font-medium">Phone</Label><Input value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="09xxxxxxxxx" /></div>
+                      <Button type="submit" disabled={isUpdating} className="w-full sm:w-auto h-10 gradient-primary text-white gap-2 mt-2">
+                        {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes
+                      </Button>
+                    </form>
+                  </CardContent>
+                </Card>
+
+                <Card className="shadow-card rounded-xl border-0">
+                  <CardContent className="p-5 md:p-6 space-y-1">
+                    <p className="text-sm font-semibold text-foreground mb-2">Account</p>
+                    {[
+                      { icon: Mail, label: 'Email (cannot be changed)', value: user?.email || '—' },
+                      { icon: Shield, label: 'Role', value: getRoleLabel(role) },
+                      { icon: Building2, label: 'Department', value: department ? getDepartmentLabel(department) : 'All departments' },
+                    ].map((item, idx) => (
+                      <div key={idx} className="flex items-start gap-3 p-2.5 rounded-lg min-h-[48px] bg-muted/30">
+                        <item.icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+                        <div className="min-w-0"><p className="text-xs text-muted-foreground">{item.label}</p><p className="text-sm font-medium text-foreground/70 break-words">{item.value}</p></div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+
+                {/* Danger zone — the Boss account can't self-delete; a Super
+                    Admin can, unless they're the last executive (server
+                    enforces both). */}
+                {role !== 'boss' && (
+                  <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+                    <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                      <Trash2 className="w-4 h-4 text-destructive" /> Delete Account
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Permanently deletes your login and notifications. Leads you own must be
+                      reassigned by your manager first. This cannot be undone.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setDeleteAccountOpen(true)}
+                      className="w-full sm:w-auto h-10 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive gap-1.5"
+                    >
+                      <Trash2 className="w-4 h-4" /> Delete my account
+                    </Button>
+                  </div>
+                )}
               </div>
-            </>
+
+              <Card className="shadow-card rounded-xl border-0">
+                <CardContent className="p-5 md:p-6">
+                  <form onSubmit={handleChangePassword} className="space-y-4">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-warning/15 to-warning/5 flex items-center justify-center"><KeyRound className="w-4 h-4 text-warning" /></div>
+                      <p className="text-sm font-semibold text-foreground">Change Password</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Current password</Label>
+                      <Input type={showPw ? 'text' : 'password'} value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} required autoComplete="current-password" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">New password</Label>
+                      <div className="relative">
+                        <Input type={showPw ? 'text' : 'password'} value={pwNew} onChange={(e) => setPwNew(e.target.value)} required minLength={6} autoComplete="new-password" className="pr-12" placeholder="At least 6 characters" />
+                        <button
+                          type="button"
+                          onClick={() => setShowPw((v) => !v)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 min-h-0 flex items-center justify-center rounded-full text-muted-foreground"
+                          aria-label={showPw ? 'Hide passwords' : 'Show passwords'}
+                        >
+                          {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Confirm new password</Label>
+                      <Input type={showPw ? 'text' : 'password'} value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} required minLength={6} autoComplete="new-password" />
+                    </div>
+                    <Button type="submit" disabled={changingPw || !pwCurrent || !pwNew || !pwConfirm} className="w-full sm:w-auto h-10 gap-2 mt-2" variant="outline">
+                      {changingPw ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+                      {changingPw ? 'Changing…' : 'Change Password'}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+            </div>
           )}
-        </CardContent>
-      </Card>
+
+          {activeSection === 'preferences' && (
+            <Card className="shadow-card rounded-xl border-0">
+              <CardContent className="p-5 md:p-6 space-y-4">
+                <button type="button" onClick={() => setLang(lang === 'mm' ? 'en' : 'mm')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card hover:bg-muted/40 active:bg-muted/50 transition-colors text-left min-h-[64px]">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-info/15 to-info/5 flex items-center justify-center shrink-0"><Globe className="w-5 h-5 text-info" /></div>
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">{t('settings.language')}</p>
+                      <p className="text-xs text-muted-foreground">{t('settings.languageDesc')}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className={`text-xs font-medium px-2 py-1 rounded-full border ${lang === 'mm' ? 'bg-primary text-white border-primary' : 'bg-muted text-muted-foreground border-border'}`}>MM</span>
+                    <span className={`text-xs font-medium px-2 py-1 rounded-full border ${lang === 'en' ? 'bg-primary text-white border-primary' : 'bg-muted text-muted-foreground border-border'}`}>EN</span>
+                  </div>
+                </button>
+
+                <button type="button" onClick={handleToggleDarkMode} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card hover:bg-muted/40 active:bg-muted/50 transition-colors text-left min-h-[64px]">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center shrink-0"><Moon className="w-5 h-5 text-primary" /></div>
+                    <div><p className="text-sm font-semibold text-foreground">Dark Mode</p></div>
+                  </div>
+                  <div className={`w-12 h-7 rounded-full transition-colors relative ${darkMode ? 'bg-primary' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${darkMode ? 'left-6' : 'left-1'}`} /></div>
+                </button>
+
+                <button type="button" onClick={handleToggleNotifications} disabled={notificationsBusy} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card hover:bg-muted/40 active:bg-muted/50 transition-colors text-left min-h-[64px] disabled:opacity-60">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-success/15 to-success/5 flex items-center justify-center shrink-0">
+                      {notificationsBusy ? <Loader2 className="w-5 h-5 text-success animate-spin" /> : <Bell className="w-5 h-5 text-success" />}
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Notifications</p>
+                      <p className="text-xs text-muted-foreground">Push alerts even when the app is closed</p>
+                    </div>
+                  </div>
+                  <div className={`w-12 h-7 rounded-full transition-colors relative ${notificationsEnabled ? 'bg-success' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${notificationsEnabled ? 'left-6' : 'left-1'}`} /></div>
+                </button>
+
+                {biometricSupported && (
+                  <button
+                    type="button"
+                    onClick={handleToggleBiometric}
+                    disabled={biometricBusy}
+                    className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card hover:bg-muted/40 active:bg-muted/50 transition-colors text-left min-h-[64px] disabled:opacity-60"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center shrink-0">
+                        {biometricBusy ? <Loader2 className="w-5 h-5 text-primary animate-spin" /> : <FingerprintPattern className="w-5 h-5 text-primary" />}
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">Face ID / Fingerprint Sign-in</p>
+                        <p className="text-xs text-muted-foreground">Sign back in with biometrics instead of your password on this device</p>
+                      </div>
+                    </div>
+                    <div className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${biometricEnabled ? 'bg-primary' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${biometricEnabled ? 'left-6' : 'left-1'}`} /></div>
+                  </button>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {activeSection === 'system' && isExec(role) && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+              <Card className="shadow-card rounded-xl border-0">
+                <CardContent className="p-5 md:p-6 space-y-3">
+                  <p className="text-sm font-semibold text-foreground">Departments</p>
+                  <p className="text-xs text-muted-foreground">Add, rename or delete departments — changes apply immediately to every department picker across the app (leads, staff, filters).</p>
+                  <form onSubmit={handleAddDepartment} className="flex flex-col sm:flex-row gap-2">
+                    <Input placeholder="Code (e.g. commercial)" value={newDeptCode} onChange={(e) => setNewDeptCode(e.target.value)} className="h-10 sm:w-40" />
+                    <Input placeholder="Display name (e.g. Commercial)" value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="h-10 flex-1" />
+                    <Button type="submit" disabled={savingDept} size="sm" className="h-10 gap-1.5 shrink-0">
+                      {savingDept ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add
+                    </Button>
+                  </form>
+                  <div className="space-y-2">
+                    {departments.map((d) => (
+                      <div key={d.code} className="flex items-center gap-2 p-2.5 rounded-xl border border-border">
+                        {editingDeptCode === d.code ? (
+                          <>
+                            <Input
+                              value={editingDeptName}
+                              onChange={(e) => setEditingDeptName(e.target.value)}
+                              className="h-10 flex-1"
+                              autoFocus
+                            />
+                            <Button size="sm" disabled={savingDeptEdit} onClick={() => handleRenameDepartment(d.code)} className="h-10 shrink-0">
+                              {savingDeptEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+                            </Button>
+                            <Button size="sm" variant="ghost" disabled={savingDeptEdit} onClick={() => setEditingDeptCode(null)} className="h-10 shrink-0">
+                              Cancel
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-foreground truncate">{d.name}</p>
+                              <p className="text-[11px] text-muted-foreground">code: {d.code}</p>
+                            </div>
+                            <Button variant="ghost" size="icon" aria-label={`Rename ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => { setEditingDeptCode(d.code); setEditingDeptName(d.name); }}>
+                              <Edit2 className="w-4 h-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon" aria-label={`Delete ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => setDeptDeleteTarget({ code: d.code, name: d.name })}>
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="shadow-card rounded-xl border-0">
+                <CardContent className="p-5 md:p-6 space-y-3">
+                  <p className="text-sm font-semibold text-foreground">Database Backup</p>
+                  <p className="text-xs text-muted-foreground">
+                    Runs a full database backup on demand (the same pg_dump job that also runs automatically every
+                    day) and downloads it straight to this device. Takes up to a minute.
+                  </p>
+                  <Button
+                    variant="outline"
+                    disabled={downloadingBackup}
+                    onClick={handleDownloadBackup}
+                    className="h-11 gap-2"
+                  >
+                    {downloadingBackup ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                    {downloadingBackup ? 'Generating backup…' : 'Download Backup'}
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {activeSection === 'about' && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+              <Card className="shadow-card rounded-xl border-0">
+                <CardContent className="space-y-3 p-4 md:p-6">
+                  <p className="text-sm font-semibold text-foreground mb-1">Company Information</p>
+                  <div className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card min-h-[52px]">
+                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><MapPin className="w-4 h-4 text-primary" /></div>
+                    <div className="min-w-0"><p className="text-xs text-muted-foreground">Address</p><p className="text-sm font-medium text-foreground">PSM Properties Co., Ltd.</p><p className="text-xs text-muted-foreground truncate">Yangon, Myanmar</p></div>
+                  </div>
+                  <a href="tel:+95123456789" className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors min-h-[52px]">
+                    <div className="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center shrink-0"><Phone className="w-4 h-4 text-success" /></div>
+                    <div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">Contact</p><p className="text-sm font-medium text-foreground">+95 1 234 567 89</p></div>
+                  </a>
+                  <a href="mailto:support@psmproperties.com" className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors min-h-[52px]">
+                    <div className="w-10 h-10 rounded-lg bg-info/10 flex items-center justify-center shrink-0"><HeartHandshake className="w-4 h-4 text-info" /></div>
+                    <div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">Support</p><p className="text-sm font-medium text-foreground">support@psmproperties.com</p></div>
+                  </a>
+                </CardContent>
+              </Card>
+
+              <Card className="shadow-card rounded-xl border-0">
+                <CardContent className="p-4 md:p-6 min-h-[56px]">
+                  <p className="text-sm font-semibold text-foreground">PSM Properties CRM</p>
+                  <p className="text-xs text-muted-foreground">Supabase + React · v1.0</p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Delete-account confirmation — requires the password */}
       <AlertDialog open={deleteAccountOpen} onOpenChange={(open) => { if (!isDeletingAccount) { setDeleteAccountOpen(open); if (!open) setDeletePassword(''); } }}>
@@ -475,186 +718,6 @@ export default function Settings() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <div className="md:hidden">
-        <button type="button" onClick={() => toggleSection('preferences')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-all text-left">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center"><Moon className="w-4 h-4 text-primary" /></div>
-            <div><p className="text-sm font-semibold text-foreground">Preferences</p><p className="text-xs text-muted-foreground">Theme, language, notifications</p></div>
-          </div>
-          <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${openSection === 'preferences' ? 'rotate-180' : ''}`} />
-        </button>
-      </div>
-
-      <Card className="shadow-card rounded-xl border-0 md:block" style={{ display: openSection === 'preferences' ? 'block' : undefined }}>
-        <CardHeader className="pb-3 hidden md:flex">
-          <CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Moon className="w-4 h-4 text-primary" /></div>Preferences</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <button type="button" onClick={() => setLang(lang === 'mm' ? 'en' : 'mm')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-xl bg-info/10 flex items-center justify-center shrink-0"><Globe className="w-5 h-5 text-info" /></div>
-              <div>
-                <p className="text-sm font-semibold text-foreground">{t('settings.language')}</p>
-                <p className="text-xs text-muted-foreground">{t('settings.languageDesc')}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <span className={`text-xs font-medium px-2 py-1 rounded-full border ${lang === 'mm' ? 'bg-primary text-white border-primary' : 'bg-muted text-muted-foreground border-border'}`}>MM</span>
-              <span className={`text-xs font-medium px-2 py-1 rounded-full border ${lang === 'en' ? 'bg-primary text-white border-primary' : 'bg-muted text-muted-foreground border-border'}`}>EN</span>
-            </div>
-          </button>
-
-          <button type="button" onClick={handleToggleDarkMode} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Moon className="w-5 h-5 text-primary" /></div>
-              <div><p className="text-sm font-semibold text-foreground">Dark Mode</p></div>
-            </div>
-            <div className={`w-12 h-7 rounded-full transition-colors relative ${darkMode ? 'bg-primary' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${darkMode ? 'left-6' : 'left-1'}`} /></div>
-          </button>
-
-          <button type="button" onClick={() => setNotificationsEnabled((v) => !v)} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-11 h-11 rounded-xl bg-success/10 flex items-center justify-center shrink-0"><Bell className="w-5 h-5 text-success" /></div>
-              <div><p className="text-sm font-semibold text-foreground">Notifications</p></div>
-            </div>
-            <div className={`w-12 h-7 rounded-full transition-colors relative ${notificationsEnabled ? 'bg-success' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${notificationsEnabled ? 'left-6' : 'left-1'}`} /></div>
-          </button>
-
-          {biometricSupported && (
-            <button
-              type="button"
-              onClick={handleToggleBiometric}
-              disabled={biometricBusy}
-              className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px] disabled:opacity-60"
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                  {biometricBusy ? <Loader2 className="w-5 h-5 text-primary animate-spin" /> : <FingerprintPattern className="w-5 h-5 text-primary" />}
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-foreground">Face ID / Fingerprint Sign-in</p>
-                  <p className="text-xs text-muted-foreground">Sign back in with biometrics instead of your password on this device</p>
-                </div>
-              </div>
-              <div className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${biometricEnabled ? 'bg-primary' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${biometricEnabled ? 'left-6' : 'left-1'}`} /></div>
-            </button>
-          )}
-        </CardContent>
-      </Card>
-
-      {isExec(role) && (
-        <>
-          <div className="md:hidden">
-            <button type="button" onClick={() => toggleSection('system')} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-all text-left">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center"><SettingsIcon className="w-4 h-4 text-primary" /></div>
-                <div><p className="text-sm font-semibold text-foreground">System Configuration</p><p className="text-xs text-muted-foreground">Manage departments and backups</p></div>
-              </div>
-              <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${openSection === 'system' ? 'rotate-180' : ''}`} />
-            </button>
-          </div>
-          <Card className="shadow-card rounded-xl border-0 md:block" style={{ display: openSection === 'system' ? 'block' : undefined }}>
-            <CardHeader className="pb-3 hidden md:flex">
-              <CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><SettingsIcon className="w-4 h-4 text-primary" /></div>System Configuration</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-3">
-                <p className="text-sm font-semibold text-foreground">Departments</p>
-                <p className="text-xs text-muted-foreground">Add, rename or delete departments — changes apply immediately to every department picker across the app (leads, staff, filters).</p>
-                <form onSubmit={handleAddDepartment} className="flex flex-col sm:flex-row gap-2">
-                  <Input placeholder="Code (e.g. commercial)" value={newDeptCode} onChange={(e) => setNewDeptCode(e.target.value)} className="h-10 sm:w-40" />
-                  <Input placeholder="Display name (e.g. Commercial)" value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="h-10 flex-1" />
-                  <Button type="submit" disabled={savingDept} size="sm" className="h-10 gap-1.5 shrink-0">
-                    {savingDept ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add
-                  </Button>
-                </form>
-                <div className="space-y-2">
-                  {departments.map((d) => (
-                    <div key={d.code} className="flex items-center gap-2 p-2.5 rounded-xl border border-border">
-                      {editingDeptCode === d.code ? (
-                        <>
-                          <Input
-                            value={editingDeptName}
-                            onChange={(e) => setEditingDeptName(e.target.value)}
-                            className="h-10 flex-1"
-                            autoFocus
-                          />
-                          <Button size="sm" disabled={savingDeptEdit} onClick={() => handleRenameDepartment(d.code)} className="h-10 shrink-0">
-                            {savingDeptEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
-                          </Button>
-                          <Button size="sm" variant="ghost" disabled={savingDeptEdit} onClick={() => setEditingDeptCode(null)} className="h-10 shrink-0">
-                            Cancel
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-foreground truncate">{d.name}</p>
-                            <p className="text-[11px] text-muted-foreground">code: {d.code}</p>
-                          </div>
-                          <Button variant="ghost" size="icon" aria-label={`Rename ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => { setEditingDeptCode(d.code); setEditingDeptName(d.name); }}>
-                            <Edit2 className="w-4 h-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" aria-label={`Delete ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => setDeptDeleteTarget({ code: d.code, name: d.name })}>
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="space-y-3">
-                <p className="text-sm font-semibold text-foreground">Database Backup</p>
-                <p className="text-xs text-muted-foreground">
-                  Runs a full database backup on demand (the same pg_dump job that also runs automatically every
-                  day) and downloads it straight to this device. Takes up to a minute.
-                </p>
-                <Button
-                  variant="outline"
-                  disabled={downloadingBackup}
-                  onClick={handleDownloadBackup}
-                  className="h-11 gap-2"
-                >
-                  {downloadingBackup ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                  {downloadingBackup ? 'Generating backup…' : 'Download Backup'}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </>
-      )}
-
-      <Card className="shadow-card rounded-xl border-0">
-        <CardHeader className="pb-3 hidden md:flex">
-          <CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Info className="w-4 h-4 text-primary" /></div>Company Information</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 p-4 md:p-6">
-          <div className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card min-h-[52px]">
-            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><MapPin className="w-4 h-4 text-primary" /></div>
-            <div className="min-w-0"><p className="text-xs text-muted-foreground">Address</p><p className="text-sm font-medium text-foreground">PSM Properties Co., Ltd.</p><p className="text-xs text-muted-foreground truncate">Yangon, Myanmar</p></div>
-          </div>
-          <a href="tel:+95123456789" className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors min-h-[52px]">
-            <div className="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center shrink-0"><Phone className="w-4 h-4 text-success" /></div>
-            <div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">Contact</p><p className="text-sm font-medium text-foreground">+95 1 234 567 89</p></div>
-          </a>
-          <a href="mailto:support@psmproperties.com" className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors min-h-[52px]">
-            <div className="w-10 h-10 rounded-lg bg-info/10 flex items-center justify-center shrink-0"><HeartHandshake className="w-4 h-4 text-info" /></div>
-            <div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">Support</p><p className="text-sm font-medium text-foreground">support@psmproperties.com</p></div>
-          </a>
-        </CardContent>
-      </Card>
-
-      <Card className="shadow-card rounded-xl border-0">
-        <CardContent className="p-4 min-h-[56px]">
-          <p className="text-sm font-semibold text-foreground">PSM Properties CRM</p>
-          <p className="text-xs text-muted-foreground">Supabase + React · v1.0</p>
-        </CardContent>
-      </Card>
 
       {/* Department delete confirmation (exec only — the section itself is gated) */}
       <AlertDialog open={!!deptDeleteTarget} onOpenChange={(open) => !open && !deletingDept && setDeptDeleteTarget(null)}>

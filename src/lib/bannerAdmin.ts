@@ -71,6 +71,12 @@ export async function deleteMessage(id: string): Promise<void> {
   await callMessages({ action: 'delete', id });
 }
 
+/** Sends a real Web Push notification to every subscribed device — arrives even if the app is closed. */
+export async function sendPushNotification(title: string, body: string, url?: string): Promise<{ sent: number; failed: number }> {
+  const data = await callMessages({ action: 'send_push', title, body, url });
+  return data as { sent: number; failed: number };
+}
+
 /** Public read of the maintenance gate's current state — readable by
  * anyone via RLS (see database/crm.sql section 16b), same query
  * src/hooks/useMaintenanceStatus.ts uses for the gate itself. Used here so
