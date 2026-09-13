@@ -216,7 +216,6 @@ export default function PipelineBoard() {
       <div className="flex items-center justify-between gap-3">
         <div className="md:hidden min-w-0">
           <h1 className="text-xl md:text-2xl font-semibold text-foreground truncate">Lead Pipeline</h1>
-          <p className="text-sm text-muted-foreground mt-1">Stage-based lead tracking board</p>
         </div>
         <div className="flex items-center gap-2 ml-auto shrink-0">
           <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2.5 py-1 rounded-full tabular-nums">{filteredLeads.length} leads</span>

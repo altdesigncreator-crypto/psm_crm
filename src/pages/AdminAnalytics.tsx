@@ -152,7 +152,6 @@ export default function AdminAnalytics() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between md:justify-end gap-3">
         <div className="md:hidden">
           <h1 className="text-xl md:text-2xl font-bold text-foreground leading-snug flex items-center gap-2"><BarChart3 className="w-6 h-6 text-primary" /> Analytics</h1>
-          <p className="text-sm text-muted-foreground mt-1">Company-wide lead and revenue analytics</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" className="h-12 border-border gap-2 shrink-0 active:scale-[0.98]" onClick={() => handleExport('excel')} disabled={totalLeads === 0}><FileSpreadsheet className="w-4 h-4 text-success" /><span className="hidden sm:inline">Excel</span></Button>

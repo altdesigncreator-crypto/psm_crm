@@ -14,7 +14,7 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetClose,
 } from '@/components/ui/sheet';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode, Trash2, CheckCircle2, XCircle, ListPlus, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckSquare, Square } from 'lucide-react';
+import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode, Trash2, CheckCircle2, XCircle, ListPlus, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckSquare, Square, Snowflake } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { LEAD_STAGES, type Lead, type Profile } from '@/types';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -717,7 +717,6 @@ export default function Leads() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between md:justify-end">
         <div className="md:hidden">
           <h1 className="text-xl font-semibold md:text-2xl text-foreground">{t('leads.title')}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{t('leads.subtitle')}</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
           <input ref={importFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} className="hidden" />
@@ -1025,7 +1024,7 @@ export default function Leads() {
                         <TableHead className={TH_STYLE}>Grade</TableHead>
                         <TableHead className={TH_STYLE}>Status</TableHead>
                         <TableHead className={TH_STYLE}>Sales Person</TableHead>
-                        <TableHead className={TH_STYLE}>Next Follow-up</TableHead>
+                        <TableHead className={TH_STYLE}>Follow-up</TableHead>
                         <TableHead className={`${TH_STYLE} pr-5 text-right`}>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -1063,7 +1062,11 @@ export default function Leads() {
                             {lead.owner_id ? <NameLink id={lead.owner_id} name={lead.owner_name || '—'} showAvatar={false} /> : '—'}
                           </TableCell>
                           <TableCell className="px-4 py-2.5 whitespace-nowrap text-sm text-muted-foreground tabular-nums">
-                            {lead.next_follow_up_at ? (
+                            {lead.follow_up_state === 'cold' ? (
+                              <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
+                                <Snowflake className="w-3 h-3" /> Cold
+                              </span>
+                            ) : lead.next_follow_up_at ? (
                               <span className="inline-flex items-center gap-1.5">
                                 <Calendar className="w-3.5 h-3.5 opacity-60" />
                                 {new Date(lead.next_follow_up_at).toLocaleDateString()}
@@ -1128,7 +1131,11 @@ export default function Leads() {
                             <span className="flex items-center gap-1 text-xs text-muted-foreground"><UserIcon className="w-3 h-3" />{lead.owner_name}</span>
                           )}
                         </div>
-                        {lead.next_follow_up_at && (
+                        {lead.follow_up_state === 'cold' ? (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <Snowflake className="w-3 h-3" /> Cold — not actively tracked
+                          </div>
+                        ) : lead.next_follow_up_at && (
                           <div className="flex items-center gap-1 text-xs text-muted-foreground">
                             <Calendar className="w-3 h-3" /> Next follow-up: {new Date(lead.next_follow_up_at).toLocaleDateString()}
                           </div>

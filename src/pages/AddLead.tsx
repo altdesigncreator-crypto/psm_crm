@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
-import { MapPin, User, FileText, TrendingUp, CheckCircle2, Navigation, X, AlertTriangle, Eye, Phone as PhoneIcon, Loader2, Sparkles, Camera, CalendarClock } from 'lucide-react';
+import { MapPin, User, FileText, TrendingUp, CheckCircle2, Circle, Navigation, X, AlertTriangle, Eye, Phone as PhoneIcon, Loader2, Sparkles, Camera, CalendarClock, ListChecks } from 'lucide-react';
 import {
   INTEREST_TYPES, PROPERTY_TYPES, PURPOSES, LEAD_SOURCES, LEAD_GRADES,
 } from '@/types';
@@ -20,6 +20,10 @@ import { useTeams } from '@/hooks/useTeams';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { isManagerOrAbove, isAdminOrAbove, getDepartmentLabel } from '@/lib/permissions';
 import { getEdgeFunctionErrorMessage } from '@/lib/edgeFunctionError';
+
+function initialsOf(name: string) {
+  return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('') || '?';
+}
 
 export default function AddLead() {
   const navigate = useNavigate();
@@ -92,6 +96,23 @@ export default function AddLead() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teamId]);
 
+  const budgetRangeDisplay = budgetUnlimited ? `${budgetMin.toLocaleString('en-US')}+ (unlimited)` : `${budgetMin.toLocaleString('en-US')} - ${budgetMax.toLocaleString('en-US')}`;
+
+  const ownerName = ownerId === user?.id ? (user?.name || 'You') : teamMemberProfiles.find((p) => p.id === ownerId)?.name;
+
+  const readyChecks = useMemo(() => {
+    const checks = [
+      { label: 'Customer name', done: !!name.trim() },
+      { label: 'Phone number', done: !!phone.trim() },
+      { label: 'Preferred project', done: !!preferredProject.trim() },
+      { label: 'Lead grade', done: !!leadGrade },
+    ];
+    if (teamOptions.length > 1) checks.push({ label: 'Team', done: !!teamId });
+    return checks;
+  }, [name, phone, preferredProject, leadGrade, teamOptions.length, teamId]);
+  const readyCount = readyChecks.filter((c) => c.done).length;
+  const allReady = readyCount === readyChecks.length;
+
   const handleCaptureLeadGPS = () => {
     if (!navigator.geolocation) { toast.error('GPS is not supported on this device.'); return; }
     setGpsLoading(true);
@@ -110,7 +131,7 @@ export default function AddLead() {
     interest_type: interestType || null,
     property_type: propertyType || null,
     preferred_project: preferredProject,
-    budget_range: budgetUnlimited ? `${budgetMin.toLocaleString('en-US')}+ (unlimited)` : `${budgetMin.toLocaleString('en-US')} - ${budgetMax.toLocaleString('en-US')}`,
+    budget_range: budgetRangeDisplay,
     purpose: purpose || null,
     lead_source: leadSource || null,
     lead_grade: leadGrade || null,
@@ -258,14 +279,27 @@ export default function AddLead() {
   );
 
   return (
-    <div className="max-w-4xl mx-auto animate-fade-in-up">
+    // Not animate-fade-in-up here — that animation's `forwards` fill mode
+    // leaves a permanent (identity) `transform` on this element even after
+    // it finishes, and any transform on an ancestor creates a new
+    // containing block that silently breaks `position: sticky` on the
+    // sidebar below. Confirmed via a real browser trace: the sidebar moved
+    // exactly with the scroll instead of sticking, with a computed
+    // transform of matrix(1,0,0,1,0,0) on this div being the culprit.
+    <div>
       <div className="mb-5 md:hidden">
         <h1 className="text-xl md:text-2xl font-semibold text-foreground">Add New Lead</h1>
-        <p className="text-sm text-muted-foreground mt-1">Capture comprehensive lead information</p>
       </div>
 
       <form onSubmit={handleSubmit}>
-        <div className="space-y-6">
+        {/* No items-start here on purpose — with it, the sidebar's grid
+            cell shrinks to its own content height instead of the row's
+            full height, leaving the sticky child zero room to travel
+            within its containing block, so it silently never sticks.
+            Default (stretch) gives the cell the full row height while the
+            visible cards inside keep their natural compact size. */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
           <Card className="shadow-card rounded-xl border-0">
             <CardContent className="p-5 md:p-6">
               <SectionHeader icon={User} title="Basic Information" />
@@ -405,6 +439,14 @@ export default function AddLead() {
                   <Label className="text-sm font-medium">Next Follow-up Date</Label>
                   <Input type="date" value={nextFollowUpDate} onChange={(e) => setNextFollowUpDate(e.target.value)} className="h-12" />
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-card rounded-xl border-0">
+            <CardContent className="p-5 md:p-6">
+              <SectionHeader icon={MapPin} title="Site Details" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
                 <div className="space-y-2 md:col-span-2">
                   <Label className="text-sm font-medium">Remarks</Label>
                   <Textarea placeholder="Additional remarks…" value={remarks} onChange={(e) => setRemarks(e.target.value)} className="min-h-[100px]" />
@@ -495,13 +537,92 @@ export default function AddLead() {
           {/* In normal flow (not fixed) — the old floating bar sat at a fixed
               64px offset that collided with the bottom tab bar (which is
               taller on phones with a safe-area inset) and hid the last form
-              fields behind it. */}
-          <div className="space-y-3">
+              fields behind it. Desktop gets the sticky sidebar's submit
+              button instead (below), so this is mobile/tablet only. */}
+          <div className="lg:hidden space-y-3">
             {error && <div className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-3">{error}</div>}
-            <Button type="submit" disabled={submitting || checkingDuplicate} className="w-full h-14 md:h-12 gradient-primary hover:gradient-primary-hover text-white font-semibold text-base transition-all duration-300 hover:shadow-card-hover active:scale-[0.98]">
+            <Button type="submit" disabled={submitting || checkingDuplicate || !allReady} className="w-full h-14 md:h-12 gradient-primary hover:gradient-primary-hover text-white font-semibold text-base transition-all duration-300 hover:shadow-card-hover active:scale-[0.98]">
               {checkingDuplicate ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Checking for duplicates…</>) : submitting ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving…</>) : (<><CheckCircle2 className="w-4 h-4 mr-2" /> Save Lead</>)}
             </Button>
           </div>
+        </div>
+
+        {/* Sidebar — sticky live summary + a running checklist of the
+            required fields, so there's no guessing why Save is disabled and
+            no need to scroll back to the top to confirm what's been
+            entered. Desktop/wide screens only; mobile keeps the plain
+            in-flow submit button above since there's no room for a rail. */}
+        <div className="hidden lg:block">
+          {/* top-0, not some positive offset — this sidebar is the first
+              thing in main's scrollable content, flush with its padding
+              edge (zero natural gap above it), so any positive `top` value
+              clamps it down by exactly that amount even at rest, pushing
+              it out of alignment with the left column. */}
+          <div className="sticky top-0 space-y-4">
+            <Card className="shadow-card rounded-xl border-0">
+              <CardContent className="p-5">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-11 h-11 rounded-full bg-primary/10 text-primary text-sm font-semibold flex items-center justify-center shrink-0">
+                    {name.trim() ? initialsOf(name) : <User className="w-5 h-5" />}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">{name.trim() || 'New Lead'}</p>
+                    <p className="text-xs text-muted-foreground truncate">{phone.trim() || 'No phone yet'}</p>
+                  </div>
+                </div>
+                <div className="space-y-2.5 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">Project</span>
+                    <span className="font-medium text-foreground truncate max-w-[60%] text-right">{preferredProject.trim() || '—'}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">Budget</span>
+                    <span className="font-medium text-foreground tabular-nums">{budgetRangeDisplay}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">Grade</span>
+                    <span className="font-medium text-foreground">{leadGrade ? LEAD_GRADES.find((g) => g.value === leadGrade)?.label : '—'}</span>
+                  </div>
+                  {selectedTeam && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-muted-foreground">Team</span>
+                      <span className="font-medium text-foreground truncate max-w-[60%] text-right">{selectedTeam.name}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">Assigned to</span>
+                    <span className="font-medium text-foreground truncate max-w-[60%] text-right">{ownerName || '—'}</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-card rounded-xl border-0">
+              <CardContent className="p-5">
+                <div className="flex items-center gap-2.5 mb-3">
+                  <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><ListChecks className="w-4 h-4 text-primary" /></div>
+                  <h3 className="text-sm font-semibold text-foreground">Before you save</h3>
+                </div>
+                <div className="space-y-2">
+                  {readyChecks.map((c) => (
+                    <div key={c.label} className={`flex items-center gap-2 text-sm ${c.done ? 'text-foreground' : 'text-muted-foreground'}`}>
+                      {c.done ? <CheckCircle2 className="w-4 h-4 text-success shrink-0" /> : <Circle className="w-4 h-4 shrink-0" />}
+                      {c.label}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="space-y-3">
+              {error && <div className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-3">{error}</div>}
+              <Button type="submit" disabled={submitting || checkingDuplicate || !allReady} className="w-full h-12 gradient-primary hover:gradient-primary-hover text-white font-semibold text-base transition-all duration-300 hover:shadow-card-hover active:scale-[0.98]">
+                {checkingDuplicate ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Checking for duplicates…</>) : submitting ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving…</>) : (<><CheckCircle2 className="w-4 h-4 mr-2" /> Save Lead</>)}
+              </Button>
+              {!allReady && <p className="text-xs text-muted-foreground text-center">{readyChecks.length - readyCount} more thing{readyChecks.length - readyCount === 1 ? '' : 's'} needed before you can save.</p>}
+            </div>
+          </div>
+        </div>
         </div>
       </form>
 

@@ -129,7 +129,12 @@ export function canAddFollowUp(user: CurrentUser | null, lead: LeadRecord): bool
   if (!user) return false;
   if (isExec(user.role)) return true;
   if (user.role === 'admin') return lead.departmentCode === user.department;
-  // Managers are deliberately excluded — FRD: Follow-up = "View Only" for Manager.
+  // Managers are excluded outright — FRD: Follow-up = "View Only" for Manager.
+  // Explicit, not just a fallthrough: a manager can end up as a lead's
+  // owner_id (AddLead.tsx lets any manager-or-above assign a lead to
+  // themselves), and without this check the generic owner-match below would
+  // wrongly let a manager add a follow-up to a lead they happen to own.
+  if (user.role === 'manager') return false;
   return lead.ownerId === user.id;
 }
 

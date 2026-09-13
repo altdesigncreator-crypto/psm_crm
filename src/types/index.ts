@@ -1,6 +1,7 @@
 import type { Department, RoleTier } from '@/lib/permissions';
 
 export type LeadStage = 'new' | 'contacted' | 'qualified' | 'appointment' | 'site_visit' | 'negotiation' | 'booking' | 'sold' | 'lost';
+export type FollowUpState = 'active' | 'cold';
 export type LeadGrade = 'A' | 'B' | 'C';
 export type FollowUpType = 'phone' | 'messenger' | 'whatsapp' | 'viber' | 'email' | 'meeting' | 'site_visit';
 export type FollowUpStatus = 'interested' | 'not_interested' | 'busy' | 'no_answer' | 'call_later' | 'site_visit' | 'booking' | 'lost';
@@ -80,6 +81,7 @@ export interface Lead {
   latitude?: number | null;
   longitude?: number | null;
   next_follow_up_at?: string | null;
+  follow_up_state?: FollowUpState;
   remarks?: string | null;
   visit_photo_url?: string | null;
   appointment_photo_url?: string | null;

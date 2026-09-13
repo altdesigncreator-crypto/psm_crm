@@ -127,11 +127,11 @@ export default function KPIBoard() {
   if (loading) return <div className="flex items-center justify-center h-64"><div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>;
 
   return (
-    <div className="max-w-5xl mx-auto animate-fade-in-up space-y-5">
+    <div className="animate-fade-in-up space-y-5">
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 active:bg-muted/50" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-5 h-5" /></Button>
-          <div className="min-w-0 flex-1 md:hidden"><h1 className="text-xl md:text-2xl font-bold text-foreground">KPI Board</h1><p className="text-sm text-muted-foreground mt-0.5">Sales performance leaderboard</p></div>
+          <div className="min-w-0 flex-1 md:hidden"><h1 className="text-xl md:text-2xl font-bold text-foreground">KPI Board</h1></div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {topAgent && (

@@ -25,6 +25,7 @@ import {
   Search, Filter, Phone, User, MapPin, DollarSign, Calendar, MessageSquare, Eye,
   Loader2, Plus, ListChecks, HelpCircle, Upload, Download, FileSpreadsheet, FileText, Users,
   SlidersHorizontal, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X,
+  AlertTriangle, Clock, CalendarClock,
 } from 'lucide-react';
 import { FOLLOWUP_TYPES, FOLLOWUP_STATUSES, getGradeForFollowUpStatus, type Lead, type FollowUp, type FollowUpStatus, type FollowUpType, type LeadGrade } from '@/types';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
@@ -221,9 +222,31 @@ export default function FollowUps() {
   }, [leads, followUps]);
 
   const rows = useMemo(
-    () => allRows.filter((r) => matchesPeriod(r.created_at)),
+    () => allRows.filter((r) => r.followUps.length > 0 && matchesPeriod(r.created_at)),
     [allRows, matchesPeriod]
   );
+
+  // Deliberately built from allRows, not rows — a lead awaiting its very
+  // first follow-up (no history yet) is exactly the kind of thing this
+  // queue exists to surface, so it can't require followUps.length > 0.
+  const upcomingQueue = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const bucketOf = (r: LeadWithFollowUps): 'overdue' | 'today' | 'upcoming' => {
+      const due = new Date(r.next_follow_up_at!); due.setHours(0, 0, 0, 0);
+      const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
+      if (diff < 0) return 'overdue';
+      if (diff === 0) return 'today';
+      return 'upcoming';
+    };
+    const active = allRows
+      .filter((r) => r.follow_up_state !== 'cold' && r.status !== 'sold' && r.status !== 'lost' && !!r.next_follow_up_at)
+      .sort((a, b) => (a.next_follow_up_at || '').localeCompare(b.next_follow_up_at || ''));
+    return {
+      overdue: active.filter((r) => bucketOf(r) === 'overdue'),
+      today: active.filter((r) => bucketOf(r) === 'today'),
+      upcoming: active.filter((r) => bucketOf(r) === 'upcoming'),
+    };
+  }, [allRows]);
 
   const uniqueProjects = useMemo(
     () => Array.from(new Set(leads.map((l) => l.preferred_project).filter(Boolean))).sort() as string[],
@@ -249,7 +272,7 @@ export default function FollowUps() {
       const matchesSearch = !searchQuery || r.name.toLowerCase().includes(q) || r.phone.includes(searchQuery) || agent.includes(q);
       const matchesDept = deptFilter === 'all' || r.department_code === deptFilter;
       const latestStatus = r.followUps[0]?.status;
-      const matchesStatus = statusFilter === 'all' || (statusFilter === 'none' ? r.followUps.length === 0 : latestStatus === statusFilter);
+      const matchesStatus = statusFilter === 'all' || latestStatus === statusFilter;
       const matchesProject = projectFilters.length === 0 || (!!r.preferred_project && projectFilters.includes(r.preferred_project));
       const matchesTeam = teamFilter === 'all'
         || r.team_id === teamFilter
@@ -298,7 +321,6 @@ export default function FollowUps() {
 
   const summary = useMemo(() => ({
     total: rows.length,
-    none: rows.filter((r) => r.followUps.length === 0).length,
     gradeA: rows.filter((r) => r.lead_grade === 'A').length,
     gradeB: rows.filter((r) => r.lead_grade === 'B').length,
     gradeC: rows.filter((r) => r.lead_grade === 'C').length,
@@ -482,7 +504,6 @@ export default function FollowUps() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between md:justify-end gap-4">
         <div className="md:hidden">
           <h1 className="text-xl md:text-2xl font-semibold text-foreground flex items-center gap-2"><ListChecks className="w-5 h-5 text-primary" /> {t('followups.title')}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{t('followups.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {canImport && (
@@ -508,35 +529,102 @@ export default function FollowUps() {
         </div>
       </div>
 
+      {/* Follow-up Queue — grouped by urgency so what needs attention right
+          now is immediately scannable, distinct from the historical record
+          table further down the page. Built from every active lead with a
+          scheduled date, including ones awaiting their very first
+          follow-up. */}
+      <Card className="shadow-card rounded-2xl border-0 overflow-hidden relative">
+        <div className="absolute inset-0 bg-gradient-to-br from-primary/[0.06] via-transparent to-transparent pointer-events-none" />
+        <CardContent className="p-4 md:p-6 relative">
+          <div className="flex items-center gap-2.5 mb-4">
+            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><CalendarClock className="w-4 h-4 text-primary" /></div>
+            <div>
+              <h2 className="text-base font-semibold text-foreground">Follow-up Queue</h2>
+              <p className="text-xs text-muted-foreground">What needs a call, right now and coming up</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {([
+              { key: 'upcoming' as const, label: 'Upcoming', icon: <CalendarClock className="w-3.5 h-3.5" />, accent: 'border-info/30 bg-info/[0.04]', dot: 'bg-info', badge: 'bg-info/10 text-info' },
+              { key: 'today' as const, label: 'Due Today', icon: <Clock className="w-3.5 h-3.5" />, accent: 'border-warning/30 bg-warning/[0.04]', dot: 'bg-warning', badge: 'bg-warning/10 text-warning' },
+              { key: 'overdue' as const, label: 'Overdue', icon: <AlertTriangle className="w-3.5 h-3.5" />, accent: 'border-destructive/30 bg-destructive/[0.04]', dot: 'bg-destructive', badge: 'bg-destructive/10 text-destructive' },
+            ]).map((col) => {
+              const items = upcomingQueue[col.key];
+              return (
+                <div key={col.key} className={`rounded-xl border ${col.accent} p-3 flex flex-col`}>
+                  <div className="flex items-center justify-between mb-2.5 px-0.5">
+                    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${col.badge} px-2 py-1 rounded-full`}>
+                      {col.icon} {col.label}
+                    </span>
+                    <span className="text-xs font-semibold text-muted-foreground tabular-nums">{items.length}</span>
+                  </div>
+                  {items.length === 0 ? (
+                    <div className="flex-1 flex items-center justify-center py-6 text-xs text-muted-foreground">
+                      Nothing here
+                    </div>
+                  ) : (
+                    <div className="space-y-1 max-h-[280px] overflow-y-auto pr-0.5">
+                      {items.map((lead) => (
+                        <button
+                          type="button"
+                          key={lead.id}
+                          onClick={() => openLead(lead)}
+                          className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-card active:bg-card/80 transition-colors text-left"
+                        >
+                          <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${col.dot}`} />
+                          <div className="w-8 h-8 rounded-full bg-card border border-border text-foreground/80 text-[10px] font-semibold flex items-center justify-center shrink-0">
+                            {initialsOf(lead.name)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-foreground truncate">{lead.name}</p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {col.key === 'upcoming' ? new Date(lead.next_follow_up_at!).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : lead.phone}
+                            </p>
+                          </div>
+                          {lead.lead_grade ? (
+                            <LeadLevelBadge grade={lead.lead_grade} />
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-muted text-muted-foreground border-border shrink-0">
+                              <span className="w-3.5 h-3.5 rounded-full bg-muted-foreground/30 flex items-center justify-center text-white text-[8px] font-extrabold">–</span>
+                              Ungraded
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Summary */}
-      <div className="flex md:grid md:grid-cols-5 gap-3 overflow-x-auto md:overflow-visible pb-1 md:pb-0 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
-        <Card className="shadow-card rounded-xl border-0 min-w-[130px] md:min-w-0 snap-start flex-1">
+      <div className="flex md:grid md:grid-cols-4 gap-3 overflow-x-auto md:overflow-visible pb-1 md:pb-0 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
+        <Card className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[130px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-3.5 flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Users className="w-4 h-4 text-primary" /></div>
-            <div><p className="text-lg font-bold text-foreground leading-tight">{summary.total}</p><p className="text-[11px] text-muted-foreground">Total Leads</p></div>
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center shrink-0"><Users className="w-4 h-4 text-primary" /></div>
+            <div><p className="text-lg font-bold text-foreground leading-tight">{summary.total}</p><p className="text-[11px] text-muted-foreground">Followed-up Leads</p></div>
           </CardContent>
         </Card>
-        <Card className="shadow-card rounded-xl border-0 min-w-[130px] md:min-w-0 snap-start flex-1">
+        <Card className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[110px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-3.5 flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-muted flex items-center justify-center shrink-0"><HelpCircle className="w-4 h-4 text-muted-foreground" /></div>
-            <div><p className="text-lg font-bold text-foreground leading-tight">{summary.none}</p><p className="text-[11px] text-muted-foreground">No Follow-up Yet</p></div>
-          </CardContent>
-        </Card>
-        <Card className="shadow-card rounded-xl border-0 min-w-[110px] md:min-w-0 snap-start flex-1">
-          <CardContent className="p-3.5 flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0 text-destructive font-bold text-xs">A</div>
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-destructive/15 to-destructive/5 flex items-center justify-center shrink-0 text-destructive font-bold text-xs">A</div>
             <div><p className="text-lg font-bold text-foreground leading-tight">{summary.gradeA}</p><p className="text-[11px] text-muted-foreground">Grade A</p></div>
           </CardContent>
         </Card>
-        <Card className="shadow-card rounded-xl border-0 min-w-[110px] md:min-w-0 snap-start flex-1">
+        <Card className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[110px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-3.5 flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-warning/10 flex items-center justify-center shrink-0 text-warning font-bold text-xs">B</div>
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-warning/15 to-warning/5 flex items-center justify-center shrink-0 text-warning font-bold text-xs">B</div>
             <div><p className="text-lg font-bold text-foreground leading-tight">{summary.gradeB}</p><p className="text-[11px] text-muted-foreground">Grade B</p></div>
           </CardContent>
         </Card>
-        <Card className="shadow-card rounded-xl border-0 min-w-[110px] md:min-w-0 snap-start flex-1">
+        <Card className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[110px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-3.5 flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-muted flex items-center justify-center shrink-0 text-muted-foreground font-bold text-xs">C</div>
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-muted to-muted/40 flex items-center justify-center shrink-0 text-muted-foreground font-bold text-xs">C</div>
             <div><p className="text-lg font-bold text-foreground leading-tight">{summary.gradeC}</p><p className="text-[11px] text-muted-foreground">Grade C</p></div>
           </CardContent>
         </Card>
@@ -664,7 +752,7 @@ export default function FollowUps() {
             <div className="flex flex-wrap gap-2">
               {[
                 ['dept', deptFilter, setDeptFilter, deptFilter !== 'all' ? getDepartmentLabel(deptFilter) : ''],
-                ['status', statusFilter, setStatusFilter, statusFilter !== 'all' ? (statusFilter === 'none' ? 'No follow-up yet' : followUpStatusLabel(statusFilter)) : ''],
+                ['status', statusFilter, setStatusFilter, statusFilter !== 'all' ? followUpStatusLabel(statusFilter) : ''],
                 ['team', teamFilter, setTeamFilter, teamFilter !== 'all' ? (teamOptions.find((tm) => tm.id === teamFilter)?.name || '') : ''],
                 ['agent', agentFilter, setAgentFilter, agentFilter],
               ].map(([key, value, setter, label]) =>
@@ -957,7 +1045,6 @@ function FollowUpFilterFields({
           <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All statuses</SelectItem>
-            <SelectItem value="none">No follow-up yet</SelectItem>
             {FOLLOWUP_STATUSES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
           </SelectContent>
         </Select>

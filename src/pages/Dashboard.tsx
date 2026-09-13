@@ -10,13 +10,14 @@ import { Pie, Bar } from 'react-chartjs-2';
 import {
   Users, PhoneCall, TrendingUp, Calendar, Trophy, Activity, Clock, ArrowUpRight,
   ChevronRight, Download, FileSpreadsheet, FileText as FileTextIcon, File as FilePdf,
-  CheckCircle2, Percent,
+  CheckCircle2, Percent, PieChart, BarChart3,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { LEAD_STAGES, type Lead } from '@/types';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
+import { useTeams } from '@/hooks/useTeams';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useAuth } from '@/contexts/AuthContext';
 import StatusColorDialog from '@/components/StatusColorDialog';
@@ -39,6 +40,13 @@ type DateFilter = 'all' | 'thisMonth' | 'lastMonth' | 'thisYear' | 'levelA';
 const FILTER_LABELS: Record<DateFilter, string> = {
   all: 'All', thisMonth: 'This Month', lastMonth: 'Last Month', thisYear: 'This Year', levelA: 'Grade A Only',
 };
+
+function timeOfDayGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
 
 function filterLeadsByDate(leads: Lead[], filter: DateFilter): Lead[] {
   if (filter === 'levelA') return leads.filter((l) => l.lead_grade === 'A');
@@ -70,8 +78,11 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(cachedLeads === undefined);
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
   const { colors: statusColors, saveColors } = useStatusColors();
+  const { teams } = useTeams();
   const { nameOf } = useProfiles();
-  usePageHeader('Dashboard', 'Executive overview of sales performance');
+  const firstName = user?.name?.split(' ')[0];
+  const greeting = firstName ? `${timeOfDayGreeting()}, ${firstName}` : timeOfDayGreeting();
+  usePageHeader('Dashboard', greeting);
 
   useEffect(() => {
     if (!user) return;
@@ -118,18 +129,19 @@ export default function Dashboard() {
 
   const statusCounts = LEAD_STAGES.map((s) => filteredLeads.filter((l) => l.status === s.value).length);
 
-  const topProjects = useMemo(() => {
+  const topTeams = useMemo(() => {
+    const teamName = new Map(teams.map((t) => [t.id, t.name]));
     const counts: Record<string, number> = {};
     filteredLeads.forEach((l) => {
-      const p = l.preferred_project || 'Unspecified';
-      counts[p] = (counts[p] || 0) + 1;
+      const t = (l.team_id && teamName.get(l.team_id)) || 'Unassigned';
+      counts[t] = (counts[t] || 0) + 1;
     });
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  }, [filteredLeads]);
+  }, [filteredLeads, teams]);
 
   const pieData = {
-    labels: topProjects.map((p) => p[0]),
-    datasets: [{ data: topProjects.map((p) => p[1]), backgroundColor: PIE_COLORS, borderWidth: 2, borderColor: '#ffffff' }],
+    labels: topTeams.map((t) => t[0]),
+    datasets: [{ data: topTeams.map((t) => t[1]), backgroundColor: PIE_COLORS, borderWidth: 2, borderColor: '#ffffff' }],
   };
 
   const barData = {
@@ -194,8 +206,7 @@ export default function Dashboard() {
     <div className="space-y-6 animate-fade-in-up">
       <div className="flex flex-col md:flex-row md:items-center md:justify-end gap-4">
         <div className="md:hidden">
-          <h1 className="text-xl md:text-2xl font-semibold text-foreground">Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-1">Executive overview of sales performance</p>
+          <h1 className="text-xl md:text-2xl font-semibold text-foreground">{greeting}</h1>
         </div>
         <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
           {(Object.keys(FILTER_LABELS) as DateFilter[]).map((key) => (
@@ -242,7 +253,7 @@ export default function Dashboard() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0"><p className="text-xs font-medium text-muted-foreground">Total Leads</p><p className="text-xl md:text-2xl font-bold text-foreground mt-0.5 tabular-nums">{totalLeads}</p></div>
-              <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Users className="w-4 h-4 text-primary" /></div>
+              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center shrink-0"><Users className="w-4 h-4 text-primary" /></div>
             </div>
           </CardContent>
         </Card>
@@ -255,7 +266,7 @@ export default function Dashboard() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0"><p className="text-xs font-medium text-muted-foreground">Follow Up</p><p className="text-xl md:text-2xl font-bold text-foreground mt-0.5 tabular-nums">{followUpCount}</p></div>
-              <div className="w-9 h-9 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0"><PhoneCall className="w-4 h-4 text-amber-500" /></div>
+              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-500/15 to-amber-500/5 flex items-center justify-center shrink-0"><PhoneCall className="w-4 h-4 text-amber-500" /></div>
             </div>
           </CardContent>
         </Card>
@@ -268,7 +279,7 @@ export default function Dashboard() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0"><p className="text-xs font-medium text-muted-foreground">Grade A</p><p className="text-xl md:text-2xl font-bold text-foreground mt-0.5 tabular-nums">{levelACount}</p></div>
-              <div className="w-9 h-9 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0"><TrendingUp className="w-4 h-4 text-destructive" /></div>
+              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-destructive/15 to-destructive/5 flex items-center justify-center shrink-0"><TrendingUp className="w-4 h-4 text-destructive" /></div>
             </div>
           </CardContent>
         </Card>
@@ -281,7 +292,7 @@ export default function Dashboard() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0"><p className="text-xs font-medium text-muted-foreground">Sold</p><p className="text-xl md:text-2xl font-bold text-foreground mt-0.5 tabular-nums">{soldCount}</p></div>
-              <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center shrink-0"><CheckCircle2 className="w-4 h-4 text-emerald-500" /></div>
+              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500/15 to-emerald-500/5 flex items-center justify-center shrink-0"><CheckCircle2 className="w-4 h-4 text-emerald-500" /></div>
             </div>
           </CardContent>
         </Card>
@@ -308,14 +319,20 @@ export default function Dashboard() {
       <div className="flex md:grid md:grid-cols-2 gap-4 md:gap-6 overflow-x-auto md:overflow-visible pb-2 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
         <Card className="shadow-card rounded-xl border-0 min-w-[92vw] md:min-w-0 snap-start flex-shrink-0 md:flex-shrink">
           <CardContent className="p-5 md:p-6">
-            <h3 className="text-base font-semibold mb-4">Leads by Project</h3>
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><PieChart className="w-4 h-4 text-primary" /></div>
+              <h3 className="text-base font-semibold">Leads by Team</h3>
+            </div>
             <div className="min-h-[220px] h-56 md:h-72"><Pie data={pieData} options={pieOptions} /></div>
           </CardContent>
         </Card>
         <Card className="shadow-card rounded-xl border-0 min-w-[92vw] md:min-w-0 snap-start flex-shrink-0 md:flex-shrink">
           <CardContent className="p-5 md:p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-semibold">Leads by Status</h3>
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><BarChart3 className="w-4 h-4 text-primary" /></div>
+                <h3 className="text-base font-semibold">Leads by Status</h3>
+              </div>
               <StatusColorDialog colors={statusColors} onSave={saveColors} />
             </div>
             <div className="min-h-[220px] h-56 md:h-72"><Bar data={barData} options={barOptions} /></div>
@@ -405,6 +422,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
     </div>
   );
 }

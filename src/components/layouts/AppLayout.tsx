@@ -160,18 +160,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   );
 
   const sidebarContent = (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 relative">
+      {/* Faint depth wash — purely decorative, keeps the sidebar from
+          reading as one flat block of color without being loud about it. */}
+      <div className="absolute inset-0 bg-gradient-to-b from-primary/[0.03] via-transparent to-transparent pointer-events-none" />
+
       {/* min-h + pt-safe (not a fixed h-16) since this same header renders
           inside the mobile Sheet drawer too, which spans full screen height
           on iOS — without reserving space for the notch/Dynamic Island, its
           content just sits at the true top of the screen and gets covered.
           A no-op on desktop/non-notched devices (pt-safe floors at 0.5rem). */}
-      <div className="flex items-center gap-3 px-5 min-h-16 pt-safe border-b border-sidebar-border shrink-0">
+      <div className="flex items-center gap-3 px-5 min-h-16 pt-safe border-b border-sidebar-border shrink-0 relative">
         <img src="/logo.png" alt="PSM Properties" className="h-10 w-auto dark:hidden" draggable={false} />
         <img src="/logo-dark.png" alt="PSM Properties" className="h-10 w-auto hidden dark:block" draggable={false} />
       </div>
 
-      <ScrollArea className="flex-1 min-h-0 px-3 py-5">
+      <ScrollArea className="flex-1 min-h-0 px-3 py-5 relative">
         <div className="space-y-7 pb-4">
           {visibleSections.map((section) => (
             <div key={section.tKey}>
@@ -185,25 +189,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                       key={item.path}
                       to={item.path}
                       onClick={() => setMobileOpen(false)}
-                      className={`group flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 min-h-11 ${
+                      className={`group relative flex items-center gap-3 pl-3 pr-3.5 py-2 rounded-lg text-sm font-medium transition-all duration-200 min-h-11 ${
                         isActive
-                          ? 'bg-sidebar-accent text-sidebar-foreground'
-                          : 'text-sidebar-foreground/65 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground'
+                          ? 'bg-gradient-to-r from-primary/15 to-primary/[0.02] text-sidebar-foreground'
+                          : 'text-sidebar-foreground/65 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground hover:translate-x-0.5'
                       }`}
                     >
-                      <div className="relative shrink-0">
+                      {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-primary" aria-hidden="true" />}
+                      <div className={`relative shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors duration-200 ${isActive ? 'bg-primary/15' : 'group-hover:bg-sidebar-accent'}`}>
                         <Icon
                           className={`w-[18px] h-[18px] transition-colors duration-150 ${isActive ? 'text-primary' : 'text-sidebar-foreground/50 group-hover:text-sidebar-foreground/80'}`}
                           strokeWidth={isActive ? 2.25 : 2}
                         />
                         {item.path === '/notifications' && unreadCount > 0 && (
-                          <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-sidebar-background">
+                          <span className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-sidebar-background">
                             {unreadCount > 9 ? '9+' : unreadCount}
                           </span>
                         )}
                       </div>
                       <span className="truncate">{t(item.tKey)}</span>
-                      {isActive && <span className="ml-auto w-1 h-1 rounded-full bg-sidebar-primary shrink-0" />}
                     </Link>
                   );
                 })}
@@ -213,45 +217,47 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </ScrollArea>
 
-      <div className="px-3 py-3 border-t border-sidebar-border space-y-1.5 shrink-0">
-        {(() => {
-          const avatar = user?.avatar_url ? (
-            <img src={user.avatar_url} alt={user.name} className="w-10 h-10 rounded-full object-cover shrink-0 ring-2 ring-sidebar-border" />
-          ) : (
-            <div className="w-10 h-10 rounded-full bg-sidebar-accent text-sidebar-foreground text-sm font-semibold flex items-center justify-center shrink-0 ring-2 ring-sidebar-border">
-              {user ? initialsOf(user.name) : ''}
-            </div>
-          );
-          const details = (
-            <div className="min-w-0 flex-1 text-left">
-              <p className="text-sidebar-foreground text-sm font-semibold truncate leading-snug">{user?.name}</p>
-              {role && <p className="text-sidebar-foreground/50 text-xs truncate leading-snug mt-0.5">{department ? `${getDepartmentLabel(department)} · ` : ''}{getRoleLabel(role)}</p>}
-            </div>
-          );
-          return user?.id ? (
-            <Link
-              to={`/profile/${user.id}`}
-              onClick={() => setMobileOpen(false)}
-              className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-sidebar-accent transition-colors"
-            >
-              {avatar}
-              {details}
-            </Link>
-          ) : (
-            <div className="flex items-center gap-3 px-2 py-2">
-              {avatar}
-              {details}
-            </div>
-          );
-        })()}
-        <Button
-          variant="ghost"
-          className="w-full justify-start gap-3 text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent border border-sidebar-border h-11 rounded-lg px-4 font-medium"
-          onClick={handleLogout}
-        >
-          <LogOut className="w-[18px] h-[18px] shrink-0" strokeWidth={2} />
-          <span className="text-sm">{t('nav.logout')}</span>
-        </Button>
+      <div className="px-3 py-3 border-t border-sidebar-border shrink-0 relative">
+        <div className="rounded-xl bg-sidebar-accent/40 p-1.5 space-y-1">
+          {(() => {
+            const avatar = user?.avatar_url ? (
+              <img src={user.avatar_url} alt={user.name} className="w-10 h-10 rounded-full object-cover shrink-0 ring-2 ring-sidebar-border" />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary/25 to-primary/5 text-sidebar-foreground text-sm font-semibold flex items-center justify-center shrink-0 ring-2 ring-sidebar-border">
+                {user ? initialsOf(user.name) : ''}
+              </div>
+            );
+            const details = (
+              <div className="min-w-0 flex-1 text-left">
+                <p className="text-sidebar-foreground text-sm font-semibold truncate leading-snug">{user?.name}</p>
+                {role && <p className="text-sidebar-foreground/50 text-xs truncate leading-snug mt-0.5">{department ? `${getDepartmentLabel(department)} · ` : ''}{getRoleLabel(role)}</p>}
+              </div>
+            );
+            return user?.id ? (
+              <Link
+                to={`/profile/${user.id}`}
+                onClick={() => setMobileOpen(false)}
+                className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-sidebar-accent transition-colors"
+              >
+                {avatar}
+                {details}
+              </Link>
+            ) : (
+              <div className="flex items-center gap-3 px-2 py-2">
+                {avatar}
+                {details}
+              </div>
+            );
+          })()}
+          <Button
+            variant="ghost"
+            className="w-full justify-start gap-3 text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent h-10 rounded-lg px-2.5 font-medium"
+            onClick={handleLogout}
+          >
+            <LogOut className="w-[18px] h-[18px] shrink-0" strokeWidth={2} />
+            <span className="text-sm">{t('nav.logout')}</span>
+          </Button>
+        </div>
       </div>
     </div>
   );

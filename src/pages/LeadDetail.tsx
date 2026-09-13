@@ -282,7 +282,7 @@ export default function LeadDetail() {
   const createdDate = new Date(lead.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
   return (
-    <div className="max-w-5xl mx-auto animate-fade-in-up space-y-5">
+    <div className="animate-fade-in-up space-y-5">
       {/* Header — on phones the controls cluster (grade / status / delete) is
           wider than the space left next to the back arrow and title, so it
           wraps onto its own full-width second row; from `sm:` up everything
@@ -293,7 +293,6 @@ export default function LeadDetail() {
         </Button>
         <div className="min-w-0 flex-1 md:hidden">
           <h1 className="text-xl md:text-2xl font-bold text-foreground">Lead Profile</h1>
-          <p className="text-sm text-muted-foreground mt-0.5 truncate">{lead.name} — {lead.phone}</p>
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto sm:shrink-0">
           <LeadLevelBadge grade={lead.lead_grade} />

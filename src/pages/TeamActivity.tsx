@@ -6,14 +6,16 @@ import { useTranslation } from '@/contexts/TranslationContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useDepartments } from '@/hooks/useDepartments';
+import { useDebounce } from '@/hooks/use-debounce';
 import { isDepartmentScoped, getDepartmentLabel, getRoleLabel, ROLE_TIERS } from '@/lib/permissions';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetClose } from '@/components/ui/sheet';
 import {
   Activity, Calendar, ChevronLeft, ChevronRight, UserPlus, ListChecks,
-  User as UserIcon, Phone, Eye, Filter,
+  User as UserIcon, Phone, Eye, Filter, Search, SlidersHorizontal, X,
 } from 'lucide-react';
 import { FOLLOWUP_STATUSES } from '@/types';
 import type { Profile } from '@/types';
@@ -90,10 +92,12 @@ export default function TeamActivity() {
   const [day, setDay] = useState<string>(todayStr());
   const [userFilter, setUserFilter] = useState('all');
   const [deptFilter, setDeptFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [dayLeads, setDayLeads] = useState<DayLead[]>([]);
   const [dayFollowUps, setDayFollowUps] = useState<DayFollowUp[]>([]);
 
+  const debouncedSearch = useDebounce(searchQuery, 300);
   const isToday = day === todayStr();
 
   useEffect(() => {
@@ -153,13 +157,31 @@ export default function TeamActivity() {
     return activities.filter((a) => a.leads.length > 0 || a.followUps.length > 0);
   }, [activities, userFilter]);
 
+  // Same idea as the Leads page's search: match by name, phone, or the
+  // sales person. If the staff member themselves matches, show everything
+  // they did that day; otherwise narrow down to just the matching leads /
+  // follow-ups within their block.
+  const filteredActivities = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    if (!q) return visible;
+    return visible
+      .map((a) => {
+        if (a.profile.name.toLowerCase().includes(q)) return a;
+        const leads = a.leads.filter((l) => l.name.toLowerCase().includes(q) || (l.phone || '').toLowerCase().includes(q));
+        const followUps = a.followUps.filter((f) => (f.leads?.name || '').toLowerCase().includes(q));
+        return { ...a, leads, followUps };
+      })
+      .filter((a) => a.leads.length > 0 || a.followUps.length > 0);
+  }, [visible, debouncedSearch]);
+
   const summary = useMemo(() => ({
-    leads: visible.reduce((n, a) => n + a.leads.length, 0),
-    followUps: visible.reduce((n, a) => n + a.followUps.length, 0),
-    activeStaff: visible.length,
-  }), [visible]);
+    leads: filteredActivities.reduce((n, a) => n + a.leads.length, 0),
+    followUps: filteredActivities.reduce((n, a) => n + a.followUps.length, 0),
+    activeStaff: filteredActivities.length,
+  }), [filteredActivities]);
 
   const dayLabel = new Date(`${day}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  const activeFilterCount = (deptFilter !== 'all' ? 1 : 0) + (userFilter !== 'all' ? 1 : 0);
 
   return (
     <div className="space-y-6 animate-fade-in-up">
@@ -167,12 +189,91 @@ export default function TeamActivity() {
         <h1 className="text-xl md:text-2xl font-semibold text-foreground flex items-center gap-2">
           <Activity className="w-5 h-5 text-primary" /> {t('activity.title')}
         </h1>
-        <p className="text-sm text-muted-foreground mt-1">{t('activity.subtitle')}</p>
       </div>
 
-      {/* Day + user controls */}
+      {/* Search + day/user controls */}
       <Card className="shadow-card rounded-xl border-0">
-        <CardContent className="p-4 md:p-5">
+        <CardContent className="p-4 md:p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute w-4 h-4 -translate-y-1/2 left-3.5 top-1/2 text-muted-foreground pointer-events-none" />
+              <Input
+                placeholder="Search by name, phone, or sales person…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-12 md:h-11 pl-10 pr-9 rounded-xl md:rounded-lg bg-muted/40 border-transparent focus-visible:bg-card focus-visible:border-input focus-visible:shadow-sm transition-all"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  aria-label="Clear search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted active:scale-90 transition-all"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Mobile: a compact icon button opening the filters bottom
+                sheet, right next to search — desktop keeps both selects
+                inline further down instead. */}
+            <Sheet>
+              <SheetTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Filter activity"
+                  className="md:hidden relative flex items-center justify-center w-12 h-12 rounded-xl border border-border bg-card text-foreground hover:bg-muted active:scale-95 transition-all shrink-0"
+                >
+                  <SlidersHorizontal className="w-[18px] h-[18px]" />
+                  {activeFilterCount > 0 && (
+                    <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center ring-2 ring-card">
+                      {activeFilterCount}
+                    </span>
+                  )}
+                </button>
+              </SheetTrigger>
+              <SheetContent side="bottom" className="rounded-t-2xl border-t border-border px-6 pt-6 pb-8 max-h-[85dvh] overflow-y-auto">
+                <SheetHeader className="pb-4">
+                  <SheetTitle className="flex items-center gap-2 text-base font-semibold">
+                    <Filter className="w-4 h-4 text-primary" /> Filter Activity
+                  </SheetTitle>
+                </SheetHeader>
+                <div className="space-y-5">
+                  {!isDepartmentScoped(role) && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-foreground">Department</label>
+                      <Select value={deptFilter} onValueChange={setDeptFilter}>
+                        <SelectTrigger className="w-full h-12"><SelectValue placeholder="Department" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All departments</SelectItem>
+                          {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-foreground">Staff member</label>
+                    <Select value={userFilter} onValueChange={setUserFilter}>
+                      <SelectTrigger className="w-full h-12"><SelectValue placeholder="Staff member" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All staff</SelectItem>
+                        {activities.map((a) => (
+                          <SelectItem key={a.profile.id} value={a.profile.id}>{a.profile.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <SheetClose asChild>
+                    <button type="button" className="w-full h-12 text-sm font-medium transition-colors rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80">
+                      Done
+                    </button>
+                  </SheetClose>
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
+
           <div className="flex flex-col md:flex-row md:items-center gap-3">
             <div className="flex items-center gap-1.5">
               <Button variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label="Previous day" onClick={() => setDay(shiftDay(day, -1))}>
@@ -191,7 +292,9 @@ export default function TeamActivity() {
                 </Button>
               )}
             </div>
-            <div className="flex items-center gap-2 md:ml-auto flex-wrap">
+            {/* Desktop/tablet only — mobile uses the compact Filters sheet
+                trigger next to search instead of these inline selects. */}
+            <div className="hidden md:flex items-center gap-2 md:ml-auto flex-wrap">
               {!isDepartmentScoped(role) && (
                 <Select value={deptFilter} onValueChange={setDeptFilter}>
                   <SelectTrigger className="h-11 w-[160px] text-sm"><Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Department" /></SelectTrigger>
@@ -240,17 +343,17 @@ export default function TeamActivity() {
         <div className="flex items-center justify-center h-48">
           <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
         </div>
-      ) : visible.length === 0 ? (
+      ) : filteredActivities.length === 0 ? (
         <Card className="shadow-card rounded-xl border-0">
           <CardContent className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <Activity className="w-9 h-9 mb-3 opacity-40" />
-            <p className="text-sm font-medium">No activity recorded on this day</p>
-            <p className="text-xs mt-1">Try another day or a different staff member</p>
+            <p className="text-sm font-medium">{debouncedSearch.trim() ? 'No activity matches your search' : 'No activity recorded on this day'}</p>
+            <p className="text-xs mt-1">{debouncedSearch.trim() ? 'Try a different name, phone, or sales person' : 'Try another day or a different staff member'}</p>
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-4">
-          {visible.map((a) => {
+          {filteredActivities.map((a) => {
             const total = a.leads.length + a.followUps.length;
             return (
               <Card key={a.profile.id} className="shadow-card rounded-xl border-0 overflow-hidden">

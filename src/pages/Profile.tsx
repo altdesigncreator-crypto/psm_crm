@@ -130,7 +130,6 @@ export default function Profile() {
         </Button>
         <div className="min-w-0 flex-1 md:hidden">
           <h1 className="text-xl md:text-2xl font-bold text-foreground">Profile</h1>
-          <p className="text-sm text-muted-foreground mt-0.5 truncate">{profile.name} · {getRoleLabel(profile.role)}</p>
         </div>
       </div>
 

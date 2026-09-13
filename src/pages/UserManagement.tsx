@@ -282,7 +282,6 @@ export default function UserManagement() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between md:justify-end gap-4 border-b border-border/60 pb-5">
         <div className="md:hidden">
           <h1 className="text-xl md:text-2xl font-semibold tracking-tight text-foreground">Staff</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Manage and track your active staff</p>
         </div>
         <div className="flex items-center gap-2.5 shrink-0 self-end sm:self-auto">
           <DropdownMenu>
