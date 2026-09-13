@@ -1,17 +1,24 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Camera, MapPin, Loader2, ShieldCheck } from 'lucide-react';
+import { Camera, MapPin, Bell, Loader2, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
+import { isPushSupported, subscribeToPush } from '@/lib/pushNotifications';
 
-const PRIMED_KEY = 'psm_permissions_primed';
+// v2: bumped when notification permission was added to the primer, so
+// devices that already dismissed the camera/location-only v1 prompt are
+// asked again and get a chance to grant push notifications too.
+const PRIMED_KEY = 'psm_permissions_primed_v2';
 
 /** One-time onboarding dialog shown on the first use of the web app on this
- * device. It requests camera and location access up front — from a button
- * tap, because iOS Safari and Android Chrome only show permission prompts in
- * response to a user gesture — so later photo uploads and GPS tagging don't
- * stall on permission pop-ups in the middle of the flow. */
+ * device. It requests camera, location, and push notification access up
+ * front — from a button tap, because iOS Safari and Android Chrome only show
+ * permission prompts in response to a user gesture — so later photo
+ * uploads, GPS tagging, and push notifications don't stall on permission
+ * pop-ups in the middle of the flow. */
 export default function PermissionPrimer() {
+  const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -47,6 +54,14 @@ export default function PermissionPrimer() {
       );
     });
 
+    if (isPushSupported() && user?.id) {
+      try {
+        await subscribeToPush(user.id);
+      } catch {
+        toast.warning('Notifications were not enabled. You can turn them on later in Settings.');
+      }
+    }
+
     setBusy(false);
     dismiss();
   };
@@ -58,10 +73,12 @@ export default function PermissionPrimer() {
           <div className="w-12 h-12 rounded-xl gradient-primary flex items-center justify-center mb-2 shadow-card">
             <ShieldCheck className="w-6 h-6 text-white" />
           </div>
-          <DialogTitle>Allow Camera & Location</DialogTitle>
+          <DialogTitle>Allow Camera, Location & Notifications</DialogTitle>
           <DialogDescription>
             PSM Sale CRM uses your phone camera and GPS location for lead photos
-            and location tagging. Granting access now means no interruptions later.
+            and location tagging, and sends push notifications for follow-up
+            reminders and announcements. Granting access now means no
+            interruptions later.
           </DialogDescription>
         </DialogHeader>
 
@@ -82,6 +99,15 @@ export default function PermissionPrimer() {
             <div>
               <p className="text-sm font-medium text-foreground">Location</p>
               <p className="text-xs text-muted-foreground">Tag leads with your GPS position</p>
+            </div>
+          </div>
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+              <Bell className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-foreground">Notifications</p>
+              <p className="text-xs text-muted-foreground">Get follow-up reminders and announcements</p>
             </div>
           </div>
         </div>
