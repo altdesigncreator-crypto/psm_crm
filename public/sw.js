@@ -5,7 +5,12 @@
  * app shell and serves a stale-while-revalidate strategy for static assets.
  */
 
-const CACHE_VERSION = 'v106';
+// Stamped with a fresh build id on every production build (see
+// stampServiceWorkerVersion in vite.config.ts) so this file's bytes always
+// differ from whatever's currently installed, guaranteeing the browser
+// detects an update on every deploy. This literal only shows up as-is in
+// dev, where the build step never runs.
+const CACHE_VERSION = 'dev';
 const STATIC_CACHE = `static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `dynamic-${CACHE_VERSION}`;
 

@@ -5,9 +5,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useProfiles } from '@/hooks/useProfiles';
+import StorageImage from '@/components/StorageImage';
 import { useDepartments } from '@/hooks/useDepartments';
 import { useDebounce } from '@/hooks/use-debounce';
 import { isDepartmentScoped, getDepartmentLabel, getRoleLabel, ROLE_TIERS } from '@/lib/permissions';
+import { enumLabel } from '@/lib/translations';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -31,10 +33,6 @@ const STATUS_STYLE: Record<string, string> = {
   booking: 'bg-success/10 text-success border-success/20',
   lost: 'bg-destructive/10 text-destructive border-destructive/20',
 };
-
-function followUpStatusLabel(status: string) {
-  return FOLLOWUP_STATUSES.find((s) => s.value === status)?.label || status;
-}
 
 function initialsOf(name: string) {
   return name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('') || '?';
@@ -84,7 +82,7 @@ interface UserActivity {
 export default function TeamActivity() {
   const navigate = useNavigate();
   const { role } = useAuth();
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { profiles } = useProfiles();
   const { departments } = useDepartments();
   usePageHeader(t('activity.title'), t('activity.subtitle'));
@@ -120,7 +118,7 @@ export default function TeamActivity() {
           .order('created_at', { ascending: true }),
       ]);
       if (!active) return;
-      if (leadsRes.error || fuRes.error) toast.error('Could not load the day\'s activity.');
+      if (leadsRes.error || fuRes.error) toast.error(t('teamActivity.loadError'));
       setDayLeads((leadsRes.data || []) as DayLead[]);
       setDayFollowUps((fuRes.data || []) as unknown as DayFollowUp[]);
       setLoading(false);
@@ -198,7 +196,7 @@ export default function TeamActivity() {
             <div className="relative flex-1">
               <Search className="absolute w-4 h-4 -translate-y-1/2 left-3.5 top-1/2 text-muted-foreground pointer-events-none" />
               <Input
-                placeholder="Search by name, phone, or sales person…"
+                placeholder={t('leads.searchPlaceholder')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="h-12 md:h-11 pl-10 pr-9 rounded-xl md:rounded-lg bg-muted/40 border-transparent focus-visible:bg-card focus-visible:border-input focus-visible:shadow-sm transition-all"
@@ -207,7 +205,7 @@ export default function TeamActivity() {
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  aria-label="Clear search"
+                  aria-label={t('teamActivity.clearSearch')}
                   className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted active:scale-90 transition-all"
                 >
                   <X className="w-4 h-4" />
@@ -222,7 +220,7 @@ export default function TeamActivity() {
               <SheetTrigger asChild>
                 <button
                   type="button"
-                  aria-label="Filter activity"
+                  aria-label={t('teamActivity.filterActivity')}
                   className="md:hidden relative flex items-center justify-center w-12 h-12 rounded-xl border border-border bg-card text-foreground hover:bg-muted active:scale-95 transition-all shrink-0"
                 >
                   <SlidersHorizontal className="w-[18px] h-[18px]" />
@@ -236,28 +234,28 @@ export default function TeamActivity() {
               <SheetContent side="bottom" className="rounded-t-2xl border-t border-border px-6 pt-6 pb-8 max-h-[85dvh] overflow-y-auto">
                 <SheetHeader className="pb-4">
                   <SheetTitle className="flex items-center gap-2 text-base font-semibold">
-                    <Filter className="w-4 h-4 text-primary" /> Filter Activity
+                    <Filter className="w-4 h-4 text-primary" /> {t('teamActivity.filterActivityTitle')}
                   </SheetTitle>
                 </SheetHeader>
                 <div className="space-y-5">
                   {!isDepartmentScoped(role) && (
                     <div className="space-y-2">
-                      <label className="text-sm font-medium text-foreground">Department</label>
+                      <label className="text-sm font-medium text-foreground">{t('leads.filter.department')}</label>
                       <Select value={deptFilter} onValueChange={setDeptFilter}>
-                        <SelectTrigger className="w-full h-12"><SelectValue placeholder="Department" /></SelectTrigger>
+                        <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.department')} /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="all">All departments</SelectItem>
+                          <SelectItem value="all">{t('leads.filter.allDepartments')}</SelectItem>
                           {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
                         </SelectContent>
                       </Select>
                     </div>
                   )}
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-foreground">Staff member</label>
+                    <label className="text-sm font-medium text-foreground">{t('teamActivity.staffMember')}</label>
                     <Select value={userFilter} onValueChange={setUserFilter}>
-                      <SelectTrigger className="w-full h-12"><SelectValue placeholder="Staff member" /></SelectTrigger>
+                      <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('teamActivity.staffMember')} /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All staff</SelectItem>
+                        <SelectItem value="all">{t('teamActivity.allStaff')}</SelectItem>
                         {activities.map((a) => (
                           <SelectItem key={a.profile.id} value={a.profile.id}>{a.profile.name}</SelectItem>
                         ))}
@@ -266,7 +264,7 @@ export default function TeamActivity() {
                   </div>
                   <SheetClose asChild>
                     <button type="button" className="w-full h-12 text-sm font-medium transition-colors rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80">
-                      Done
+                      {t('common.done')}
                     </button>
                   </SheetClose>
                 </div>
@@ -276,19 +274,19 @@ export default function TeamActivity() {
 
           <div className="flex flex-col md:flex-row md:items-center gap-3">
             <div className="flex items-center gap-1.5">
-              <Button variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label="Previous day" onClick={() => setDay(shiftDay(day, -1))}>
+              <Button variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label={t('leads.previousDay')} onClick={() => setDay(shiftDay(day, -1))}>
                 <ChevronLeft className="w-4 h-4" />
               </Button>
               <div className="flex items-center gap-1.5">
                 <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <Input type="date" value={day} max={todayStr()} onChange={(e) => e.target.value && setDay(e.target.value)} className="h-11 w-[150px] text-sm" />
               </div>
-              <Button variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label="Next day" disabled={isToday} onClick={() => setDay(shiftDay(day, 1))}>
+              <Button variant="outline" size="icon" className="h-11 w-11 min-h-0 shrink-0" aria-label={t('leads.nextDay')} disabled={isToday} onClick={() => setDay(shiftDay(day, 1))}>
                 <ChevronRight className="w-4 h-4" />
               </Button>
               {!isToday && (
                 <Button variant="ghost" className="h-11 px-3 text-xs font-medium text-primary" onClick={() => setDay(todayStr())}>
-                  Today
+                  {t('profile.today')}
                 </Button>
               )}
             </div>
@@ -297,17 +295,17 @@ export default function TeamActivity() {
             <div className="hidden md:flex items-center gap-2 md:ml-auto flex-wrap">
               {!isDepartmentScoped(role) && (
                 <Select value={deptFilter} onValueChange={setDeptFilter}>
-                  <SelectTrigger className="h-11 w-[160px] text-sm"><Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Department" /></SelectTrigger>
+                  <SelectTrigger className="h-11 w-[160px] text-sm"><Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder={t('leads.filter.department')} /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All departments</SelectItem>
+                    <SelectItem value="all">{t('leads.filter.allDepartments')}</SelectItem>
                     {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
                   </SelectContent>
                 </Select>
               )}
               <Select value={userFilter} onValueChange={setUserFilter}>
-                <SelectTrigger className="h-11 w-[190px] text-sm"><UserIcon className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Staff member" /></SelectTrigger>
+                <SelectTrigger className="h-11 w-[190px] text-sm"><UserIcon className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder={t('teamActivity.staffMember')} /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All staff</SelectItem>
+                  <SelectItem value="all">{t('teamActivity.allStaff')}</SelectItem>
                   {activities.map((a) => (
                     <SelectItem key={a.profile.id} value={a.profile.id}>{a.profile.name}</SelectItem>
                   ))}
@@ -322,9 +320,9 @@ export default function TeamActivity() {
       {/* Summary tiles */}
       <div className="grid grid-cols-3 gap-3">
         {[
-          { icon: UserPlus, label: 'Leads Added', value: summary.leads, tint: 'bg-primary/10 text-primary' },
-          { icon: ListChecks, label: 'Follow-ups', value: summary.followUps, tint: 'bg-info/10 text-info' },
-          { icon: UserIcon, label: userFilter === 'all' ? 'Active Staff' : 'Staff Shown', value: summary.activeStaff, tint: 'bg-warning/10 text-warning' },
+          { icon: UserPlus, label: t('teamActivity.leadsAdded'), value: summary.leads, tint: 'bg-primary/10 text-primary' },
+          { icon: ListChecks, label: t('leadDetail.followUps'), value: summary.followUps, tint: 'bg-info/10 text-info' },
+          { icon: UserIcon, label: userFilter === 'all' ? t('teamActivity.activeStaff') : t('teamActivity.staffShown'), value: summary.activeStaff, tint: 'bg-warning/10 text-warning' },
         ].map((tile) => (
           <Card key={tile.label} className="shadow-card rounded-xl border-0">
             <CardContent className="p-3.5 flex items-center gap-2.5">
@@ -347,8 +345,8 @@ export default function TeamActivity() {
         <Card className="shadow-card rounded-xl border-0">
           <CardContent className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <Activity className="w-9 h-9 mb-3 opacity-40" />
-            <p className="text-sm font-medium">{debouncedSearch.trim() ? 'No activity matches your search' : 'No activity recorded on this day'}</p>
-            <p className="text-xs mt-1">{debouncedSearch.trim() ? 'Try a different name, phone, or sales person' : 'Try another day or a different staff member'}</p>
+            <p className="text-sm font-medium">{debouncedSearch.trim() ? t('teamActivity.noActivityMatchesSearch') : t('teamActivity.noActivityRecorded')}</p>
+            <p className="text-xs mt-1">{debouncedSearch.trim() ? t('teamActivity.tryDifferentSearch') : t('teamActivity.tryAnotherDay')}</p>
           </CardContent>
         </Card>
       ) : (
@@ -362,7 +360,7 @@ export default function TeamActivity() {
                   <div className="flex items-center gap-3 px-4 md:px-5 py-3.5 border-b border-border/50 bg-muted/20">
                     <Link to={`/profile/${a.profile.id}`} className="flex items-center gap-3 min-w-0 flex-1 hover:opacity-80 transition-opacity">
                       {a.profile.avatar_url ? (
-                        <img src={a.profile.avatar_url} alt={a.profile.name} className="w-10 h-10 rounded-full object-cover shrink-0" />
+                        <StorageImage src={a.profile.avatar_url} alt={a.profile.name} className="w-10 h-10 rounded-full object-cover shrink-0" />
                       ) : (
                         <div className="w-10 h-10 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
                           {initialsOf(a.profile.name)}
@@ -371,7 +369,7 @@ export default function TeamActivity() {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold text-foreground truncate hover:underline underline-offset-2">{a.profile.name}</p>
                         <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                          <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border border-primary/20 bg-primary/5 text-primary">{getRoleLabel(a.profile.role)}</span>
+                          <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border border-primary/20 bg-primary/5 text-primary">{getRoleLabel(a.profile.role, lang)}</span>
                           {a.profile.department_code && (
                             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{getDepartmentLabel(a.profile.department_code)}</span>
                           )}
@@ -379,7 +377,7 @@ export default function TeamActivity() {
                       </div>
                     </Link>
                     <div className="flex items-center gap-3 shrink-0 text-xs text-muted-foreground">
-                      <span className="tabular-nums">{total} activit{total === 1 ? 'y' : 'ies'}</span>
+                      <span className="tabular-nums">{total} {t('teamActivity.activitiesSuffix')}</span>
                     </div>
                   </div>
 
@@ -387,10 +385,10 @@ export default function TeamActivity() {
                     {/* Leads added */}
                     <div className="p-4 md:p-5">
                       <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2.5 flex items-center gap-1.5">
-                        <UserPlus className="w-3.5 h-3.5 text-primary" /> Leads Added ({a.leads.length})
+                        <UserPlus className="w-3.5 h-3.5 text-primary" /> {t('teamActivity.leadsAdded')} ({a.leads.length})
                       </p>
                       {a.leads.length === 0 ? (
-                        <p className="text-xs text-muted-foreground py-1.5">No leads added.</p>
+                        <p className="text-xs text-muted-foreground py-1.5">{t('teamActivity.noLeadsAdded')}</p>
                       ) : (
                         <div className="space-y-1.5">
                           {a.leads.map((l) => (
@@ -410,18 +408,18 @@ export default function TeamActivity() {
                     {/* Follow-ups made */}
                     <div className="p-4 md:p-5">
                       <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2.5 flex items-center gap-1.5">
-                        <ListChecks className="w-3.5 h-3.5 text-info" /> Follow-ups ({a.followUps.length})
+                        <ListChecks className="w-3.5 h-3.5 text-info" /> {t('leadDetail.followUps')} ({a.followUps.length})
                       </p>
                       {a.followUps.length === 0 ? (
-                        <p className="text-xs text-muted-foreground py-1.5">No follow-ups made.</p>
+                        <p className="text-xs text-muted-foreground py-1.5">{t('teamActivity.noFollowUpsMade')}</p>
                       ) : (
                         <div className="space-y-1.5">
                           {a.followUps.map((f) => (
                             <button key={f.id} type="button" onClick={() => navigate(`/lead/${f.lead_id}`)} className="w-full flex items-center gap-2.5 p-2 rounded-lg text-left hover:bg-muted/40 active:bg-muted/60 transition-colors">
                               <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium text-foreground truncate">{f.leads?.name || 'Lead'}</p>
+                                <p className="text-sm font-medium text-foreground truncate">{f.leads?.name || t('teamActivity.leadFallback')}</p>
                                 <div className="flex items-center gap-1.5 mt-0.5">
-                                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full border ${STATUS_STYLE[f.status] || 'bg-muted text-muted-foreground border-border'}`}>{followUpStatusLabel(f.status)}</span>
+                                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full border ${STATUS_STYLE[f.status] || 'bg-muted text-muted-foreground border-border'}`}>{enumLabel('followupStatus', f.status, FOLLOWUP_STATUSES.find((s) => s.value === f.status)?.label || f.status, lang)}</span>
                                   {f.notes && <span className="text-xs text-muted-foreground truncate">{f.notes}</span>}
                                 </div>
                               </div>

@@ -1,4 +1,5 @@
 import { usePageHeader } from '@/contexts/PageHeaderContext';
+import { useTranslation } from '@/contexts/TranslationContext';
 
 /**
  * The visible map is rendered by PsmMapFrame, mounted persistently inside
@@ -8,6 +9,7 @@ import { usePageHeader } from '@/contexts/PageHeaderContext';
  * permission check, same as every other page.
  */
 export default function PsmMap() {
-  usePageHeader('PSM Map');
+  const { t } = useTranslation();
+  usePageHeader(t('nav.psmMap'));
   return null;
 }

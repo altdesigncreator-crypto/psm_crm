@@ -27,9 +27,7 @@ export interface RouteConfig {
   path: string;
   element: ReactNode;
   visible?: boolean;
-  /** Accessible without login. Routes without this flag require authentication. */
   public?: boolean;
-  /** Key used by RouteGuard + the sidebar nav to check role-based access (see src/lib/permissions.ts). */
   routeKey?: RouteKey;
 }
 

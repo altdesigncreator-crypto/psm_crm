@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { Card, CardContent } from '@/components/ui/card';
@@ -11,6 +11,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetClose 
 import { Checkbox } from '@/components/ui/checkbox';
 import { LEAD_STAGES, type Lead, type LeadStage } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTranslation } from '@/contexts/TranslationContext';
+import { enumLabel } from '@/lib/translations';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
@@ -18,9 +20,8 @@ import { useDepartments } from '@/hooks/useDepartments';
 import { useTeams } from '@/hooks/useTeams';
 import { canEditLead, isDepartmentScoped, getDepartmentLabel } from '@/lib/permissions';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
-import NameLink from '@/components/NameLink';
 import {
-  Phone, MapPin, DollarSign, User, ArrowRight, ArrowLeft, Eye, MoveRight, Columns3,
+  Phone, ArrowRight, MoveRight, Columns3,
   Search, Filter, SlidersHorizontal, ChevronLeft, ChevronRight, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -48,6 +49,10 @@ function localDateStr(iso: string) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function initialsOf(name: string) {
+  return name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('') || '?';
+}
+
 interface PipelineColumn {
   status: LeadStage;
   label: string;
@@ -60,9 +65,7 @@ const FALLBACK_COLOR = '#0463CA';
 
 const getStageIndex = (status: string) => FORWARD_STAGE_VALUES.indexOf(status as LeadStage);
 const canMoveForward = (status: string) => getStageIndex(status) >= 0 && getStageIndex(status) < FORWARD_STAGE_VALUES.length - 1;
-const canMoveBackward = (status: string) => getStageIndex(status) > 0;
 const getNextStatus = (status: string) => FORWARD_STAGE_VALUES[getStageIndex(status) + 1];
-const getPrevStatus = (status: string) => FORWARD_STAGE_VALUES[getStageIndex(status) - 1];
 
 export default function PipelineBoard() {
   const navigate = useNavigate();
@@ -71,7 +74,8 @@ export default function PipelineBoard() {
   const { nameOf, profiles } = useProfiles();
   const { departments } = useDepartments();
   const { teams, membersOf } = useTeams();
-  usePageHeader('Lead Pipeline', 'Stage-based lead tracking board');
+  const { t, lang } = useTranslation();
+  usePageHeader(t('pipeline.pageTitle'), t('pipeline.subtitle'));
 
   const cachedLeads = user ? cacheGet<Lead[]>(pipelineCacheKey(user.id), PIPELINE_CACHE_TTL_MS) : undefined;
   const [leads, setLeads] = useState<Lead[]>(cachedLeads ?? []);
@@ -83,6 +87,21 @@ export default function PipelineBoard() {
   const [hiddenStages, setHiddenStages] = useState<Set<LeadStage>>(new Set());
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
   const [mobileStage, setMobileStage] = useState<LeadStage>(ALL_STAGE_VALUES[0]);
+
+  // Fades at the edges of the mobile stage-tab strip so a scrollable row
+  // of pills doesn't just look like "all the stages that fit," with the
+  // rest silently cut off — same affordance browsers use for scrollable
+  // tab bars.
+  const stageScrollRef = useRef<HTMLDivElement>(null);
+  const [stageScrollEdges, setStageScrollEdges] = useState({ left: false, right: false });
+  const updateStageScrollEdges = useCallback(() => {
+    const el = stageScrollRef.current;
+    if (!el) return;
+    setStageScrollEdges({
+      left: el.scrollLeft > 4,
+      right: el.scrollLeft < el.scrollWidth - el.clientWidth - 4,
+    });
+  }, []);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [projectFilters, setProjectFilters] = useState<string[]>([]);
@@ -102,7 +121,7 @@ export default function PipelineBoard() {
         if (!active) return;
         setLeads(writeCache(rows));
       } catch {
-        if (active) toast.error('Could not load the pipeline.');
+        if (active) toast.error(t('pipeline.loadError'));
       }
       if (active) setLoading(false);
     };
@@ -165,12 +184,16 @@ export default function PipelineBoard() {
   const columns: PipelineColumn[] = useMemo(() => {
     return ALL_STAGE_VALUES.map((status) => ({
       status,
-      label: LEAD_STAGES.find((s) => s.value === status)!.label,
+      label: enumLabel('stage', status, LEAD_STAGES.find((s) => s.value === status)!.label, lang),
       leads: filteredLeads.filter((l) => l.status === status),
     }));
-  }, [filteredLeads]);
+  }, [filteredLeads, lang]);
 
   const visibleColumns = useMemo(() => columns.filter((c) => !hiddenStages.has(c.status)), [columns, hiddenStages]);
+
+  useEffect(() => {
+    updateStageScrollEdges();
+  }, [visibleColumns, updateStageScrollEdges]);
 
   const toggleStageVisibility = (status: LeadStage) => {
     setHiddenStages((prev) => {
@@ -191,10 +214,10 @@ export default function PipelineBoard() {
     const { error } = await supabase.from('leads').update({ status: newStatus }).eq('id', leadId);
     setMoving(false);
     if (error) {
-      toast.error('Could not update the lead stage.');
+      toast.error(t('leadDetail.stageUpdateError'));
       return;
     }
-    toast.success(`Lead moved to ${LEAD_STAGES.find((s) => s.value === newStatus)?.label}.`);
+    toast.success(`${t('pipeline.leadMovedToPrefix')} ${enumLabel('stage', newStatus, LEAD_STAGES.find((s) => s.value === newStatus)?.label || newStatus, lang)}${t('pipeline.leadMovedToSuffix') ? ' ' + t('pipeline.leadMovedToSuffix') : '.'}`);
     setMoveDialogOpen(false);
     setSelectedLead(null);
   };
@@ -215,10 +238,10 @@ export default function PipelineBoard() {
     <div className="animate-fade-in-up space-y-5">
       <div className="flex items-center justify-between gap-3">
         <div className="md:hidden min-w-0">
-          <h1 className="text-xl md:text-2xl font-semibold text-foreground truncate">Lead Pipeline</h1>
+          <h1 className="text-xl md:text-2xl font-semibold text-foreground truncate">{t('pipeline.pageTitle')}</h1>
         </div>
         <div className="flex items-center gap-2 ml-auto shrink-0">
-          <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2.5 py-1 rounded-full tabular-nums">{filteredLeads.length} leads</span>
+          <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2.5 py-1 rounded-full tabular-nums">{filteredLeads.length} {t('pipeline.leadsSuffix')}</span>
           <Popover open={columnsMenuOpen} onOpenChange={setColumnsMenuOpen}>
             <PopoverTrigger asChild>
               <button
@@ -226,14 +249,14 @@ export default function PipelineBoard() {
                 className="flex items-center gap-1.5 h-9 px-3 rounded-full border border-border bg-card text-xs font-medium text-foreground hover:bg-muted transition-colors"
               >
                 <Columns3 className="w-3.5 h-3.5 text-muted-foreground" />
-                Columns
+                {t('pipeline.columns')}
                 {hiddenStages.size > 0 && (
                   <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">{hiddenStages.size}</span>
                 )}
               </button>
             </PopoverTrigger>
             <PopoverContent align="end" className="w-64 p-2">
-              <p className="text-xs font-medium text-muted-foreground px-2 pt-1 pb-2">Show stages</p>
+              <p className="text-xs font-medium text-muted-foreground px-2 pt-1 pb-2">{t('pipeline.showStages')}</p>
               <div className="space-y-0.5 max-h-72 overflow-y-auto">
                 {columns.map((col) => {
                   const color = statusColors[col.status] || FALLBACK_COLOR;
@@ -253,7 +276,7 @@ export default function PipelineBoard() {
                   onClick={() => setHiddenStages(new Set())}
                   className="w-full mt-1 h-8 rounded-md text-xs font-medium text-primary hover:bg-primary/5"
                 >
-                  Show all stages
+                  {t('pipeline.showAllStages')}
                 </button>
               )}
             </PopoverContent>
@@ -263,33 +286,43 @@ export default function PipelineBoard() {
 
       {/* Period + Search & Filters */}
       <Card className="shadow-card rounded-xl border-0 overflow-hidden">
-        <CardContent className="p-4 md:p-5 space-y-4">
-          <div className="pb-4 border-b border-border/60">
+        <CardContent className="p-3.5 md:p-5 space-y-3 md:space-y-4">
+          <div className="pb-3 md:pb-4 border-b border-border/60">
             <PeriodFilterBar period={period} setPeriod={setPeriod} periodLabel={periodLabel} isCurrentPeriod={isCurrentPeriod} shiftPeriod={shiftPeriod} />
           </div>
 
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-2.5">
-              <div className="relative flex-1 min-w-[200px]">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <div className="relative flex-1 min-w-[200px] group">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground transition-colors group-focus-within:text-primary" />
                 <Input
-                  placeholder="Search by name, phone, or sales person…"
+                  placeholder={t('leads.searchPlaceholder')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 h-11 rounded-lg bg-muted/40 border-transparent focus-visible:bg-card focus-visible:border-input transition-colors"
+                  className="pl-10 pr-9 h-12 rounded-full bg-muted/40 border border-transparent focus-visible:bg-card focus-visible:border-primary/30 focus-visible:ring-4 focus-visible:ring-primary/10 transition-all"
                 />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    aria-label={t('pipeline.clearSearch')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
 
               {/* Desktop/tablet: compact always-visible Date, plus a single
                   Filters popover for the remaining category filters. */}
               <div className="hidden md:flex items-center gap-2 shrink-0">
                 <div className="flex items-center gap-0.5 rounded-lg bg-muted/40 p-1 shrink-0">
-                  <Button variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label="Previous day" onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}>
+                  <Button variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label={t('leads.previousDay')} onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}>
                     <ChevronLeft className="w-4 h-4" />
                   </Button>
                   <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="h-9 w-[130px] text-sm border-0 bg-transparent shadow-none focus-visible:ring-0" />
                   <Button
-                    variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label="Next day"
+                    variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label={t('leads.nextDay')}
                     disabled={(dateFilter || todayStr()) >= todayStr()}
                     onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
                   >
@@ -298,17 +331,17 @@ export default function PipelineBoard() {
                 </div>
                 {dateFilter && (
                   <Button variant="ghost" className="h-9 px-2.5 text-xs font-medium text-primary" onClick={() => setDateFilter('')}>
-                    All dates
+                    {t('leads.allDates')}
                   </Button>
                 )}
                 <Popover>
                   <PopoverTrigger asChild>
                     <button
                       type="button"
-                      className="flex items-center gap-1.5 px-3.5 h-11 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
+                      className="flex items-center gap-1.5 px-4 h-12 rounded-full border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
                     >
                       <SlidersHorizontal className="w-4 h-4" />
-                      Filters
+                      {t('leads.filters')}
                       {(projectFilters.length > 0 || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all') && (
                         <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
                           {[deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0)}
@@ -335,10 +368,10 @@ export default function PipelineBoard() {
                 <SheetTrigger asChild>
                   <button
                     type="button"
-                    className="md:hidden flex items-center gap-1.5 px-3.5 h-11 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
+                    className="md:hidden flex items-center gap-1.5 px-3.5 h-12 rounded-full border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
                   >
                     <SlidersHorizontal className="w-4 h-4" />
-                    <span className="hidden sm:inline">Filters</span>
+                    <span className="hidden sm:inline">{t('leads.filters')}</span>
                     {(projectFilters.length > 0 || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all' || dateFilter) && (
                       <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
                         {[deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0) + (dateFilter ? 1 : 0)}
@@ -349,7 +382,7 @@ export default function PipelineBoard() {
                 <SheetContent side="bottom" className="rounded-t-2xl border-t border-border px-6 pt-6 pb-8 max-h-[85dvh] overflow-y-auto">
                   <SheetHeader className="pb-4">
                     <SheetTitle className="flex items-center gap-2 text-base font-semibold">
-                      <Filter className="w-4 h-4 text-primary" /> Search / Filter
+                      <Filter className="w-4 h-4 text-primary" /> {t('leads.searchFilterSheetTitle')}
                     </SheetTitle>
                   </SheetHeader>
                   <div className="space-y-5">
@@ -364,7 +397,7 @@ export default function PipelineBoard() {
                     />
                     <SheetClose asChild>
                       <button type="button" className="w-full h-12 text-sm font-medium transition-colors rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80">
-                        Done
+                        {t('common.done')}
                       </button>
                     </SheetClose>
                   </div>
@@ -418,15 +451,16 @@ export default function PipelineBoard() {
 
       {visibleColumns.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground text-sm border-2 border-dashed border-border/40 rounded-xl bg-background/50">
-          Every stage is hidden. Use "Columns" above to show at least one.
+          {t('pipeline.allStagesHidden')}
         </div>
       ) : (
         <>
           {/* Mobile: one stage at a time via a tab strip — stacking all 9
               columns made the page an enormous scroll on a small screen. */}
           <div className="md:hidden space-y-3">
-            <div className="-mx-4 px-4 overflow-x-auto">
-              <div className="flex items-center gap-2 w-max pb-1">
+            <div className="relative -mx-4">
+              <div ref={stageScrollRef} onScroll={updateStageScrollEdges} className="px-4 overflow-x-auto">
+                <div className="flex items-center gap-2 w-max pb-1">
                 {visibleColumns.map((col) => {
                   const color = statusColors[col.status] || FALLBACK_COLOR;
                   const active = mobileColumn?.status === col.status;
@@ -450,7 +484,14 @@ export default function PipelineBoard() {
                     </button>
                   );
                 })}
+                </div>
               </div>
+              {stageScrollEdges.left && (
+                <div className="absolute left-0 top-0 bottom-1 w-6 bg-gradient-to-r from-background to-transparent pointer-events-none" />
+              )}
+              {stageScrollEdges.right && (
+                <div className="absolute right-0 top-0 bottom-1 w-6 bg-gradient-to-l from-background to-transparent pointer-events-none" />
+              )}
             </div>
 
             <div className="space-y-2.5">
@@ -470,7 +511,7 @@ export default function PipelineBoard() {
                 ))
               ) : (
                 <div className="text-center py-10 text-muted-foreground text-sm border-2 border-dashed border-border/40 rounded-xl bg-background/50">
-                  No leads in {mobileColumn?.label}
+                  {lang === 'mm' ? <>{mobileColumn?.label}{t('pipeline.noLeadsInStageSuffix')}</> : <>{t('pipeline.noLeadsInStagePrefix')} {mobileColumn?.label}</>}
                 </div>
               )}
             </div>
@@ -511,7 +552,7 @@ export default function PipelineBoard() {
 
                     {col.leads.length === 0 && (
                       <div className="text-center py-8 text-muted-foreground text-sm border-2 border-dashed border-border/40 rounded-xl bg-background/50">
-                        No leads
+                        {t('pipeline.noLeads')}
                       </div>
                     )}
                   </div>
@@ -525,23 +566,27 @@ export default function PipelineBoard() {
       <Dialog open={moveDialogOpen} onOpenChange={setMoveDialogOpen}>
         <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-sm rounded-2xl">
           <DialogHeader>
-            <DialogTitle className="text-base font-semibold">Move Lead Stage</DialogTitle>
+            <DialogTitle className="text-base font-semibold">{t('pipeline.moveLeadStage')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <p className="text-sm text-muted-foreground leading-relaxed">
-              Move <span className="font-semibold text-foreground">{selectedLead?.name}</span> to which stage?
+              {lang === 'mm' ? (
+                <><span className="font-semibold text-foreground">{selectedLead?.name}</span> {t('pipeline.moveToWhichStageSuffix')}</>
+              ) : (
+                <>{t('pipeline.moveToWhichStagePrefix')} <span className="font-semibold text-foreground">{selectedLead?.name}</span> {t('pipeline.moveToWhichStageSuffix')}</>
+              )}
             </p>
             <Select
               value={selectedLead?.status || ''}
               onValueChange={(v) => { if (selectedLead && v !== selectedLead.status) handleMoveLead(selectedLead.id, v); }}
             >
-              <SelectTrigger className="h-12 rounded-xl"><SelectValue placeholder="Select stage" /></SelectTrigger>
+              <SelectTrigger className="h-12 rounded-xl"><SelectValue placeholder={t('pipeline.selectStage')} /></SelectTrigger>
               <SelectContent className="rounded-xl">
                 {LEAD_STAGES.map((s) => (
                   <SelectItem key={s.value} value={s.value} className="rounded-lg">
                     <div className="flex items-center gap-2">
                       <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: statusColors[s.value] || '#8FA3BF' }} />
-                      <span className="text-sm font-medium">{s.label}</span>
+                      <span className="text-sm font-medium">{enumLabel('stage', s.value, s.label, lang)}</span>
                     </div>
                   </SelectItem>
                 ))}
@@ -566,80 +611,56 @@ function PipelineLeadCard({
   handleMoveLead: (leadId: string, newStatus: string) => void;
   moving: boolean;
 }) {
+  const { t, lang } = useTranslation();
   const nextStatus = getNextStatus(lead.status);
-  const prevStatus = getPrevStatus(lead.status);
   const nextColor = statusColors[nextStatus] || FALLBACK_COLOR;
+  const accentColor = statusColors[lead.status] || FALLBACK_COLOR;
+  const ownerName = lead.owner_id ? nameOf(lead.owner_id) : null;
+  const metaLine = [lead.preferred_project, lead.budget_range, ownerName || (lead.owner_id ? null : t('leadDetail.unassigned'))].filter(Boolean).join(' · ');
 
   return (
     <Card
-      className="shadow-sm rounded-xl border border-border/60 hover:border-primary/30 hover:shadow-card transition-all duration-200 cursor-pointer active:scale-[0.99] bg-card"
+      className="shadow-sm rounded-xl border border-l-4 border-border/60 hover:border-primary/30 hover:shadow-card transition-all duration-200 cursor-pointer active:scale-[0.99] bg-card"
+      style={{ borderLeftColor: accentColor }}
       onClick={() => navigate(`/lead/${lead.id}`)}
     >
-      <CardContent className="p-3.5 space-y-2.5">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold text-foreground truncate">{lead.name}</span>
-          <div className="flex items-center gap-1 shrink-0">
-            <LeadLevelBadge grade={lead.lead_grade} />
+      <CardContent className="p-3 space-y-1.5">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-full bg-primary/10 text-primary text-[11px] font-semibold flex items-center justify-center shrink-0">
+            {initialsOf(lead.name)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-foreground truncate">{lead.name}</span>
+              <LeadLevelBadge grade={lead.lead_grade} compact />
+            </div>
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Phone className="w-3 h-3 shrink-0" /> <span className="truncate">{lead.phone || t('leads.noPhone')}</span>
+            </div>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Phone className="w-3 h-3 shrink-0" /> <span className="truncate">{lead.phone}</span>
-        </div>
-        {lead.preferred_project && (
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <MapPin className="w-3 h-3 shrink-0" /> <span className="truncate">{lead.preferred_project}</span>
-          </div>
-        )}
-        {lead.budget_range && (
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <DollarSign className="w-3 h-3 shrink-0" /> <span className="truncate">{lead.budget_range}</span>
-          </div>
-        )}
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <User className="w-3 h-3 shrink-0" />
-          {lead.owner_id ? <NameLink id={lead.owner_id} name={nameOf(lead.owner_id)} showAvatar={false} className="text-xs" /> : <span className="truncate">Unassigned</span>}
-        </div>
+        {metaLine && <p className="text-[11px] text-muted-foreground truncate pl-[42px]">{metaLine}</p>}
 
-        <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/40">
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); navigate(`/lead/${lead.id}`); }}
-            className="flex-1 h-11 min-h-0 flex items-center justify-center gap-1.5 rounded-lg bg-primary/5 text-primary text-xs font-semibold hover:bg-primary/10 active:bg-primary/15 transition-colors"
-          >
-            <Eye className="w-3.5 h-3.5" /> View
-          </button>
-          {editable && (
+        {editable && (
+          <div className="flex items-center gap-1.5 pt-1.5 mt-1 border-t border-border/40">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); openMoveDialog(lead); }}
-              className="flex-1 h-11 min-h-0 flex items-center justify-center gap-1.5 rounded-lg bg-muted text-muted-foreground text-xs font-semibold hover:bg-muted/80 active:bg-muted/60 transition-colors"
+              aria-label={t('pipeline.moveToStage')}
+              title={t('pipeline.moveToStage')}
+              className="w-9 h-9 min-h-0 shrink-0 flex items-center justify-center rounded-lg bg-muted text-muted-foreground hover:bg-muted/80 active:bg-muted/60 transition-colors"
             >
-              <MoveRight className="w-3.5 h-3.5" /> Move
+              <MoveRight className="w-4 h-4" />
             </button>
-          )}
-        </div>
-
-        {editable && (canMoveBackward(lead.status) || canMoveForward(lead.status)) && (
-          <div className="grid gap-1.5" style={{ gridTemplateColumns: canMoveBackward(lead.status) && canMoveForward(lead.status) ? '1fr 1fr' : '1fr' }}>
-            {canMoveBackward(lead.status) && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); handleMoveLead(lead.id, prevStatus); }}
-                disabled={moving}
-                className="h-9 min-h-0 px-2 rounded-md border border-border/60 text-xs text-muted-foreground hover:bg-muted active:bg-muted/80 transition-colors disabled:opacity-40 flex items-center justify-center gap-1"
-              >
-                <ArrowLeft className="w-3 h-3 shrink-0" /> <span className="truncate">{LEAD_STAGES.find((s) => s.value === prevStatus)?.label}</span>
-              </button>
-            )}
             {canMoveForward(lead.status) && (
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); handleMoveLead(lead.id, nextStatus); }}
                 disabled={moving}
-                className="h-9 min-h-0 px-2 rounded-md border text-xs flex items-center justify-center gap-1 transition-colors disabled:opacity-40"
+                className="flex-1 h-9 min-h-0 px-2 rounded-lg border text-xs font-medium flex items-center justify-center gap-1 transition-colors disabled:opacity-40"
                 style={{ borderColor: `${nextColor}40`, color: nextColor, backgroundColor: `${nextColor}08` }}
               >
-                <span className="truncate">{LEAD_STAGES.find((s) => s.value === nextStatus)?.label}</span> <ArrowRight className="w-3 h-3 shrink-0" />
+                <span className="truncate">{enumLabel('stage', nextStatus, LEAD_STAGES.find((s) => s.value === nextStatus)?.label || nextStatus, lang)}</span> <ArrowRight className="w-3 h-3 shrink-0" />
               </button>
             )}
           </div>
@@ -654,25 +675,26 @@ function PipelineFilterFields({
   teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter,
   uniqueAgents, uniqueProjects, departments, teamOptions, showDept = true, showDate = true,
 }: any) {
+  const { t } = useTranslation();
   return (
     <>
       {showDept && (
         <div className="space-y-2">
-          <label className="text-sm font-medium text-foreground">Department</label>
+          <label className="text-sm font-medium text-foreground">{t('leads.filter.department')}</label>
           <Select value={deptFilter} onValueChange={setDeptFilter}>
-            <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select department" /></SelectTrigger>
+            <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectDepartment')} /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All departments</SelectItem>
+              <SelectItem value="all">{t('leads.filter.allDepartments')}</SelectItem>
               {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
             </SelectContent>
           </Select>
         </div>
       )}
       <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Project</label>
+        <label className="text-sm font-medium text-foreground">{t('leads.filter.project')}</label>
         <div className="max-h-48 overflow-y-auto rounded-md border border-input divide-y divide-border">
           {uniqueProjects.length === 0 ? (
-            <p className="text-xs text-muted-foreground p-3">No projects yet</p>
+            <p className="text-xs text-muted-foreground p-3">{t('leads.filter.noProjectsYet')}</p>
           ) : (
             uniqueProjects.map((p: string) => (
               <label key={p} className="flex items-center gap-2.5 px-3 py-2.5 text-sm cursor-pointer">
@@ -684,45 +706,45 @@ function PipelineFilterFields({
         </div>
         {projectFilters.length > 0 && (
           <button type="button" onClick={() => setProjectFilters([])} className="text-xs font-medium text-primary">
-            Clear projects
+            {t('leads.filter.clearProjects')}
           </button>
         )}
       </div>
       {teamOptions.length > 0 && (
         <div className="space-y-2">
-          <label className="text-sm font-medium text-foreground">Team</label>
+          <label className="text-sm font-medium text-foreground">{t('leads.filter.team')}</label>
           <Select value={teamFilter} onValueChange={setTeamFilter}>
-            <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select team" /></SelectTrigger>
+            <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectTeam')} /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All teams</SelectItem>
+              <SelectItem value="all">{t('leads.filter.allTeams')}</SelectItem>
               {teamOptions.map((tm: { id: string; name: string }) => (<SelectItem key={tm.id} value={tm.id}>{tm.name}</SelectItem>))}
             </SelectContent>
           </Select>
         </div>
       )}
       <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Sales Person</label>
+        <label className="text-sm font-medium text-foreground">{t('leads.filter.salesPerson')}</label>
         <Select value={agentFilter} onValueChange={setAgentFilter}>
-          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select sales person" /></SelectTrigger>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectSalesPerson')} /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All sales people</SelectItem>
+            <SelectItem value="all">{t('leads.filter.allSalesPeople')}</SelectItem>
             {uniqueAgents.map((a: string) => (<SelectItem key={a} value={a}>{a}</SelectItem>))}
           </SelectContent>
         </Select>
       </div>
       {showDate && (
         <div className="space-y-2">
-          <label className="text-sm font-medium text-foreground">Date Added</label>
+          <label className="text-sm font-medium text-foreground">{t('leads.filter.dateAdded')}</label>
           <div className="flex items-center gap-1.5">
             <Button
-              type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Previous day"
+              type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label={t('leads.previousDay')}
               onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
             >
               <ChevronLeft className="w-4 h-4" />
             </Button>
             <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="w-full h-12 text-sm" />
             <Button
-              type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Next day"
+              type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label={t('leads.nextDay')}
               disabled={(dateFilter || todayStr()) >= todayStr()}
               onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
             >
@@ -731,7 +753,7 @@ function PipelineFilterFields({
           </div>
           {dateFilter && (
             <button type="button" onClick={() => setDateFilter('')} className="text-xs font-medium text-primary">
-              Clear — show all dates
+              {t('leads.filter.clearShowAllDates')}
             </button>
           )}
         </div>

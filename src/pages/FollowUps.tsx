@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
+import { enumLabel, type Lang } from '@/lib/translations';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useDepartments } from '@/hooks/useDepartments';
@@ -24,7 +25,7 @@ import {
 import {
   Search, Filter, Phone, User, MapPin, DollarSign, Calendar, MessageSquare, Eye,
   Loader2, Plus, ListChecks, HelpCircle, Upload, Download, FileSpreadsheet, FileText, Users,
-  SlidersHorizontal, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X,
+  SlidersHorizontal, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, X,
   AlertTriangle, Clock, CalendarClock,
 } from 'lucide-react';
 import { FOLLOWUP_TYPES, FOLLOWUP_STATUSES, getGradeForFollowUpStatus, type Lead, type FollowUp, type FollowUpStatus, type FollowUpType, type LeadGrade } from '@/types';
@@ -40,11 +41,13 @@ const FOLLOWUPS_CACHE_TTL_MS = 5 * 60 * 1000;
 const leadsCacheKey = (userId: string) => `followups-leads:${userId}`;
 const followUpsCacheKey = (userId: string) => `followups-list:${userId}`;
 
-function followUpTypeLabel(type: string) {
-  return FOLLOWUP_TYPES.find((t) => t.value === type)?.label || type;
+function followUpTypeLabel(type: string, lang: Lang) {
+  const found = FOLLOWUP_TYPES.find((t) => t.value === type);
+  return enumLabel('followupType', type, found?.label || type, lang);
 }
-function followUpStatusLabel(status: string) {
-  return FOLLOWUP_STATUSES.find((s) => s.value === status)?.label || status;
+function followUpStatusLabel(status: string, lang: Lang) {
+  const found = FOLLOWUP_STATUSES.find((s) => s.value === status);
+  return enumLabel('followupStatus', status, found?.label || status, lang);
 }
 
 function initialsOf(name: string) {
@@ -62,6 +65,20 @@ const STATUS_STYLE: Record<string, string> = {
   site_visit: 'bg-primary/10 text-primary border-primary/20',
   booking: 'bg-success/10 text-success border-success/20',
   lost: 'bg-destructive/10 text-destructive border-destructive/20',
+};
+
+// Same status→color mapping as STATUS_STYLE, as a left-edge accent instead
+// of a badge fill — lets the mobile card list (below) be scanned by color
+// alone, same pattern as the Leads page's mobile cards.
+const STATUS_ACCENT: Record<string, string> = {
+  interested: 'border-l-success',
+  not_interested: 'border-l-destructive',
+  busy: 'border-l-warning',
+  no_answer: 'border-l-border',
+  call_later: 'border-l-info',
+  site_visit: 'border-l-primary',
+  booking: 'border-l-success',
+  lost: 'border-l-destructive',
 };
 
 interface LeadWithFollowUps extends Lead {
@@ -129,7 +146,7 @@ function localDateStr(iso: string) {
 
 export default function FollowUps() {
   const navigate = useNavigate();
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { user, role, department } = useAuth();
   usePageHeader(t('followups.title'), t('followups.subtitle'));
   const { nameOf, profiles } = useProfiles();
@@ -156,6 +173,14 @@ export default function FollowUps() {
   const [pageSize, setPageSize] = useState(25);
   const { period, setPeriod, selectedMonth, selectedYear, isCurrentPeriod, shiftPeriod, periodLabel, matchesPeriod } = usePeriodFilter();
 
+  // Mobile-only: Upcoming/Overdue start collapsed so the queue opens on
+  // today's work, not a long scroll past leads that aren't due yet —
+  // desktop's 3-column grid has room to always show all three, so this
+  // only affects the stacked single-column mobile layout (see md:block
+  // override below).
+  const [collapsedQueueSections, setCollapsedQueueSections] = useState<Record<'upcoming' | 'overdue', boolean>>({ upcoming: true, overdue: true });
+  const toggleQueueSection = (key: 'upcoming' | 'overdue') => setCollapsedQueueSections((prev) => ({ ...prev, [key]: !prev[key] }));
+
   const [activeLead, setActiveLead] = useState<LeadWithFollowUps | null>(null);
   const [formType, setFormType] = useState('phone');
   const [formStatus, setFormStatus] = useState('interested');
@@ -179,7 +204,7 @@ export default function FollowUps() {
         setLeads(writeLeadsCache(leadsRows));
         setFollowUps(writeFollowUpsCache(followUpsRows));
       } catch {
-        if (active) toast.error('Could not load follow-ups.');
+        if (active) toast.error(t('followups.loadError'));
       }
       if (active) setLoading(false);
     };
@@ -337,14 +362,14 @@ export default function FollowUps() {
   const canFollowUpActive = activeLead ? canAddFollowUp(currentUser, { ownerId: activeLead.owner_id, departmentCode: activeLead.department_code }) : false;
 
   const handleAddFollowUp = async () => {
-    if (!activeLead || !formNotes.trim()) { toast.error('Add a note for this follow-up.'); return; }
+    if (!activeLead || !formNotes.trim()) { toast.error(t('followups.noNoteError')); return; }
     setSaving(true);
     const { error } = await supabase.from('follow_ups').insert({
       lead_id: activeLead.id, created_by: user?.id, type: formType, status: formStatus, notes: formNotes.trim(),
     });
     setSaving(false);
-    if (error) { toast.error('Could not add follow-up.'); return; }
-    toast.success('Follow-up added.');
+    if (error) { toast.error(t('followups.addFollowUpError')); return; }
+    toast.success(t('followups.addedToast'));
     setFormNotes('');
   };
 
@@ -355,7 +380,7 @@ export default function FollowUps() {
     return [
       r.name, r.phone, nameOf(r.owner_id), new Date(date).toLocaleDateString('en-GB'),
       r.current_location || '', r.budget_range || '', r.lead_grade || '',
-      r.interest_type || '', latest?.notes || (latest ? followUpStatusLabel(latest.status) : ''),
+      r.interest_type || '', latest?.notes || (latest ? followUpStatusLabel(latest.status, 'en') : ''),
     ];
   });
 
@@ -396,7 +421,7 @@ export default function FollowUps() {
       const workbook = XLSX.read(buffer, { type: 'array' });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rowsRaw: any[] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-      if (rowsRaw.length < 2) { toast.error('No data found in the spreadsheet.'); setImporting(false); return; }
+      if (rowsRaw.length < 2) { toast.error(t('leads.noDataInSpreadsheet')); setImporting(false); return; }
 
       const headers = rowsRaw[0].map((h: any) => String(h).trim().toLowerCase());
       const col = {
@@ -460,7 +485,7 @@ export default function FollowUps() {
         meta.push({ notes: followText, type: detectFollowUpType(followText), status: GRADE_TO_IMPORT_STATUS[grade] });
       }
 
-      if (leadPayloads.length === 0) { toast.error('No valid rows found to import.'); setImporting(false); return; }
+      if (leadPayloads.length === 0) { toast.error(t('followups.noValidRowsImport')); setImporting(false); return; }
 
       const { data: insertedLeads, error: leadsErr } = await supabase.from('leads').insert(leadPayloads).select('id');
       if (leadsErr) throw leadsErr;
@@ -481,14 +506,14 @@ export default function FollowUps() {
         void count;
       }
 
-      const parts = [`${insertedLeads?.length || 0} leads imported`];
-      if (matchedAgents > 0) parts.push(`${matchedAgents} sales matched by name`);
-      if (unmatchedAgents > 0) parts.push(`${unmatchedAgents} assigned to you (no name match)`);
-      if (adjustedRates > 0) parts.push(`${adjustedRates} ratings adjusted to fit A–C`);
-      if (followUpErrorCount > 0) parts.push(`${followUpErrorCount} follow-up notes skipped (no permission)`);
+      const parts = [`${insertedLeads?.length || 0} ${t('followups.leadsImportedSuffix')}`];
+      if (matchedAgents > 0) parts.push(`${matchedAgents} ${t('followups.salesMatchedSuffix')}`);
+      if (unmatchedAgents > 0) parts.push(`${unmatchedAgents} ${t('followups.assignedToYouSuffix')}`);
+      if (adjustedRates > 0) parts.push(`${adjustedRates} ${t('followups.ratingsAdjustedSuffix')}`);
+      if (followUpErrorCount > 0) parts.push(`${followUpErrorCount} ${t('followups.notesSkippedSuffix')}`);
       toast.success(parts.join(' · '));
     } catch (err: any) {
-      toast.error(err.message || 'Import failed.');
+      toast.error(err.message || t('leads.importFailed'));
     } finally {
       setImporting(false);
       if (importFileRef.current) importFileRef.current.value = '';
@@ -511,14 +536,14 @@ export default function FollowUps() {
               <input ref={importFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} className="hidden" />
               <Button variant="outline" disabled={importing} onClick={() => importFileRef.current?.click()} className="h-11 gap-2">
                 {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                <span className="hidden sm:inline">{importing ? 'Importing…' : 'Import'}</span>
+                <span className="hidden sm:inline">{importing ? t('leads.importing') : t('common.import')}</span>
               </Button>
             </>
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button disabled={filteredRows.length === 0} className="h-11 gradient-primary hover:gradient-primary-hover text-white font-medium gap-2">
-                <Download className="w-4 h-4" /> <span className="hidden sm:inline">Export</span>
+                <Download className="w-4 h-4" /> <span className="hidden sm:inline">{t('common.export')}</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
@@ -540,32 +565,56 @@ export default function FollowUps() {
           <div className="flex items-center gap-2.5 mb-4">
             <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><CalendarClock className="w-4 h-4 text-primary" /></div>
             <div>
-              <h2 className="text-base font-semibold text-foreground">Follow-up Queue</h2>
-              <p className="text-xs text-muted-foreground">What needs a call, right now and coming up</p>
+              <h2 className="text-base font-semibold text-foreground">{t('followups.queueTitle')}</h2>
+              <p className="text-xs text-muted-foreground">{t('followups.queueSubtitle')}</p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {([
-              { key: 'upcoming' as const, label: 'Upcoming', icon: <CalendarClock className="w-3.5 h-3.5" />, accent: 'border-info/30 bg-info/[0.04]', dot: 'bg-info', badge: 'bg-info/10 text-info' },
-              { key: 'today' as const, label: 'Due Today', icon: <Clock className="w-3.5 h-3.5" />, accent: 'border-warning/30 bg-warning/[0.04]', dot: 'bg-warning', badge: 'bg-warning/10 text-warning' },
-              { key: 'overdue' as const, label: 'Overdue', icon: <AlertTriangle className="w-3.5 h-3.5" />, accent: 'border-destructive/30 bg-destructive/[0.04]', dot: 'bg-destructive', badge: 'bg-destructive/10 text-destructive' },
+              { key: 'upcoming' as const, label: t('followups.upcoming'), icon: <CalendarClock className="w-3.5 h-3.5" />, accent: 'border-info/30 bg-info/[0.04]', dot: 'bg-info', badge: 'bg-info/10 text-info' },
+              { key: 'today' as const, label: t('followups.dueToday'), icon: <Clock className="w-3.5 h-3.5" />, accent: 'border-warning/30 bg-warning/[0.04]', dot: 'bg-warning', badge: 'bg-warning/10 text-warning' },
+              { key: 'overdue' as const, label: t('followups.overdue'), icon: <AlertTriangle className="w-3.5 h-3.5" />, accent: 'border-destructive/30 bg-destructive/[0.04]', dot: 'bg-destructive', badge: 'bg-destructive/10 text-destructive' },
             ]).map((col) => {
               const items = upcomingQueue[col.key];
+              const isCollapsible = col.key === 'upcoming' || col.key === 'overdue';
+              const isCollapsed = isCollapsible && collapsedQueueSections[col.key];
+              const header = (
+                <>
+                  <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${col.badge} px-2 py-1 rounded-full`}>
+                    {col.icon} {col.label}
+                  </span>
+                  <span className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs font-semibold text-muted-foreground tabular-nums">{items.length}</span>
+                    {isCollapsible && (
+                      <ChevronDown className={`md:hidden w-4 h-4 text-muted-foreground transition-transform duration-200 ${isCollapsed ? '' : 'rotate-180'}`} />
+                    )}
+                  </span>
+                </>
+              );
               return (
                 <div key={col.key} className={`rounded-xl border ${col.accent} p-3 flex flex-col`}>
-                  <div className="flex items-center justify-between mb-2.5 px-0.5">
-                    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${col.badge} px-2 py-1 rounded-full`}>
-                      {col.icon} {col.label}
-                    </span>
-                    <span className="text-xs font-semibold text-muted-foreground tabular-nums">{items.length}</span>
-                  </div>
+                  {isCollapsible ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleQueueSection(col.key)}
+                      aria-expanded={!isCollapsed}
+                      aria-controls={`followup-queue-${col.key}`}
+                      className="md:pointer-events-none flex items-center justify-between w-full mb-2.5 px-0.5 -mx-0.5 py-0.5 rounded-lg text-left active:bg-black/[0.03]"
+                    >
+                      {header}
+                    </button>
+                  ) : (
+                    <div className="flex items-center justify-between mb-2.5 px-0.5">
+                      {header}
+                    </div>
+                  )}
                   {items.length === 0 ? (
-                    <div className="flex-1 flex items-center justify-center py-6 text-xs text-muted-foreground">
-                      Nothing here
+                    <div id={`followup-queue-${col.key}`} className={`${isCollapsed ? 'hidden md:flex' : 'flex'} flex-1 items-center justify-center py-6 text-xs text-muted-foreground`}>
+                      {t('followups.nothingHere')}
                     </div>
                   ) : (
-                    <div className="space-y-1 max-h-[280px] overflow-y-auto pr-0.5">
+                    <div id={`followup-queue-${col.key}`} className={`${isCollapsed ? 'hidden md:block' : ''} space-y-1 max-h-[280px] overflow-y-auto pr-0.5`}>
                       {items.map((lead) => (
                         <button
                           type="button"
@@ -584,11 +633,14 @@ export default function FollowUps() {
                             </p>
                           </div>
                           {lead.lead_grade ? (
-                            <LeadLevelBadge grade={lead.lead_grade} />
+                            <>
+                              <LeadLevelBadge grade={lead.lead_grade} compact className="md:hidden" />
+                              <LeadLevelBadge grade={lead.lead_grade} className="hidden md:inline-flex" />
+                            </>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-muted text-muted-foreground border-border shrink-0">
                               <span className="w-3.5 h-3.5 rounded-full bg-muted-foreground/30 flex items-center justify-center text-white text-[8px] font-extrabold">–</span>
-                              Ungraded
+                              {t('followups.ungraded')}
                             </span>
                           )}
                         </button>
@@ -603,29 +655,29 @@ export default function FollowUps() {
       </Card>
 
       {/* Summary */}
-      <div className="flex md:grid md:grid-cols-4 gap-3 overflow-x-auto md:overflow-visible pb-1 md:pb-0 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
-        <Card className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[130px] md:min-w-0 snap-start flex-1">
-          <CardContent className="p-3.5 flex items-center gap-2.5">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 sm:gap-3">
+        <Card className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0">
+          <CardContent className="p-3 md:p-3.5 flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center shrink-0"><Users className="w-4 h-4 text-primary" /></div>
-            <div><p className="text-lg font-bold text-foreground leading-tight">{summary.total}</p><p className="text-[11px] text-muted-foreground">Followed-up Leads</p></div>
+            <div className="min-w-0"><p className="text-lg font-bold text-foreground leading-tight">{summary.total}</p><p className="text-[11px] text-muted-foreground truncate">{t('followups.followedUpLeads')}</p></div>
           </CardContent>
         </Card>
-        <Card className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[110px] md:min-w-0 snap-start flex-1">
-          <CardContent className="p-3.5 flex items-center gap-2.5">
+        <Card className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0">
+          <CardContent className="p-3 md:p-3.5 flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-destructive/15 to-destructive/5 flex items-center justify-center shrink-0 text-destructive font-bold text-xs">A</div>
-            <div><p className="text-lg font-bold text-foreground leading-tight">{summary.gradeA}</p><p className="text-[11px] text-muted-foreground">Grade A</p></div>
+            <div className="min-w-0"><p className="text-lg font-bold text-foreground leading-tight">{summary.gradeA}</p><p className="text-[11px] text-muted-foreground truncate">{t('leads.filter.gradePrefix')} A</p></div>
           </CardContent>
         </Card>
-        <Card className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[110px] md:min-w-0 snap-start flex-1">
-          <CardContent className="p-3.5 flex items-center gap-2.5">
+        <Card className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0">
+          <CardContent className="p-3 md:p-3.5 flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-warning/15 to-warning/5 flex items-center justify-center shrink-0 text-warning font-bold text-xs">B</div>
-            <div><p className="text-lg font-bold text-foreground leading-tight">{summary.gradeB}</p><p className="text-[11px] text-muted-foreground">Grade B</p></div>
+            <div className="min-w-0"><p className="text-lg font-bold text-foreground leading-tight">{summary.gradeB}</p><p className="text-[11px] text-muted-foreground truncate">{t('leads.filter.gradePrefix')} B</p></div>
           </CardContent>
         </Card>
-        <Card className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 min-w-[110px] md:min-w-0 snap-start flex-1">
-          <CardContent className="p-3.5 flex items-center gap-2.5">
+        <Card className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0">
+          <CardContent className="p-3 md:p-3.5 flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-muted to-muted/40 flex items-center justify-center shrink-0 text-muted-foreground font-bold text-xs">C</div>
-            <div><p className="text-lg font-bold text-foreground leading-tight">{summary.gradeC}</p><p className="text-[11px] text-muted-foreground">Grade C</p></div>
+            <div className="min-w-0"><p className="text-lg font-bold text-foreground leading-tight">{summary.gradeC}</p><p className="text-[11px] text-muted-foreground truncate">{t('leads.filter.gradePrefix')} C</p></div>
           </CardContent>
         </Card>
       </div>
@@ -641,28 +693,28 @@ export default function FollowUps() {
             <div className="flex flex-wrap items-center gap-2.5">
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input placeholder="Search by customer, phone, or sales person…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 h-11 rounded-lg bg-muted/40 border-transparent focus-visible:bg-card focus-visible:border-input transition-colors" />
+                <Input placeholder={t('followups.searchPlaceholder')} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 h-11 rounded-lg bg-muted/40 border-transparent focus-visible:bg-card focus-visible:border-input transition-colors" />
               </div>
 
               {/* Desktop/tablet: compact always-visible Sort + Date, plus a
                   single Filters popover for the remaining category filters. */}
               <div className="hidden md:flex items-center gap-2 shrink-0">
                 <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
-                  <SelectTrigger className="w-[150px] h-11 rounded-lg bg-muted/40 border-transparent"><ArrowUpDown className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder="Sort" /></SelectTrigger>
+                  <SelectTrigger className="w-[150px] h-11 rounded-lg bg-muted/40 border-transparent"><ArrowUpDown className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder={t('leads.sortPlaceholder')} /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="newest">Newest first</SelectItem>
-                    <SelectItem value="oldest">Oldest first</SelectItem>
-                    <SelectItem value="name">Name (A–Z)</SelectItem>
-                    <SelectItem value="grade">Grade (A–C)</SelectItem>
+                    <SelectItem value="newest">{t('leads.sort.newest')}</SelectItem>
+                    <SelectItem value="oldest">{t('leads.sort.oldest')}</SelectItem>
+                    <SelectItem value="name">{t('leads.sort.name')}</SelectItem>
+                    <SelectItem value="grade">{t('leads.sort.grade')}</SelectItem>
                   </SelectContent>
                 </Select>
                 <div className="flex items-center gap-0.5 rounded-lg bg-muted/40 p-1 shrink-0">
-                  <Button variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label="Previous day" onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}>
+                  <Button variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label={t('leads.previousDay')} onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}>
                     <ChevronLeft className="w-4 h-4" />
                   </Button>
                   <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="h-9 w-[130px] text-sm border-0 bg-transparent shadow-none focus-visible:ring-0" />
                   <Button
-                    variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label="Next day"
+                    variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label={t('leads.nextDay')}
                     disabled={(dateFilter || todayStr()) >= todayStr()}
                     onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
                   >
@@ -671,7 +723,7 @@ export default function FollowUps() {
                 </div>
                 {dateFilter && (
                   <Button variant="ghost" className="h-9 px-2.5 text-xs font-medium text-primary" onClick={() => setDateFilter('')}>
-                    All dates
+                    {t('leads.allDates')}
                   </Button>
                 )}
                 <Popover>
@@ -681,7 +733,7 @@ export default function FollowUps() {
                       className="flex items-center gap-1.5 px-3.5 h-11 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
                     >
                       <SlidersHorizontal className="w-4 h-4" />
-                      Filters
+                      {t('leads.filters')}
                       {(deptFilter !== 'all' || statusFilter !== 'all' || projectFilters.length > 0 || teamFilter !== 'all' || agentFilter !== 'all') && (
                         <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
                           {[deptFilter, statusFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0)}
@@ -713,7 +765,7 @@ export default function FollowUps() {
                     className="md:hidden flex items-center gap-1.5 px-3.5 h-11 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
                   >
                     <SlidersHorizontal className="w-4 h-4" />
-                    <span className="hidden sm:inline">Filters</span>
+                    <span className="hidden sm:inline">{t('leads.filters')}</span>
                     {(deptFilter !== 'all' || statusFilter !== 'all' || projectFilters.length > 0 || teamFilter !== 'all' || agentFilter !== 'all' || dateFilter) && (
                       <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
                         {[deptFilter, statusFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0) + (dateFilter ? 1 : 0)}
@@ -724,7 +776,7 @@ export default function FollowUps() {
                 <SheetContent side="bottom" className="rounded-t-2xl border-t border-border px-6 pt-6 pb-8 max-h-[85dvh] overflow-y-auto">
                   <SheetHeader className="pb-4">
                     <SheetTitle className="flex items-center gap-2 text-base font-semibold">
-                      <Filter className="w-4 h-4 text-primary" /> Search / Filter
+                      <Filter className="w-4 h-4 text-primary" /> {t('leads.searchFilterSheetTitle')}
                     </SheetTitle>
                   </SheetHeader>
                   <div className="space-y-5">
@@ -741,7 +793,7 @@ export default function FollowUps() {
                     />
                     <SheetClose asChild>
                       <button type="button" className="w-full h-12 text-sm font-medium transition-colors rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80">
-                        Done
+                        {t('common.done')}
                       </button>
                     </SheetClose>
                   </div>
@@ -752,7 +804,7 @@ export default function FollowUps() {
             <div className="flex flex-wrap gap-2">
               {[
                 ['dept', deptFilter, setDeptFilter, deptFilter !== 'all' ? getDepartmentLabel(deptFilter) : ''],
-                ['status', statusFilter, setStatusFilter, statusFilter !== 'all' ? followUpStatusLabel(statusFilter) : ''],
+                ['status', statusFilter, setStatusFilter, statusFilter !== 'all' ? followUpStatusLabel(statusFilter, lang) : ''],
                 ['team', teamFilter, setTeamFilter, teamFilter !== 'all' ? (teamOptions.find((tm) => tm.id === teamFilter)?.name || '') : ''],
                 ['agent', agentFilter, setAgentFilter, agentFilter],
               ].map(([key, value, setter, label]) =>
@@ -798,7 +850,7 @@ export default function FollowUps() {
         <CardHeader className="px-6 py-4 border-b border-border/40 bg-muted/10">
           <CardTitle className="text-sm font-semibold flex items-center gap-2 text-foreground/90">
             <ListChecks className="w-4 h-4 text-muted-foreground/80" />
-            Leads
+            {t('nav.leads')}
             <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2 py-0.5 rounded-full ml-1 tabular-nums">{filteredRows.length}</span>
           </CardTitle>
         </CardHeader>
@@ -806,7 +858,7 @@ export default function FollowUps() {
           {filteredRows.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-56 text-muted-foreground bg-muted/5">
               <ListChecks className="w-9 h-9 mb-2 opacity-40" />
-              <p className="text-sm font-medium">No leads match your filters</p>
+              <p className="text-sm font-medium">{t('followups.noLeadsMatchFilters')}</p>
             </div>
           ) : (
             <>
@@ -815,14 +867,14 @@ export default function FollowUps() {
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent bg-muted/30">
-                      <TableHead className={`${TH_STYLE} pl-5`}>Customer</TableHead>
-                      <TableHead className={TH_STYLE}>Sales Person</TableHead>
-                      <TableHead className={TH_STYLE}>Last Update</TableHead>
-                      <TableHead className={TH_STYLE}>Location</TableHead>
-                      <TableHead className={TH_STYLE}>Budget</TableHead>
-                      <TableHead className={TH_STYLE}>Grade</TableHead>
-                      <TableHead className={TH_STYLE}>Enquiry</TableHead>
-                      <TableHead className={`${TH_STYLE} pr-5`}>Follow-up Status</TableHead>
+                      <TableHead className={`${TH_STYLE} pl-5`}>{t('leads.customer')}</TableHead>
+                      <TableHead className={TH_STYLE}>{t('leads.salesPerson')}</TableHead>
+                      <TableHead className={TH_STYLE}>{t('followups.lastUpdate')}</TableHead>
+                      <TableHead className={TH_STYLE}>{t('common.location')}</TableHead>
+                      <TableHead className={TH_STYLE}>{t('addLead.budget')}</TableHead>
+                      <TableHead className={TH_STYLE}>{t('addLead.grade')}</TableHead>
+                      <TableHead className={TH_STYLE}>{t('followups.enquiry')}</TableHead>
+                      <TableHead className={`${TH_STYLE} pr-5`}>{t('followups.followUpStatusCol')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -838,7 +890,7 @@ export default function FollowUps() {
                               </div>
                               <div className="min-w-0">
                                 <p className="text-sm font-medium text-foreground truncate max-w-[170px]">{row.name}</p>
-                                <p className="text-xs text-muted-foreground tabular-nums">{row.phone || 'No phone'}</p>
+                                <p className="text-xs text-muted-foreground tabular-nums">{row.phone || t('leads.noPhone')}</p>
                               </div>
                             </div>
                           </TableCell>
@@ -859,14 +911,14 @@ export default function FollowUps() {
                             {latest ? (
                               <div className="space-y-1">
                                 <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${STATUS_STYLE[latest.status] || 'bg-muted text-muted-foreground border-border'}`}>
-                                  {followUpStatusLabel(latest.status)}
+                                  {followUpStatusLabel(latest.status, lang)}
                                   {row.followUps.length > 1 && <span className="opacity-60">· {row.followUps.length}</span>}
                                 </span>
                                 {latest.notes && <p className="text-xs text-muted-foreground truncate" title={latest.notes}>{latest.notes}</p>}
                               </div>
                             ) : (
                               <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
-                                <HelpCircle className="w-3 h-3" /> No follow-up yet
+                                <HelpCircle className="w-3 h-3" /> {t('followups.noFollowUpYet')}
                               </span>
                             )}
                           </TableCell>
@@ -877,34 +929,56 @@ export default function FollowUps() {
                 </Table>
               </div>
 
-              {/* Mobile card list */}
+              {/* Mobile card list — same pattern as the Leads page: a
+                  colored left edge for at-a-glance status, avatar + name +
+                  status pill up top, one muted line for phone/location, and
+                  a compact chip row for grade/owner/history — instead of
+                  five stacked full-width lines. */}
               <div className="md:hidden divide-y divide-border">
                 {pagedRows.map((row) => {
                   const latest = row.followUps[0];
                   const date = latest?.created_at || row.created_at;
+                  const accent = latest ? STATUS_ACCENT[latest.status] || 'border-l-border' : 'border-l-border';
+                  const chipClass = 'inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border bg-muted/70 text-muted-foreground border-border shrink-0';
                   return (
-                    <div key={row.id} role="button" tabIndex={0} onClick={() => openLead(row)} onKeyDown={(e) => { if (e.key === 'Enter') openLead(row); }} className="w-full text-left p-4 hover:bg-muted/30 active:bg-muted/50 transition-colors space-y-2 cursor-pointer">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-semibold text-foreground truncate">{row.name}</span>
-                        <LeadLevelBadge grade={row.lead_grade} />
+                    <div
+                      key={row.id}
+                      role="button" tabIndex={0}
+                      onClick={() => openLead(row)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') openLead(row); }}
+                      className={`w-full flex items-center gap-3 py-3 pl-3 pr-4 border-l-4 ${accent} text-left cursor-pointer active:bg-muted/50 transition-colors`}
+                    >
+                      <div className="w-10 h-10 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
+                        {initialsOf(row.name)}
                       </div>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-                        <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{row.phone}</span>
-                        {row.owner_id ? <NameLink id={row.owner_id} name={nameOf(row.owner_id)} showAvatar={false} /> : <span className="flex items-center gap-1"><User className="w-3 h-3" />Unassigned</span>}
-                      </div>
-                      {row.current_location && <div className="flex items-center gap-1 text-xs text-muted-foreground"><MapPin className="w-3 h-3" />{row.current_location}</div>}
-                      <div className="flex items-center justify-between gap-2 pt-1">
-                        {latest ? (
-                          <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${STATUS_STYLE[latest.status] || 'bg-muted text-muted-foreground border-border'}`}>
-                            {followUpStatusLabel(latest.status)}
-                            {row.followUps.length > 1 && <span className="opacity-60">· {row.followUps.length}</span>}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
-                            <HelpCircle className="w-3 h-3" /> No follow-up yet
-                          </span>
-                        )}
-                        <span className="text-[11px] text-muted-foreground flex items-center gap-1"><Calendar className="w-3 h-3" />{new Date(date).toLocaleDateString()}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[15px] font-semibold text-foreground truncate">{row.name}</p>
+                          {latest ? (
+                            <span className={`shrink-0 inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border ${STATUS_STYLE[latest.status] || 'bg-muted text-muted-foreground border-border'}`}>
+                              {followUpStatusLabel(latest.status, lang)}
+                            </span>
+                          ) : (
+                            <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
+                              <HelpCircle className="w-2.5 h-2.5" /> {t('stage.new')}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[13px] text-muted-foreground truncate mt-0.5">
+                          {row.phone || t('leads.noPhone')}{row.current_location ? ` · ${row.current_location}` : ''}
+                        </p>
+                        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                          <LeadLevelBadge grade={row.lead_grade} compact />
+                          <span className={chipClass}><Calendar className="w-2.5 h-2.5" /> {new Date(date).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</span>
+                          {row.followUps.length > 1 && (
+                            <span className={chipClass}>{row.followUps.length} {t('followups.callsSuffix')}</span>
+                          )}
+                          {row.owner_id ? (
+                            <NameLink id={row.owner_id} name={nameOf(row.owner_id)} size="sm" showAvatar={false} className="text-[10px] text-muted-foreground" />
+                          ) : (
+                            <span className={chipClass}><User className="w-2.5 h-2.5" /> {t('followups.unassigned')}</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -917,29 +991,29 @@ export default function FollowUps() {
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 md:px-6 py-3.5 border-t border-border/60 bg-muted/5">
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 <span>
-                  Showing <span className="font-medium text-foreground tabular-nums">{(page - 1) * pageSize + 1}</span>
+                  {t('leads.showing')} <span className="font-medium text-foreground tabular-nums">{(page - 1) * pageSize + 1}</span>
                   –<span className="font-medium text-foreground tabular-nums">{Math.min(page * pageSize, sortedRows.length)}</span>
-                  {' '}of <span className="font-medium text-foreground tabular-nums">{sortedRows.length}</span>
+                  {' '}{t('leads.of')} <span className="font-medium text-foreground tabular-nums">{sortedRows.length}</span>
                 </span>
                 <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
                   <SelectTrigger className="h-8 w-[100px] text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {[10, 25, 50, 100].map((n) => (<SelectItem key={n} value={String(n)}>{n} / page</SelectItem>))}
+                    {[10, 25, 50, 100].map((n) => (<SelectItem key={n} value={String(n)}>{n} {t('leads.perPage')}</SelectItem>))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex items-center gap-1">
-                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage(1)} aria-label="First page">
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage(1)} aria-label={t('leads.firstPage')}>
                   <ChevronsLeft className="w-4 h-4" />
                 </Button>
-                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label={t('leads.previousPage')}>
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
-                <span className="px-2 text-xs font-medium text-foreground tabular-nums whitespace-nowrap">Page {page} of {totalPages}</span>
-                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
+                <span className="px-2 text-xs font-medium text-foreground tabular-nums whitespace-nowrap">{t('leads.pageOf')} {page} / {totalPages}</span>
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label={t('leads.nextPage')}>
                   <ChevronRight className="w-4 h-4" />
                 </Button>
-                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage(totalPages)} aria-label="Last page">
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage(totalPages)} aria-label={t('leads.lastPage')}>
                   <ChevronsRight className="w-4 h-4" />
                 </Button>
               </div>
@@ -956,43 +1030,43 @@ export default function FollowUps() {
                 <DialogTitle className="text-base font-semibold truncate pr-2">{activeLead.name}</DialogTitle>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
                   <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{activeLead.phone}</span>
-                  {activeLead.owner_id ? <NameLink id={activeLead.owner_id} name={nameOf(activeLead.owner_id)} showAvatar={false} /> : <span className="flex items-center gap-1"><User className="w-3 h-3" />Unassigned</span>}
+                  {activeLead.owner_id ? <NameLink id={activeLead.owner_id} name={nameOf(activeLead.owner_id)} showAvatar={false} /> : <span className="flex items-center gap-1"><User className="w-3 h-3" />{t('followups.unassigned')}</span>}
                   {activeLead.budget_range && <span className="flex items-center gap-1"><DollarSign className="w-3 h-3" />{activeLead.budget_range}</span>}
                 </div>
                 <button type="button" onClick={() => navigate(`/lead/${activeLead.id}`)} className="w-fit -ml-2 flex items-center gap-1 text-xs font-medium text-primary hover:bg-primary/10 rounded-md px-2 py-1 transition-colors">
-                  <Eye className="w-3.5 h-3.5" /> View full lead
+                  <Eye className="w-3.5 h-3.5" /> {t('followups.viewFullLead')}
                 </button>
               </DialogHeader>
 
               <div className="overflow-y-auto px-6 py-4 space-y-4 flex-1">
                 {canFollowUpActive && (
                   <div className="rounded-xl border border-border p-3 space-y-3 bg-muted/20">
-                    <p className="text-xs font-semibold text-foreground uppercase tracking-wide">Add Follow-up</p>
+                    <p className="text-xs font-semibold text-foreground uppercase tracking-wide">{t('followups.addFollowUp')}</p>
                     <div className="grid grid-cols-2 gap-2">
                       <Select value={formType} onValueChange={setFormType}>
                         <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
-                        <SelectContent>{FOLLOWUP_TYPES.map((t) => (<SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>))}</SelectContent>
+                        <SelectContent>{FOLLOWUP_TYPES.map((ft) => (<SelectItem key={ft.value} value={ft.value}>{followUpTypeLabel(ft.value, lang)}</SelectItem>))}</SelectContent>
                       </Select>
                       <Select value={formStatus} onValueChange={setFormStatus}>
                         <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
-                        <SelectContent>{FOLLOWUP_STATUSES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}</SelectContent>
+                        <SelectContent>{FOLLOWUP_STATUSES.map((s) => (<SelectItem key={s.value} value={s.value}>{followUpStatusLabel(s.value, lang)}</SelectItem>))}</SelectContent>
                       </Select>
                     </div>
-                    <Textarea placeholder="What happened? How did the customer respond?" value={formNotes} onChange={(e) => setFormNotes(e.target.value)} className="min-h-[70px]" />
+                    <Textarea placeholder={t('followups.notesPlaceholder')} value={formNotes} onChange={(e) => setFormNotes(e.target.value)} className="min-h-[70px]" />
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>This outcome will set the lead's grade to</span>
+                      <span>{t('followups.outcomeGradeSets')}</span>
                       <LeadLevelBadge grade={getGradeForFollowUpStatus(formStatus as FollowUpStatus)} />
                     </div>
                     <Button onClick={handleAddFollowUp} disabled={saving} className="w-full sm:w-auto gap-2">
-                      {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add Follow-up
+                      {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} {t('followups.addFollowUp')}
                     </Button>
                   </div>
                 )}
 
                 <div>
-                  <p className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">History ({activeLead.followUps.length})</p>
+                  <p className="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">{t('followups.history')} ({activeLead.followUps.length})</p>
                   {activeLead.followUps.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-6">No follow-ups recorded yet.</p>
+                    <p className="text-sm text-muted-foreground text-center py-6">{t('followups.noFollowUpsRecorded')}</p>
                   ) : (
                     <div className="space-y-3">
                       {activeLead.followUps.map((f) => (
@@ -1000,8 +1074,8 @@ export default function FollowUps() {
                           <div className="mt-0.5 w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0"><MessageSquare className="w-4 h-4 text-primary" /></div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-sm font-semibold text-foreground">{followUpTypeLabel(f.type)}</span>
-                              <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${STATUS_STYLE[f.status] || 'bg-muted text-muted-foreground border-border'}`}>{followUpStatusLabel(f.status)}</span>
+                              <span className="text-sm font-semibold text-foreground">{followUpTypeLabel(f.type, lang)}</span>
+                              <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${STATUS_STYLE[f.status] || 'bg-muted text-muted-foreground border-border'}`}>{followUpStatusLabel(f.status, lang)}</span>
                             </div>
                             {f.notes && <p className="text-sm text-muted-foreground mt-1">{f.notes}</p>}
                             <p className="text-xs text-muted-foreground mt-1">{new Date(f.created_at).toLocaleString()}</p>
@@ -1025,35 +1099,36 @@ function FollowUpFilterFields({
   teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter, sortBy, setSortBy,
   uniqueAgents, uniqueProjects, departments, teamOptions, showDept = true, showSortDate = true,
 }: any) {
+  const { t, lang } = useTranslation();
   return (
     <>
       {showDept && (
         <div className="space-y-2">
-          <label className="text-sm font-medium text-foreground">Department</label>
+          <label className="text-sm font-medium text-foreground">{t('leads.filter.department')}</label>
           <Select value={deptFilter} onValueChange={setDeptFilter}>
-            <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select department" /></SelectTrigger>
+            <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectDepartment')} /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All departments</SelectItem>
+              <SelectItem value="all">{t('leads.filter.allDepartments')}</SelectItem>
               {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
             </SelectContent>
           </Select>
         </div>
       )}
       <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Follow-up Status</label>
+        <label className="text-sm font-medium text-foreground">{t('followups.followUpStatusCol')}</label>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select status" /></SelectTrigger>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectStatus')} /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            {FOLLOWUP_STATUSES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
+            <SelectItem value="all">{t('leads.filter.allStatuses')}</SelectItem>
+            {FOLLOWUP_STATUSES.map((s) => (<SelectItem key={s.value} value={s.value}>{followUpStatusLabel(s.value, lang)}</SelectItem>))}
           </SelectContent>
         </Select>
       </div>
       <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Project</label>
+        <label className="text-sm font-medium text-foreground">{t('leads.filter.project')}</label>
         <div className="max-h-48 overflow-y-auto rounded-md border border-input divide-y divide-border">
           {uniqueProjects.length === 0 ? (
-            <p className="text-xs text-muted-foreground p-3">No projects yet</p>
+            <p className="text-xs text-muted-foreground p-3">{t('leads.filter.noProjectsYet')}</p>
           ) : (
             uniqueProjects.map((p: string) => (
               <label key={p} className="flex items-center gap-2.5 px-3 py-2.5 text-sm cursor-pointer">
@@ -1065,28 +1140,28 @@ function FollowUpFilterFields({
         </div>
         {projectFilters.length > 0 && (
           <button type="button" onClick={() => setProjectFilters([])} className="text-xs font-medium text-primary">
-            Clear projects
+            {t('leads.filter.clearProjects')}
           </button>
         )}
       </div>
       {teamOptions.length > 0 && (
         <div className="space-y-2">
-          <label className="text-sm font-medium text-foreground">Team</label>
+          <label className="text-sm font-medium text-foreground">{t('leads.filter.team')}</label>
           <Select value={teamFilter} onValueChange={setTeamFilter}>
-            <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select team" /></SelectTrigger>
+            <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectTeam')} /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All teams</SelectItem>
+              <SelectItem value="all">{t('leads.filter.allTeams')}</SelectItem>
               {teamOptions.map((tm: { id: string; name: string }) => (<SelectItem key={tm.id} value={tm.id}>{tm.name}</SelectItem>))}
             </SelectContent>
           </Select>
         </div>
       )}
       <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Sales Person</label>
+        <label className="text-sm font-medium text-foreground">{t('leads.filter.salesPerson')}</label>
         <Select value={agentFilter} onValueChange={setAgentFilter}>
-          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select sales person" /></SelectTrigger>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectSalesPerson')} /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All sales people</SelectItem>
+            <SelectItem value="all">{t('leads.filter.allSalesPeople')}</SelectItem>
             {uniqueAgents.map((a: string) => (<SelectItem key={a} value={a}>{a}</SelectItem>))}
           </SelectContent>
         </Select>
@@ -1094,29 +1169,29 @@ function FollowUpFilterFields({
       {showSortDate && (
         <>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Sort By</label>
+            <label className="text-sm font-medium text-foreground">{t('leads.filter.sortBy')}</label>
             <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger className="w-full h-12"><SelectValue placeholder="Sort" /></SelectTrigger>
+              <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.sortPlaceholder')} /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="newest">Newest first</SelectItem>
-                <SelectItem value="oldest">Oldest first</SelectItem>
-                <SelectItem value="name">Name (A–Z)</SelectItem>
-                <SelectItem value="grade">Grade (A–C)</SelectItem>
+                <SelectItem value="newest">{t('leads.sort.newest')}</SelectItem>
+                <SelectItem value="oldest">{t('leads.sort.oldest')}</SelectItem>
+                <SelectItem value="name">{t('leads.sort.name')}</SelectItem>
+                <SelectItem value="grade">{t('leads.sort.grade')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Date Added</label>
+            <label className="text-sm font-medium text-foreground">{t('leads.filter.dateAdded')}</label>
             <div className="flex items-center gap-1.5">
               <Button
-                type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Previous day"
+                type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label={t('leads.previousDay')}
                 onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
               >
                 <ChevronLeft className="w-4 h-4" />
               </Button>
               <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="w-full h-12 text-sm" />
               <Button
-                type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Next day"
+                type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label={t('leads.nextDay')}
                 disabled={(dateFilter || todayStr()) >= todayStr()}
                 onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
               >
@@ -1125,7 +1200,7 @@ function FollowUpFilterFields({
             </div>
             {dateFilter && (
               <button type="button" onClick={() => setDateFilter('')} className="text-xs font-medium text-primary">
-                Clear — show all dates
+                {t('leads.filter.clearShowAllDates')}
               </button>
             )}
           </div>

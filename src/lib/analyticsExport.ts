@@ -26,6 +26,11 @@ interface AnalyticsData {
   agentPerf: [string, { total: number; closed: number }][];
   monthlyTrend: [string, { new: number; closed: number }][];
   sourceRevenue: [string, number][];
+  /** Top interested-in projects — optional so older callers still compile. */
+  projectPerf?: [string, { total: number; closed: number }][];
+  /** Next-month projection from linear regression over recent months —
+   * a transparent statistical estimate, not a claim of AI/ML. */
+  forecast?: { nextMonthLeads: number; nextMonthSold: number; leadsGrowthPct: number };
 }
 
 function getReportDate(): string {
@@ -77,6 +82,28 @@ export function exportAnalyticsAsExcel(data: AnalyticsData) {
     ...data.sourceRevenue.map(([src, rev]) => [src, rev]),
   ]);
   XLSX.utils.book_append_sheet(wb, revSheet, 'Revenue by Source');
+
+  // Most Interested Projects
+  if (data.projectPerf && data.projectPerf.length > 0) {
+    const projectSheet = XLSX.utils.aoa_to_sheet([
+      ['Project', 'Interested Leads', 'Sold', 'Conversion Rate'],
+      ...data.projectPerf.map(([name, v]) => [
+        name, v.total, v.closed, v.total > 0 ? `${((v.closed / v.total) * 100).toFixed(1)}%` : '0%',
+      ]),
+    ]);
+    XLSX.utils.book_append_sheet(wb, projectSheet, 'Most Interested');
+  }
+
+  // Forecast
+  if (data.forecast) {
+    const forecastSheet = XLSX.utils.aoa_to_sheet([
+      ['Metric', 'Value'],
+      ['Projected Next-Month Leads', data.forecast.nextMonthLeads],
+      ['Projected Next-Month Sold', data.forecast.nextMonthSold],
+      ['Leads Growth vs Last Month', `${data.forecast.leadsGrowthPct >= 0 ? '+' : ''}${data.forecast.leadsGrowthPct}%`],
+    ]);
+    XLSX.utils.book_append_sheet(wb, forecastSheet, 'Forecast');
+  }
 
   const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -190,6 +217,45 @@ export function exportAnalyticsAsPDF(data: AnalyticsData) {
     margin: { left: 14, right: 14 },
   });
 
+  // Most Interested Projects
+  if (data.projectPerf && data.projectPerf.length > 0) {
+    if (startY > 240) { doc.addPage(); startY = 20; }
+    doc.setFontSize(12);
+    doc.setTextColor(30, 41, 59);
+    doc.text('Most Interested Projects', 14, startY);
+    autoTable(doc, {
+      startY: startY + 4,
+      head: [['Project', 'Interested Leads', 'Sold', 'Conversion']],
+      body: data.projectPerf.map(([name, v]) => [
+        name, String(v.total), String(v.closed), v.total > 0 ? `${((v.closed / v.total) * 100).toFixed(1)}%` : '0%',
+      ]),
+      theme: 'striped',
+      styles: { fontSize: 9, cellPadding: 2 },
+      headStyles: { fillColor: [4, 99, 202], textColor: [255, 255, 255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      margin: { left: 14, right: 14 },
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    startY = (doc as any).lastAutoTable?.finalY + 10 || startY + 30;
+  }
+
+  // Forecast
+  if (data.forecast) {
+    if (startY > 250) { doc.addPage(); startY = 20; }
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(14, startY, 182, 18, 3, 3, 'F');
+    doc.setFontSize(9);
+    doc.setTextColor(30, 41, 59);
+    doc.text(
+      `Forecast (next month): ~${data.forecast.nextMonthLeads} leads, ~${data.forecast.nextMonthSold} sold  ·  ` +
+      `${data.forecast.leadsGrowthPct >= 0 ? '+' : ''}${data.forecast.leadsGrowthPct}% vs last month`,
+      18, startY + 8
+    );
+    doc.setFontSize(7);
+    doc.setTextColor(120);
+    doc.text('Statistical projection from recent monthly trend — not a guarantee.', 18, startY + 14);
+  }
+
   // Footer page number
   const pageCount = (doc as any).internal.getNumberOfPages();
   for (let i = 1; i <= pageCount; i++) {
@@ -301,6 +367,30 @@ tr:hover td { background: #F8FAFC; }
       </tbody>
     </table>
   </div>
+
+  ${data.projectPerf && data.projectPerf.length > 0 ? `
+  <div class="section">
+    <h2>Most Interested Projects</h2>
+    <table>
+      <thead><tr><th>Project</th><th>Interested Leads</th><th>Sold</th><th>Conversion</th></tr></thead>
+      <tbody>
+        ${data.projectPerf.map(([name, v]) => {
+          const rate = v.total > 0 ? ((v.closed / v.total) * 100).toFixed(1) : '0.0';
+          return `<tr><td>${name}</td><td>${v.total}</td><td>${v.closed}</td><td>${rate}%</td></tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  </div>` : ''}
+
+  ${data.forecast ? `
+  <div class="section">
+    <h2>Forecast</h2>
+    <p style="font-size:13px;color:#334155;">
+      Projected next month: <strong>~${data.forecast.nextMonthLeads} leads</strong>, <strong>~${data.forecast.nextMonthSold} sold</strong>
+      &middot; ${data.forecast.leadsGrowthPct >= 0 ? '+' : ''}${data.forecast.leadsGrowthPct}% vs last month
+    </p>
+    <p style="font-size:11px;color:#94A3B8;margin-top:6px;">Statistical projection from the recent monthly trend — not a guarantee.</p>
+  </div>` : ''}
 
   <div class="footer">Exported from PSM Properties CRM &middot; Analytics Dashboard</div>
 </div>

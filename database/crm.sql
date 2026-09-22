@@ -1149,6 +1149,11 @@ create policy followups_select on public.follow_ups for select
     )
   );
 
+-- Manager gets no team-wide clause here (unlike follow_ups_select above,
+-- which allows manager_scoped_lead()) — a manager can only add/edit a
+-- follow-up via owns_lead() below, i.e. only on a lead they personally own.
+-- Otherwise view only (FRD: Follow-up = "View Only" for Manager), same as
+-- exec/admin/the owning salesperson.
 drop policy if exists followups_insert on public.follow_ups;
 create policy followups_insert on public.follow_ups for insert
   to authenticated with check (
@@ -1157,9 +1162,6 @@ create policy followups_insert on public.follow_ups for insert
     or public.owns_lead(lead_id)
   );
 
--- Managers are deliberately excluded from insert/update (FRD: Follow-up =
--- "View Only" for Manager) — only exec, the department's Admin, or the
--- owning salesperson may add/edit follow-up records.
 drop policy if exists followups_update on public.follow_ups;
 create policy followups_update on public.follow_ups for update
   to authenticated using (
@@ -1318,9 +1320,11 @@ create policy checkin_photos_insert on storage.objects for insert
   );
 
 -- Profile photos — same shape as checkin-photos above: public bucket
--- (viewable via its unguessable URL), but only the owning user can upload
--- into their own folder. profiles.avatar_url points at whatever the latest
--- upload's public URL is.
+-- (viewable via its unguessable URL). The owning user can upload into
+-- their own folder, and exec roles (boss/super_admin) can additionally
+-- upload into anyone's folder, mirroring the profiles_update RLS policy
+-- so a superadmin can set a sales person's profile picture for them.
+-- profiles.avatar_url points at whatever the latest upload's public URL is.
 insert into storage.buckets (id, name, public)
 values ('avatars', 'avatars', true)
 on conflict (id) do update set public = true;
@@ -1329,7 +1333,7 @@ drop policy if exists avatar_photos_insert on storage.objects;
 create policy avatar_photos_insert on storage.objects for insert
   to authenticated with check (
     bucket_id = 'avatars'
-    and (storage.foldername(name))[1] = auth.uid()::text
+    and ((storage.foldername(name))[1] = auth.uid()::text or public.is_exec())
   );
 
 -- Lead evidence photos (site visit / appointment) — public bucket, viewable

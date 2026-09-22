@@ -381,13 +381,10 @@ export default function PsmMapCanvas() {
       style: MAP_STYLE,
       center: INITIAL_CENTER,
       zoom: INITIAL_ZOOM,
-      // Disabling the auto-added default so it can be explicitly placed
-      // at bottom-right below, alongside the zoom control.
+      // No attribution control at all, per request — just the auto-added
+      // default disabled, with nothing put back in its place.
       attributionControl: false,
     });
-    // Added in this order so the zoom +/- stacks directly above the ⓘ
-    // attribution icon, both in the bottom-right corner.
-    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
     mapRef.current = map;
 
@@ -713,8 +710,8 @@ export default function PsmMapCanvas() {
   return (
     <div className="relative h-full w-full">
       {/* MapLibre's default bottom-right control margin, raised further
-          per request — lifts the zoom +/- and ⓘ attribution stack off the
-          bottom edge (10px, then another 20px on top of that = 30px). */}
+          per request — lifts the zoom +/- control off the bottom edge
+          (10px, then another 20px on top of that = 30px). */}
       <style>{`.maplibregl-ctrl-bottom-right { margin-bottom: 30px; }`}</style>
       <div ref={containerRef} className="h-full w-full" />
 

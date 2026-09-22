@@ -2,7 +2,7 @@ import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import svgr from "vite-plugin-svgr";
 import path from "path";
-import { existsSync, copyFileSync, mkdirSync } from "fs";
+import { existsSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { fileURLToPath } from "url";
 
 // maplibre-gl doesn't bundle its Web Worker the normal way (new Worker(new
@@ -41,6 +41,41 @@ function copyMapLibreWorker(): Plugin {
   };
 }
 
+// public/sw.js's CACHE_VERSION used to be a hand-edited literal ('v106') —
+// easy to forget bumping on a deploy that only touches app code, and the
+// consequence wasn't a build warning, it was silent: the browser compares
+// the service worker script byte-for-byte, so an unbumped sw.js looks
+// identical to the one already installed, `updatefound` never fires, and
+// UpdatePrompt (src/components/UpdatePrompt.tsx) never has anything to show
+// — users keep running the old bundle indefinitely with no prompt to
+// refresh. Stamping a fresh value into dist/sw.js on every production build
+// guarantees the script's bytes differ from whatever's currently installed,
+// so the update-available flow fires on every single deploy, not just the
+// ones where someone remembered the manual step.
+function stampServiceWorkerVersion(): Plugin {
+  return {
+    name: "stamp-service-worker-version",
+    apply: "build",
+    closeBundle() {
+      const swPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "dist", "sw.js");
+      if (!existsSync(swPath)) {
+        this.warn("dist/sw.js not found — did public/sw.js get removed?");
+        return;
+      }
+      const buildId = Date.now().toString(36);
+      const source = readFileSync(swPath, "utf8");
+      const stamped = source.replace(
+        /const CACHE_VERSION = '[^']*';/,
+        `const CACHE_VERSION = '${buildId}';`
+      );
+      if (stamped === source) {
+        this.warn("Could not find CACHE_VERSION in dist/sw.js to stamp — pattern may have changed.");
+      }
+      writeFileSync(swPath, stamped);
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     react(),
@@ -52,6 +87,7 @@ export default defineConfig({
       },
     }),
     copyMapLibreWorker(),
+    stampServiceWorkerVersion(),
   ],
   resolve: {
     alias: {

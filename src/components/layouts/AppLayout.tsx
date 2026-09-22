@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
@@ -7,6 +8,7 @@ import { usePageHeaderValue } from '@/contexts/PageHeaderContext';
 import { canAccessRoute, getRoleLabel, getDepartmentLabel, type RouteKey } from '@/lib/permissions';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
 import SystemBanner from '@/components/SystemBanner';
+import StorageImage from '@/components/StorageImage';
 import {
   LayoutDashboard, UserPlus, Users, LogOut, Menu, Bell, Shield,
   CalendarDays, BarChart3, Plus, Home,
@@ -15,11 +17,13 @@ import {
   Activity as ActivityIcon,
   UsersRound,
   Map as MapIcon,
+  Sun, Moon, ChevronDown, UserCircle,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import PsmMapFrame from '@/components/PsmMapFrame';
 
 interface NavItem {
@@ -30,11 +34,20 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
 }
 
+/** Rendered on its own above the grouped sections, not inside
+ * "Core Operations" — every authenticated tier lands here first. */
+const DASHBOARD_NAV_ITEM: NavItem = { tKey: 'nav.dashboard', path: '/dashboard', routeKey: 'dashboard', icon: LayoutDashboard };
+
+/** Rendered on its own below the grouped sections — every role can reach
+ * their own profile/preferences here, so it doesn't belong inside the
+ * exec-only "Administration" section (which would hide it under a heading
+ * that reads oddly for non-exec roles). */
+const SETTINGS_NAV_ITEM: NavItem = { tKey: 'nav.settings', path: '/settings', routeKey: 'settings', icon: SettingsIcon };
+
 const NAV_SECTIONS: { tKey: string; items: NavItem[] }[] = [
   {
     tKey: 'nav.section.core',
     items: [
-      { tKey: 'nav.dashboard', path: '/dashboard', routeKey: 'dashboard', icon: LayoutDashboard },
       { tKey: 'nav.addLead', path: '/add-lead', routeKey: 'add-lead', icon: UserPlus },
       { tKey: 'nav.leads', path: '/leads', routeKey: 'leads', icon: Users },
       { tKey: 'nav.followUps', path: '/follow-ups', routeKey: 'follow-ups', icon: ListChecks },
@@ -52,12 +65,14 @@ const NAV_SECTIONS: { tKey: string; items: NavItem[] }[] = [
     ],
   },
   {
+    // Notifications stay out of the sidebar — it lives in the top bar's
+    // bell popover instead, so this section stays focused on exec-only
+    // tools. Settings has its own standalone entry below (every role can
+    // reach it, so it doesn't belong under this exec-only heading).
     tKey: 'nav.section.admin',
     items: [
       { tKey: 'nav.roles', path: '/role-management', routeKey: 'role-management', icon: Shield },
       { tKey: 'nav.analytics', path: '/analytics', routeKey: 'analytics', icon: AnalyticsIcon },
-      { tKey: 'nav.notifications', path: '/notifications', routeKey: 'notifications', icon: Bell },
-      { tKey: 'nav.settings', path: '/settings', routeKey: 'settings', icon: SettingsIcon },
     ],
   },
 ];
@@ -101,7 +116,7 @@ function NotificationItem({ n, onClick }: { n: Notification; onClick: () => void
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, role, department, logout } = useAuth();
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   const { notifications, unreadCount, markAllAsRead } = useNotifications();
   const { canInstall, promptInstall } = usePwaInstall();
   const pageHeader = usePageHeaderValue();
@@ -118,6 +133,46 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   };
   const [notifOpenMobile, setNotifOpenMobile] = useState(false);
   const [notifOpenDesktop, setNotifOpenDesktop] = useState(false);
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
+  const toggleTheme = () => {
+    setIsDark((prev) => {
+      const next = !prev;
+      document.documentElement.classList.toggle('dark', next);
+      localStorage.setItem('theme', next ? 'dark' : 'light');
+      return next;
+    });
+  };
+
+  const renderNavLink = (item: NavItem) => {
+    const isActive = location.pathname === item.path;
+    const Icon = item.icon;
+    return (
+      <Link
+        key={item.path}
+        to={item.path}
+        onClick={() => setMobileOpen(false)}
+        className={`group relative flex items-center gap-3 pl-3 pr-3.5 py-2 rounded-lg text-sm font-medium transition-all duration-200 min-h-11 ${
+          isActive
+            ? 'bg-gradient-to-r from-primary/15 to-primary/[0.02] text-sidebar-foreground'
+            : 'text-sidebar-foreground/65 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground hover:translate-x-0.5'
+        }`}
+      >
+        {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-primary" aria-hidden="true" />}
+        <div className={`relative shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors duration-200 ${isActive ? 'bg-primary/15' : 'group-hover:bg-sidebar-accent'}`}>
+          <Icon
+            className={`w-[18px] h-[18px] transition-colors duration-150 ${isActive ? 'text-primary' : 'text-sidebar-foreground/50 group-hover:text-sidebar-foreground/80'}`}
+            strokeWidth={isActive ? 2.25 : 2}
+          />
+          {item.path === '/notifications' && unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-sidebar-background">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
+        </div>
+        <span className="truncate">{t(item.tKey)}</span>
+      </Link>
+    );
+  };
 
   const visibleSections = NAV_SECTIONS.map((section) => ({
     ...section,
@@ -170,50 +225,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           on iOS — without reserving space for the notch/Dynamic Island, its
           content just sits at the true top of the screen and gets covered.
           A no-op on desktop/non-notched devices (pt-safe floors at 0.5rem). */}
-      <div className="flex items-center gap-3 px-5 min-h-16 pt-safe border-b border-sidebar-border shrink-0 relative">
-        <img src="/logo.png" alt="PSM Properties" className="h-10 w-auto dark:hidden" draggable={false} />
-        <img src="/logo-dark.png" alt="PSM Properties" className="h-10 w-auto hidden dark:block" draggable={false} />
+      <div className="flex flex-col items-start gap-0.5 px-5 min-h-16 pt-safe justify-center border-b border-sidebar-border shrink-0 relative">
+        <img src="/logo.png" alt="PSM Properties" className="h-9 w-auto shrink-0 dark:hidden" draggable={false} />
+        <img src="/logo-dark.png" alt="PSM Properties" className="h-9 w-auto shrink-0 hidden dark:block" draggable={false} />
+        <p className="w-full text-[10.5px] text-sidebar-foreground/45 font-medium tracking-wide truncate">{t('app.tagline')}</p>
       </div>
 
       <ScrollArea className="flex-1 min-h-0 px-3 py-5 relative">
         <div className="space-y-7 pb-4">
+          <div className="space-y-0.5">{renderNavLink(DASHBOARD_NAV_ITEM)}</div>
           {visibleSections.map((section) => (
             <div key={section.tKey}>
               <p className="px-4 text-[10px] font-semibold text-sidebar-foreground/40 uppercase tracking-widest mb-2.5">{t(section.tKey)}</p>
-              <div className="space-y-0.5">
-                {section.items.map((item) => {
-                  const isActive = location.pathname === item.path;
-                  const Icon = item.icon;
-                  return (
-                    <Link
-                      key={item.path}
-                      to={item.path}
-                      onClick={() => setMobileOpen(false)}
-                      className={`group relative flex items-center gap-3 pl-3 pr-3.5 py-2 rounded-lg text-sm font-medium transition-all duration-200 min-h-11 ${
-                        isActive
-                          ? 'bg-gradient-to-r from-primary/15 to-primary/[0.02] text-sidebar-foreground'
-                          : 'text-sidebar-foreground/65 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground hover:translate-x-0.5'
-                      }`}
-                    >
-                      {isActive && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-primary" aria-hidden="true" />}
-                      <div className={`relative shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors duration-200 ${isActive ? 'bg-primary/15' : 'group-hover:bg-sidebar-accent'}`}>
-                        <Icon
-                          className={`w-[18px] h-[18px] transition-colors duration-150 ${isActive ? 'text-primary' : 'text-sidebar-foreground/50 group-hover:text-sidebar-foreground/80'}`}
-                          strokeWidth={isActive ? 2.25 : 2}
-                        />
-                        {item.path === '/notifications' && unreadCount > 0 && (
-                          <span className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-sidebar-background">
-                            {unreadCount > 9 ? '9+' : unreadCount}
-                          </span>
-                        )}
-                      </div>
-                      <span className="truncate">{t(item.tKey)}</span>
-                    </Link>
-                  );
-                })}
-              </div>
+              <div className="space-y-0.5">{section.items.map((item) => renderNavLink(item))}</div>
             </div>
           ))}
+          <div className="space-y-0.5">{renderNavLink(SETTINGS_NAV_ITEM)}</div>
         </div>
       </ScrollArea>
 
@@ -221,7 +248,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="rounded-xl bg-sidebar-accent/40 p-1.5 space-y-1">
           {(() => {
             const avatar = user?.avatar_url ? (
-              <img src={user.avatar_url} alt={user.name} className="w-10 h-10 rounded-full object-cover shrink-0 ring-2 ring-sidebar-border" />
+              <StorageImage src={user.avatar_url} alt={user.name} className="w-10 h-10 rounded-full object-cover shrink-0 ring-2 ring-sidebar-border" />
             ) : (
               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary/25 to-primary/5 text-sidebar-foreground text-sm font-semibold flex items-center justify-center shrink-0 ring-2 ring-sidebar-border">
                 {user ? initialsOf(user.name) : ''}
@@ -230,7 +257,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             const details = (
               <div className="min-w-0 flex-1 text-left">
                 <p className="text-sidebar-foreground text-sm font-semibold truncate leading-snug">{user?.name}</p>
-                {role && <p className="text-sidebar-foreground/50 text-xs truncate leading-snug mt-0.5">{department ? `${getDepartmentLabel(department)} · ` : ''}{getRoleLabel(role)}</p>}
+                {role && <p className="text-sidebar-foreground/50 text-xs truncate leading-snug mt-0.5">{department ? `${getDepartmentLabel(department)} · ` : ''}{getRoleLabel(role, lang)}</p>}
               </div>
             );
             return user?.id ? (
@@ -304,6 +331,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <Download className="w-5 h-5" />
               </Button>
             )}
+            <Button variant="ghost" size="icon" className="h-10 w-10 text-muted-foreground hover:text-foreground rounded-lg" onClick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
+              {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </Button>
             <Popover open={notifOpenMobile} onOpenChange={setNotifOpenMobile}>
               <PopoverTrigger asChild>
                 <Button variant="ghost" size="icon" className="relative h-10 w-10 text-muted-foreground hover:text-foreground rounded-lg" onClick={() => handleOpenNotifs(setNotifOpenMobile)}>
@@ -336,7 +366,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             >
               <Menu className="w-[18px] h-[18px]" />
             </Button>
-            {pageHeader && (
+            {pageHeader && location.pathname !== '/dashboard' && (
               <>
                 <span className="w-px h-6 bg-border shrink-0" aria-hidden="true" />
                 <div className="min-w-0">
@@ -346,12 +376,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               </>
             )}
           </div>
+
           <div className="flex items-center gap-1.5 shrink-0">
           {canInstall && (
             <Button variant="outline" size="sm" className="h-9 gap-2 text-primary border-primary/25 hover:bg-primary/5 hover:border-primary/40 rounded-lg font-medium" onClick={promptInstall}>
               <Download className="w-3.5 h-3.5" /> Install App
             </Button>
           )}
+          <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground rounded-lg" onClick={toggleTheme} aria-label="Toggle theme" title="Toggle theme">
+            {isDark ? <Sun className="w-[18px] h-[18px]" /> : <Moon className="w-[18px] h-[18px]" />}
+          </Button>
           <Popover open={notifOpenDesktop} onOpenChange={setNotifOpenDesktop}>
             <PopoverTrigger asChild>
               <Button variant="ghost" size="icon" className="relative h-9 w-9 text-muted-foreground hover:text-foreground rounded-lg" onClick={() => handleOpenNotifs(setNotifOpenDesktop)}>
@@ -361,6 +395,39 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </PopoverTrigger>
             <PopoverContent className="w-auto p-3" align="end">{renderNotifDropdown(setNotifOpenDesktop)}</PopoverContent>
           </Popover>
+          <span className="w-px h-6 bg-border shrink-0 mx-0.5" aria-hidden="true" />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-lg hover:bg-muted/60 transition-colors">
+                {user?.avatar_url ? (
+                  <StorageImage src={user.avatar_url} alt={user.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary/25 to-primary/5 text-foreground text-xs font-semibold flex items-center justify-center shrink-0">
+                    {user ? initialsOf(user.name) : ''}
+                  </div>
+                )}
+                <div className="hidden xl:block min-w-0 text-left">
+                  <p className="text-sm font-semibold text-foreground truncate leading-tight max-w-[10rem]">{user?.name}</p>
+                  {role && <p className="text-[11px] text-muted-foreground truncate leading-tight">{getRoleLabel(role, lang)}</p>}
+                </div>
+                <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52 rounded-xl shadow-lg border-border p-1">
+              {user?.id && (
+                <DropdownMenuItem className="gap-2.5 rounded-lg px-3 py-2.5 text-sm cursor-pointer" onClick={() => navigate(`/profile/${user.id}`)}>
+                  <UserCircle className="w-4 h-4 shrink-0" /> {t('nav.profile')}
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem className="gap-2.5 rounded-lg px-3 py-2.5 text-sm cursor-pointer" onClick={() => navigate('/settings')}>
+                <SettingsIcon className="w-4 h-4 shrink-0" /> {t('nav.settings')}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="gap-2.5 rounded-lg px-3 py-2.5 text-sm cursor-pointer text-destructive focus:text-destructive" onClick={handleLogout}>
+                <LogOut className="w-4 h-4 shrink-0" /> {t('nav.logout')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           </div>
         </header>
 
@@ -377,31 +444,61 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </div>
 
-      {/* Mobile-only bottom tab bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-lg border-t border-border" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 8px)' }}>
-        <div className="flex items-center justify-around px-2 pt-1">
+      {/* Mobile-only bottom nav — a Material-3-style floating bar: every tab
+          keeps its label visible (not just the active one), the active
+          icon sits inside a soft brand-colored pill that's a single shared
+          element (motion's layoutId) so it slides between tabs instead of
+          popping in fresh each time, and Add is a raised gold FAB that
+          pops up out of the bar's own surface rather than living beside
+          or being notched into it. */}
+      <nav
+        className="md:hidden fixed bottom-0 left-0 right-0 z-50 px-3"
+        style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 10px)' }}
+      >
+        <div className="relative flex items-stretch justify-between bg-card/95 backdrop-blur-xl border border-border/60 rounded-[28px] shadow-elevated px-1.5 pt-2 pb-1.5">
           {TAB_ITEMS.map((item) => {
-            const isActive = location.pathname === item.path;
-            const Icon = item.icon;
-
             if (item.isFab) {
-              // Plus button goes straight to Add Lead — no choice popup.
+              const FabIcon = item.icon;
               return (
-                <Link key={item.path} to={item.path} className="relative -mt-6">
-                  <div className="w-14 h-14 rounded-full flex items-center justify-center shadow-elevated transition-all duration-200 active:scale-90 bg-gradient-to-br from-primary to-primary/80 text-primary-foreground">
-                    <Plus className="w-6 h-6" strokeWidth={2.5} />
-                  </div>
-                </Link>
+                <div key={item.path} className="flex-1 flex justify-center">
+                  <Link
+                    to={item.path}
+                    aria-label={t(item.tKey)}
+                    className="group relative -mt-7 w-14 h-14 rounded-full flex items-center justify-center bg-[#0A243E] shadow-elevated ring-[5px] ring-background transition-transform duration-200 ease-out active:scale-90"
+                  >
+                    {/* Rotating a 4-way-symmetric "+" by 90° is invisible (it
+                        looks identical to unrotated), so the tap feedback here
+                        is a squish instead: the icon visibly shrinks on press
+                        then springs back on release. */}
+                    <FabIcon
+                      className="w-6 h-6 text-white transition-transform duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] group-active:scale-[0.7]"
+                      strokeWidth={2.5}
+                    />
+                  </Link>
+                </div>
               );
             }
 
+            const isActive = location.pathname === item.path;
+            const Icon = item.icon;
             return (
-              <Link key={item.path} to={item.path} className={`flex flex-col items-center justify-center gap-0.5 py-2 px-3 min-w-[64px] min-h-[48px] rounded-xl transition-all duration-200 ${isActive ? 'bg-primary/5 scale-[1.02]' : 'active:bg-muted/50 active:scale-95'}`}>
-                <div className={`relative p-1.5 rounded-lg transition-all duration-200 ${isActive ? 'bg-primary/10' : ''}`}>
-                  <Icon className={`w-5 h-5 transition-colors duration-200 ${isActive ? 'text-primary' : 'text-muted-foreground'}`} strokeWidth={isActive ? 2.5 : 2} />
-                  {isActive && <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary" />}
-                </div>
-                <span className={`text-[10px] font-medium transition-colors duration-200 ${isActive ? 'text-primary font-semibold' : 'text-muted-foreground'}`}>{t(item.tKey)}</span>
+              <Link key={item.path} to={item.path} className="flex-1 flex flex-col items-center justify-center gap-1 py-1">
+                <span className="relative flex items-center justify-center w-12 h-7">
+                  {isActive && (
+                    <motion.span
+                      layoutId="navPill"
+                      transition={{ type: 'spring', stiffness: 500, damping: 34 }}
+                      className="absolute inset-0 bg-primary/10 rounded-full"
+                    />
+                  )}
+                  <Icon
+                    className={`relative w-[19px] h-[19px] transition-colors duration-200 ${isActive ? 'text-primary' : 'text-muted-foreground/55'}`}
+                    strokeWidth={isActive ? 2.3 : 1.8}
+                  />
+                </span>
+                <span className={`text-[10.5px] leading-none transition-colors duration-200 ${isActive ? 'text-primary font-semibold' : 'text-muted-foreground/55 font-medium'}`}>
+                  {t(item.tKey)}
+                </span>
               </Link>
             );
           })}

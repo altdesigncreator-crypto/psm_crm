@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import StorageImage from '@/components/StorageImage';
 
 function initialsOf(name: string): string {
   return name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('') || '?';
@@ -35,7 +36,7 @@ export default function NameLink({ id, name, avatarUrl, showAvatar = true, size 
     >
       {showAvatar && (
         avatarUrl ? (
-          <img src={avatarUrl} alt={name} className={`shrink-0 rounded-full object-cover ${sizeStyle.circle}`} />
+          <StorageImage src={avatarUrl} alt={name} className={`shrink-0 rounded-full object-cover ${sizeStyle.circle}`} />
         ) : (
           <span className={`shrink-0 rounded-full bg-primary/10 text-primary font-semibold flex items-center justify-center ${sizeStyle.circle}`}>
             {initialsOf(name)}

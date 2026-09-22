@@ -12,6 +12,7 @@ import {
 import { processCapturedImage } from '@/lib/cameraUtils';
 import { isPushSupported, hasActivePushSubscription, subscribeToPush, unsubscribeFromPush } from '@/lib/pushNotifications';
 import AvatarCropDialog from '@/components/AvatarCropDialog';
+import StorageImage from '@/components/StorageImage';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,7 +37,7 @@ export default function Settings() {
   const { lang, setLang, t } = useTranslation();
   const { user, role, department, refreshProfile } = useAuth();
   const { departments, createDepartment, updateDepartment, deleteDepartment, deactivateDepartment } = useDepartments();
-  usePageHeader('Settings', 'Profile and system preferences');
+  usePageHeader(t('settings.pageTitle'), t('settings.subtitle'));
 
   const [name, setName] = useState(user?.name || '');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -77,7 +78,7 @@ export default function Settings() {
   const handleToggleNotifications = async () => {
     if (!user?.id || notificationsBusy) return;
     if (!isPushSupported()) {
-      toast.error('Push notifications are not supported on this device/browser.');
+      toast.error(t('settings.notificationsUnsupported'));
       return;
     }
     setNotificationsBusy(true);
@@ -90,7 +91,7 @@ export default function Settings() {
         setNotificationsEnabled(true);
       }
     } catch (err: any) {
-      toast.error(err?.message || 'Could not update notification settings.');
+      toast.error(err?.message || t('settings.notificationsUpdateError'));
     } finally {
       setNotificationsBusy(false);
     }
@@ -118,15 +119,15 @@ export default function Settings() {
     setIsUpdating(true);
     const { error } = await supabase.from('profiles').update({ name: name.trim(), phone: phoneNumber.trim() || null }).eq('id', user.id);
     setIsUpdating(false);
-    if (error) { toast.error('Could not update profile.'); return; }
+    if (error) { toast.error(t('settings.profileUpdateError')); return; }
     await refreshProfile();
-    toast.success('Profile updated.');
+    toast.success(t('settings.profileUpdatedToast'));
   };
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user?.id) return;
-    if (!file.type.startsWith('image/')) { toast.error('Please choose an image file.'); if (avatarInputRef.current) avatarInputRef.current.value = ''; return; }
+    if (!file.type.startsWith('image/')) { toast.error(t('settings.imageFileRequired')); if (avatarInputRef.current) avatarInputRef.current.value = ''; return; }
     try {
       const { previewUrl } = await processCapturedImage(file);
       setCropImageSrc(previewUrl);
@@ -148,10 +149,10 @@ export default function Settings() {
       if (error) throw error;
 
       await refreshProfile();
-      toast.success('Profile photo updated.');
+      toast.success(t('settings.photoUpdatedToast'));
       setCropImageSrc(null);
     } catch {
-      toast.error('Could not update your profile photo.');
+      toast.error(t('settings.photoUpdateError'));
     } finally {
       setUploadingAvatar(false);
       if (avatarInputRef.current) avatarInputRef.current.value = '';
@@ -161,20 +162,20 @@ export default function Settings() {
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.email) return;
-    if (pwNew.length < 6) { toast.error('New password must be at least 6 characters.'); return; }
-    if (pwNew !== pwConfirm) { toast.error('New passwords do not match.'); return; }
-    if (pwNew === pwCurrent) { toast.error('New password must be different from the current one.'); return; }
+    if (pwNew.length < 6) { toast.error(t('settings.pwTooShort')); return; }
+    if (pwNew !== pwConfirm) { toast.error(t('settings.pwMismatch')); return; }
+    if (pwNew === pwCurrent) { toast.error(t('settings.pwSameAsOld')); return; }
 
     setChangingPw(true);
     try {
       const { error: verifyErr } = await supabase.auth.signInWithPassword({ email: user.email, password: pwCurrent });
-      if (verifyErr) { toast.error('Current password is incorrect.'); return; }
+      if (verifyErr) { toast.error(t('settings.currentPwIncorrect')); return; }
 
       const { error } = await supabase.auth.updateUser({ password: pwNew });
-      if (error) { toast.error(error.message || 'Could not change the password.'); return; }
+      if (error) { toast.error(error.message || t('settings.pwChangeError')); return; }
 
       await supabase.from('audit_logs').insert({ action: 'password_changed', target_table: 'profiles', target_id: user.id, performed_by: user.id });
-      toast.success('Password changed.');
+      toast.success(t('settings.pwChangedToast'));
       setPwCurrent(''); setPwNew(''); setPwConfirm(''); setShowPw(false);
     } finally {
       setChangingPw(false);
@@ -183,26 +184,26 @@ export default function Settings() {
 
   const handleDeleteAccount = async () => {
     if (!user?.email) return;
-    if (!deletePassword) { toast.error('Enter your password to confirm.'); return; }
+    if (!deletePassword) { toast.error(t('settings.enterPwToConfirm')); return; }
     setIsDeletingAccount(true);
     try {
       // Confirm it's really the account owner at the keyboard.
       const { error: verifyErr } = await supabase.auth.signInWithPassword({ email: user.email, password: deletePassword });
-      if (verifyErr) { toast.error('Password is incorrect.'); return; }
+      if (verifyErr) { toast.error(t('settings.passwordIncorrect')); return; }
 
       const { data: sessionData } = await supabase.auth.getSession();
       const { data, error } = await supabase.functions.invoke('delete-my-account', {
         body: {},
         headers: { Authorization: `Bearer ${sessionData.session?.access_token}` },
       });
-      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, 'Could not delete your account.'));
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, t('settings.deleteAccountError')));
       if (data?.error) throw new Error(data.error);
 
       disableBiometric(user.id);
-      toast.success('Your account has been deleted.');
+      toast.success(t('settings.accountDeletedToast'));
       await supabase.auth.signOut();
     } catch (err: any) {
-      toast.error(err.message || 'Could not delete your account.');
+      toast.error(err.message || t('settings.deleteAccountError'));
     } finally {
       setIsDeletingAccount(false);
       setDeleteAccountOpen(false);
@@ -212,7 +213,7 @@ export default function Settings() {
 
   const handleDownloadBackup = async () => {
     setDownloadingBackup(true);
-    toast.info('Generating backup… this can take up to a minute.');
+    toast.info(t('settings.generatingBackupToast'));
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       // Same-origin proxy (see netlify.toml + src/db/supabase.ts) — some
@@ -229,7 +230,7 @@ export default function Settings() {
 
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        throw new Error(body?.error || `Backup failed (${res.status}).`);
+        throw new Error(body?.error || `${t('settings.backupFailed')} (${res.status}).`);
       }
 
       const blob = await res.blob();
@@ -246,9 +247,9 @@ export default function Settings() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      toast.success('Backup downloaded.');
+      toast.success(t('settings.backupDownloadedToast'));
     } catch (err: any) {
-      toast.error(err.message || 'Could not generate the backup.');
+      toast.error(err.message || t('settings.backupGenerateError'));
     } finally {
       setDownloadingBackup(false);
     }
@@ -259,28 +260,28 @@ export default function Settings() {
     if (biometricEnabled) {
       disableBiometric(user.id);
       setBiometricEnabled(false);
-      toast.success('Face ID / Fingerprint unlock disabled on this device.');
+      toast.success(t('settings.biometricDisabledToast'));
       return;
     }
     setBiometricBusy(true);
     try {
       await registerBiometric(user.id, user.email, user.name);
       setBiometricEnabled(true);
-      toast.success('Face ID / Fingerprint unlock enabled on this device.');
+      toast.success(t('settings.biometricEnabledToast'));
     } catch (err: any) {
-      toast.error(err?.message || 'Could not set up biometric unlock.');
+      toast.error(err?.message || t('settings.biometricSetupError'));
     } finally {
       setBiometricBusy(false);
     }
   };
 
   const handleRenameDepartment = async (code: string) => {
-    if (!editingDeptName.trim()) { toast.error('Enter a department name.'); return; }
+    if (!editingDeptName.trim()) { toast.error(t('settings.enterDeptName')); return; }
     setSavingDeptEdit(true);
     const error = await updateDepartment(code, editingDeptName);
     setSavingDeptEdit(false);
-    if (error) { toast.error(error.message || 'Could not rename the department.'); return; }
-    toast.success('Department renamed.');
+    if (error) { toast.error(error.message || t('settings.deptRenameError')); return; }
+    toast.success(t('settings.deptRenamedToast'));
     setEditingDeptCode(null);
   };
 
@@ -294,7 +295,7 @@ export default function Settings() {
         supabase.from('leads').select('id', { count: 'exact', head: true }).eq('department_code', code),
       ]);
       if ((staffCount ?? 0) > 0 || (leadCount ?? 0) > 0) {
-        toast.error(`Cannot delete ${name} — ${staffCount ?? 0} staff and ${leadCount ?? 0} leads still belong to it. Move them to another department first.`);
+        toast.error(`${t('settings.cannotDeleteDeptPrefix')} ${name} — ${staffCount ?? 0}/${leadCount ?? 0} ${t('settings.cannotDeleteDeptSuffix')}`);
         return;
       }
 
@@ -302,14 +303,14 @@ export default function Settings() {
       if (error) {
         if ((error as { code?: string }).code === '23503') {
           const softErr = await deactivateDepartment(code);
-          if (softErr) { toast.error(softErr.message || 'Could not remove the department.'); return; }
-          toast.success(`${name} had historical records, so it was deactivated instead — it no longer appears anywhere in the app.`);
+          if (softErr) { toast.error(softErr.message || t('settings.deptRemoveError')); return; }
+          toast.success(`${name} ${t('settings.deptDeactivatedToastSuffix')}`);
         } else {
-          toast.error(error.message || 'Could not delete the department.');
+          toast.error(error.message || t('settings.deptDeleteError'));
           return;
         }
       } else {
-        toast.success(`${name} department deleted.`);
+        toast.success(`${name} ${t('settings.deptDeletedToastSuffix')}`);
       }
       await supabase.from('audit_logs').insert({
         action: 'department_deleted',
@@ -325,21 +326,21 @@ export default function Settings() {
 
   const handleAddDepartment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newDeptCode.trim() || !newDeptName.trim()) { toast.error('Enter both a code and a name.'); return; }
+    if (!newDeptCode.trim() || !newDeptName.trim()) { toast.error(t('settings.enterCodeAndName')); return; }
     setSavingDept(true);
     const error = await createDepartment(newDeptCode, newDeptName);
     setSavingDept(false);
-    if (error) { toast.error(error.message || 'Could not add department — code may already exist.'); return; }
-    toast.success(`${newDeptName.trim()} department added.`);
+    if (error) { toast.error(error.message || t('settings.deptAddError')); return; }
+    toast.success(`${newDeptName.trim()} ${t('settings.deptAddedToastSuffix')}`);
     setNewDeptCode('');
     setNewDeptName('');
   };
 
   const SECTIONS: { key: SectionKey; label: string; description: string; icon: typeof User }[] = [
-    { key: 'profile', label: 'Profile', description: user?.email || '—', icon: User },
-    { key: 'preferences', label: 'Preferences', description: 'Theme, language, notifications', icon: Moon },
-    ...(isExec(role) ? [{ key: 'system' as const, label: 'System Configuration', description: 'Departments and backups', icon: SettingsIcon }] : []),
-    { key: 'about', label: 'About', description: 'Company info and app version', icon: Info },
+    { key: 'profile', label: t('settings.section.profile'), description: user?.email || '—', icon: User },
+    { key: 'preferences', label: t('settings.section.preferences'), description: t('settings.section.preferencesDesc'), icon: Moon },
+    ...(isExec(role) ? [{ key: 'system' as const, label: t('settings.section.system'), description: t('settings.section.systemDesc'), icon: SettingsIcon }] : []),
+    { key: 'about', label: t('settings.section.about'), description: t('settings.section.aboutDesc'), icon: Info },
   ];
 
   return (
@@ -347,7 +348,7 @@ export default function Settings() {
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 active:bg-muted/50" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-5 h-5" /></Button>
         <div className="min-w-0 flex-1 md:hidden">
-          <h1 className="text-xl md:text-2xl font-bold text-foreground">Settings</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">{t('settings.pageTitle')}</h1>
         </div>
       </div>
 
@@ -409,10 +410,10 @@ export default function Settings() {
                         onClick={() => avatarInputRef.current?.click()}
                         disabled={uploadingAvatar}
                         className="relative w-16 h-16 rounded-full shrink-0 group"
-                        aria-label="Change profile photo"
+                        aria-label={t('settings.changePhoto')}
                       >
                         {user?.avatar_url ? (
-                          <img src={user.avatar_url} alt={user.name} className="w-16 h-16 rounded-full object-cover" />
+                          <StorageImage src={user.avatar_url} alt={user.name} className="w-16 h-16 rounded-full object-cover" />
                         ) : (
                           <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center"><User className="w-8 h-8 text-primary" /></div>
                         )}
@@ -428,17 +429,17 @@ export default function Settings() {
                       <div className="min-w-0 flex-1">
                         <p className="text-base font-semibold text-foreground truncate">{user?.name || '—'}</p>
                         <div className="flex items-center gap-2 mt-1 flex-wrap">
-                          <span className="text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">{getRoleLabel(role)}</span>
+                          <span className="text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">{getRoleLabel(role, lang)}</span>
                           {department && <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted text-muted-foreground border border-border">{getDepartmentLabel(department)}</span>}
                         </div>
                       </div>
                     </div>
                     <Separator />
                     <form onSubmit={handleUpdateProfile} className="space-y-4">
-                      <div className="space-y-2"><Label className="text-sm font-medium">Name</Label><Input value={name} onChange={(e) => setName(e.target.value)} required /></div>
-                      <div className="space-y-2"><Label className="text-sm font-medium">Phone</Label><Input value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="09xxxxxxxxx" /></div>
+                      <div className="space-y-2"><Label className="text-sm font-medium">{t('settings.name')}</Label><Input value={name} onChange={(e) => setName(e.target.value)} required /></div>
+                      <div className="space-y-2"><Label className="text-sm font-medium">{t('common.phone')}</Label><Input value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="09xxxxxxxxx" /></div>
                       <Button type="submit" disabled={isUpdating} className="w-full sm:w-auto h-10 gradient-primary text-white gap-2 mt-2">
-                        {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Changes
+                        {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {t('settings.saveChanges')}
                       </Button>
                     </form>
                   </CardContent>
@@ -446,11 +447,11 @@ export default function Settings() {
 
                 <Card className="shadow-card rounded-xl border-0">
                   <CardContent className="p-5 md:p-6 space-y-1">
-                    <p className="text-sm font-semibold text-foreground mb-2">Account</p>
+                    <p className="text-sm font-semibold text-foreground mb-2">{t('settings.account')}</p>
                     {[
-                      { icon: Mail, label: 'Email (cannot be changed)', value: user?.email || '—' },
-                      { icon: Shield, label: 'Role', value: getRoleLabel(role) },
-                      { icon: Building2, label: 'Department', value: department ? getDepartmentLabel(department) : 'All departments' },
+                      { icon: Mail, label: t('settings.emailCannotChange'), value: user?.email || '—' },
+                      { icon: Shield, label: t('settings.role'), value: getRoleLabel(role, lang) },
+                      { icon: Building2, label: t('settings.department'), value: department ? getDepartmentLabel(department) : t('settings.allDepartments') },
                     ].map((item, idx) => (
                       <div key={idx} className="flex items-start gap-3 p-2.5 rounded-lg min-h-[48px] bg-muted/30">
                         <item.icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
@@ -466,11 +467,10 @@ export default function Settings() {
                 {role !== 'boss' && (
                   <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
                     <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
-                      <Trash2 className="w-4 h-4 text-destructive" /> Delete Account
+                      <Trash2 className="w-4 h-4 text-destructive" /> {t('settings.deleteAccount')}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      Permanently deletes your login and notifications. Leads you own must be
-                      reassigned by your manager first. This cannot be undone.
+                      {t('settings.deleteAccountDesc')}
                     </p>
                     <Button
                       type="button"
@@ -478,7 +478,7 @@ export default function Settings() {
                       onClick={() => setDeleteAccountOpen(true)}
                       className="w-full sm:w-auto h-10 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive gap-1.5"
                     >
-                      <Trash2 className="w-4 h-4" /> Delete my account
+                      <Trash2 className="w-4 h-4" /> {t('settings.deleteMyAccount')}
                     </Button>
                   </div>
                 )}
@@ -489,33 +489,33 @@ export default function Settings() {
                   <form onSubmit={handleChangePassword} className="space-y-4">
                     <div className="flex items-center gap-2.5">
                       <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-warning/15 to-warning/5 flex items-center justify-center"><KeyRound className="w-4 h-4 text-warning" /></div>
-                      <p className="text-sm font-semibold text-foreground">Change Password</p>
+                      <p className="text-sm font-semibold text-foreground">{t('settings.changePassword')}</p>
                     </div>
                     <div className="space-y-2">
-                      <Label className="text-sm font-medium">Current password</Label>
+                      <Label className="text-sm font-medium">{t('settings.currentPassword')}</Label>
                       <Input type={showPw ? 'text' : 'password'} value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} required autoComplete="current-password" />
                     </div>
                     <div className="space-y-2">
-                      <Label className="text-sm font-medium">New password</Label>
+                      <Label className="text-sm font-medium">{t('settings.newPassword')}</Label>
                       <div className="relative">
-                        <Input type={showPw ? 'text' : 'password'} value={pwNew} onChange={(e) => setPwNew(e.target.value)} required minLength={6} autoComplete="new-password" className="pr-12" placeholder="At least 6 characters" />
+                        <Input type={showPw ? 'text' : 'password'} value={pwNew} onChange={(e) => setPwNew(e.target.value)} required minLength={6} autoComplete="new-password" className="pr-12" placeholder={t('settings.atLeast6Chars')} />
                         <button
                           type="button"
                           onClick={() => setShowPw((v) => !v)}
                           className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 min-h-0 flex items-center justify-center rounded-full text-muted-foreground"
-                          aria-label={showPw ? 'Hide passwords' : 'Show passwords'}
+                          aria-label={showPw ? t('settings.hidePasswords') : t('settings.showPasswords')}
                         >
                           {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                         </button>
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Label className="text-sm font-medium">Confirm new password</Label>
+                      <Label className="text-sm font-medium">{t('settings.confirmNewPassword')}</Label>
                       <Input type={showPw ? 'text' : 'password'} value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} required minLength={6} autoComplete="new-password" />
                     </div>
                     <Button type="submit" disabled={changingPw || !pwCurrent || !pwNew || !pwConfirm} className="w-full sm:w-auto h-10 gap-2 mt-2" variant="outline">
                       {changingPw ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-                      {changingPw ? 'Changing…' : 'Change Password'}
+                      {changingPw ? t('settings.changing') : t('settings.changePassword')}
                     </Button>
                   </form>
                 </CardContent>
@@ -543,7 +543,7 @@ export default function Settings() {
                 <button type="button" onClick={handleToggleDarkMode} className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card hover:bg-muted/40 active:bg-muted/50 transition-colors text-left min-h-[64px]">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center shrink-0"><Moon className="w-5 h-5 text-primary" /></div>
-                    <div><p className="text-sm font-semibold text-foreground">Dark Mode</p></div>
+                    <div><p className="text-sm font-semibold text-foreground">{t('settings.darkMode')}</p></div>
                   </div>
                   <div className={`w-12 h-7 rounded-full transition-colors relative ${darkMode ? 'bg-primary' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${darkMode ? 'left-6' : 'left-1'}`} /></div>
                 </button>
@@ -554,8 +554,8 @@ export default function Settings() {
                       {notificationsBusy ? <Loader2 className="w-5 h-5 text-success animate-spin" /> : <Bell className="w-5 h-5 text-success" />}
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-foreground">Notifications</p>
-                      <p className="text-xs text-muted-foreground">Push alerts even when the app is closed</p>
+                      <p className="text-sm font-semibold text-foreground">{t('settings.notifications')}</p>
+                      <p className="text-xs text-muted-foreground">{t('settings.notificationsDesc')}</p>
                     </div>
                   </div>
                   <div className={`w-12 h-7 rounded-full transition-colors relative ${notificationsEnabled ? 'bg-success' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${notificationsEnabled ? 'left-6' : 'left-1'}`} /></div>
@@ -573,8 +573,8 @@ export default function Settings() {
                         {biometricBusy ? <Loader2 className="w-5 h-5 text-primary animate-spin" /> : <FingerprintPattern className="w-5 h-5 text-primary" />}
                       </div>
                       <div>
-                        <p className="text-sm font-semibold text-foreground">Face ID / Fingerprint Sign-in</p>
-                        <p className="text-xs text-muted-foreground">Sign back in with biometrics instead of your password on this device</p>
+                        <p className="text-sm font-semibold text-foreground">{t('settings.biometricTitle')}</p>
+                        <p className="text-xs text-muted-foreground">{t('settings.biometricDesc')}</p>
                       </div>
                     </div>
                     <div className={`w-12 h-7 rounded-full transition-colors relative shrink-0 ${biometricEnabled ? 'bg-primary' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${biometricEnabled ? 'left-6' : 'left-1'}`} /></div>
@@ -588,13 +588,13 @@ export default function Settings() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
               <Card className="shadow-card rounded-xl border-0">
                 <CardContent className="p-5 md:p-6 space-y-3">
-                  <p className="text-sm font-semibold text-foreground">Departments</p>
-                  <p className="text-xs text-muted-foreground">Add, rename or delete departments — changes apply immediately to every department picker across the app (leads, staff, filters).</p>
+                  <p className="text-sm font-semibold text-foreground">{t('settings.departments')}</p>
+                  <p className="text-xs text-muted-foreground">{t('settings.departmentsDesc')}</p>
                   <form onSubmit={handleAddDepartment} className="flex flex-col sm:flex-row gap-2">
-                    <Input placeholder="Code (e.g. commercial)" value={newDeptCode} onChange={(e) => setNewDeptCode(e.target.value)} className="h-10 sm:w-40" />
-                    <Input placeholder="Display name (e.g. Commercial)" value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="h-10 flex-1" />
+                    <Input placeholder={t('settings.codePlaceholder')} value={newDeptCode} onChange={(e) => setNewDeptCode(e.target.value)} className="h-10 sm:w-40" />
+                    <Input placeholder={t('settings.displayNamePlaceholder')} value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="h-10 flex-1" />
                     <Button type="submit" disabled={savingDept} size="sm" className="h-10 gap-1.5 shrink-0">
-                      {savingDept ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add
+                      {savingDept ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} {t('settings.add')}
                     </Button>
                   </form>
                   <div className="space-y-2">
@@ -609,22 +609,22 @@ export default function Settings() {
                               autoFocus
                             />
                             <Button size="sm" disabled={savingDeptEdit} onClick={() => handleRenameDepartment(d.code)} className="h-10 shrink-0">
-                              {savingDeptEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+                              {savingDeptEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : t('settings.save')}
                             </Button>
                             <Button size="sm" variant="ghost" disabled={savingDeptEdit} onClick={() => setEditingDeptCode(null)} className="h-10 shrink-0">
-                              Cancel
+                              {t('common.cancel')}
                             </Button>
                           </>
                         ) : (
                           <>
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium text-foreground truncate">{d.name}</p>
-                              <p className="text-[11px] text-muted-foreground">code: {d.code}</p>
+                              <p className="text-[11px] text-muted-foreground">{t('settings.code')}: {d.code}</p>
                             </div>
-                            <Button variant="ghost" size="icon" aria-label={`Rename ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => { setEditingDeptCode(d.code); setEditingDeptName(d.name); }}>
+                            <Button variant="ghost" size="icon" aria-label={`${t('settings.renameSuffix')} ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => { setEditingDeptCode(d.code); setEditingDeptName(d.name); }}>
                               <Edit2 className="w-4 h-4" />
                             </Button>
-                            <Button variant="ghost" size="icon" aria-label={`Delete ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => setDeptDeleteTarget({ code: d.code, name: d.name })}>
+                            <Button variant="ghost" size="icon" aria-label={`${t('settings.deleteSuffix')} ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => setDeptDeleteTarget({ code: d.code, name: d.name })}>
                               <Trash2 className="w-4 h-4" />
                             </Button>
                           </>
@@ -637,10 +637,9 @@ export default function Settings() {
 
               <Card className="shadow-card rounded-xl border-0">
                 <CardContent className="p-5 md:p-6 space-y-3">
-                  <p className="text-sm font-semibold text-foreground">Database Backup</p>
+                  <p className="text-sm font-semibold text-foreground">{t('settings.databaseBackup')}</p>
                   <p className="text-xs text-muted-foreground">
-                    Runs a full database backup on demand (the same pg_dump job that also runs automatically every
-                    day) and downloads it straight to this device. Takes up to a minute.
+                    {t('settings.databaseBackupDesc')}
                   </p>
                   <Button
                     variant="outline"
@@ -649,7 +648,7 @@ export default function Settings() {
                     className="h-11 gap-2"
                   >
                     {downloadingBackup ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                    {downloadingBackup ? 'Generating backup…' : 'Download Backup'}
+                    {downloadingBackup ? t('settings.generatingBackup') : t('settings.downloadBackup')}
                   </Button>
                 </CardContent>
               </Card>
@@ -660,18 +659,18 @@ export default function Settings() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
               <Card className="shadow-card rounded-xl border-0">
                 <CardContent className="space-y-3 p-4 md:p-6">
-                  <p className="text-sm font-semibold text-foreground mb-1">Company Information</p>
+                  <p className="text-sm font-semibold text-foreground mb-1">{t('settings.companyInfo')}</p>
                   <div className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card min-h-[52px]">
                     <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><MapPin className="w-4 h-4 text-primary" /></div>
-                    <div className="min-w-0"><p className="text-xs text-muted-foreground">Address</p><p className="text-sm font-medium text-foreground">PSM Properties Co., Ltd.</p><p className="text-xs text-muted-foreground truncate">Yangon, Myanmar</p></div>
+                    <div className="min-w-0"><p className="text-xs text-muted-foreground">{t('settings.address')}</p><p className="text-sm font-medium text-foreground">PSM Properties Co., Ltd.</p><p className="text-xs text-muted-foreground truncate">Yangon, Myanmar</p></div>
                   </div>
                   <a href="tel:+95123456789" className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors min-h-[52px]">
                     <div className="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center shrink-0"><Phone className="w-4 h-4 text-success" /></div>
-                    <div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">Contact</p><p className="text-sm font-medium text-foreground">+95 1 234 567 89</p></div>
+                    <div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">{t('settings.contact')}</p><p className="text-sm font-medium text-foreground">+95 1 234 567 89</p></div>
                   </a>
                   <a href="mailto:support@psmproperties.com" className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors min-h-[52px]">
                     <div className="w-10 h-10 rounded-lg bg-info/10 flex items-center justify-center shrink-0"><HeartHandshake className="w-4 h-4 text-info" /></div>
-                    <div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">Support</p><p className="text-sm font-medium text-foreground">support@psmproperties.com</p></div>
+                    <div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">{t('settings.support')}</p><p className="text-sm font-medium text-foreground">support@psmproperties.com</p></div>
                   </a>
                 </CardContent>
               </Card>
@@ -691,29 +690,28 @@ export default function Settings() {
       <AlertDialog open={deleteAccountOpen} onOpenChange={(open) => { if (!isDeletingAccount) { setDeleteAccountOpen(open); if (!open) setDeletePassword(''); } }}>
         <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete your account?</AlertDialogTitle>
+            <AlertDialogTitle>{t('settings.deleteAccountTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Your login is removed permanently, along with your notifications.
-              This cannot be undone. Enter your password to confirm.
+              {t('settings.deleteAccountConfirmBody')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <Input
             type="password"
             value={deletePassword}
             onChange={(e) => setDeletePassword(e.target.value)}
-            placeholder="Your password"
+            placeholder={t('leads.yourPassword')}
             autoComplete="current-password"
             className="h-11"
           />
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeletingAccount}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeletingAccount}>{t('common.cancel')}</AlertDialogCancel>
             <Button
               disabled={isDeletingAccount || !deletePassword}
               onClick={handleDeleteAccount}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-10"
             >
               {isDeletingAccount ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
-              {isDeletingAccount ? 'Deleting…' : 'Delete forever'}
+              {isDeletingAccount ? t('leads.deleting') : t('settings.deleteForever')}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -723,22 +721,20 @@ export default function Settings() {
       <AlertDialog open={!!deptDeleteTarget} onOpenChange={(open) => !open && !deletingDept && setDeptDeleteTarget(null)}>
         <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete the {deptDeleteTarget?.name} department?</AlertDialogTitle>
+            <AlertDialogTitle>{t('settings.deleteDeptTitlePrefix')} {deptDeleteTarget?.name} {t('settings.deleteDeptTitleSuffix')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Departments with staff or leads cannot be deleted — move them first. If old records
-              still reference it, the department is deactivated instead of deleted, which removes
-              it from every picker while history keeps its labels.
+              {t('settings.deleteDeptBody')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deletingDept}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deletingDept}>{t('common.cancel')}</AlertDialogCancel>
             <Button
               disabled={deletingDept}
               onClick={handleDeleteDepartment}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90 h-10"
             >
               {deletingDept ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
-              {deletingDept ? 'Deleting…' : 'Delete'}
+              {deletingDept ? t('leads.deleting') : t('common.delete')}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

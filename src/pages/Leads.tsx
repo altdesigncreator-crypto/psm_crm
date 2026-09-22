@@ -20,6 +20,7 @@ import { LEAD_STAGES, type Lead, type Profile } from '@/types';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
+import { enumLabel, type Lang } from '@/lib/translations';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useDebounce } from '@/hooks/use-debounce';
 import { isManagerOrAbove, isDepartmentScoped, getDepartmentLabel, canDeleteLead } from '@/lib/permissions';
@@ -44,9 +45,10 @@ import { cn } from '@/lib/utils';
 import { usePeriodFilter, type Period } from '@/hooks/usePeriodFilter';
 import PeriodFilterBar from '@/components/PeriodFilterBar';
 
-function stageLabel(status: string) {
-  if (status === FOLLOWUP_SENTINEL) return 'Follow Up';
-  return LEAD_STAGES.find((s) => s.value === status)?.label || status;
+function stageLabel(status: string, t: (key: string) => string, lang: Lang) {
+  if (status === FOLLOWUP_SENTINEL) return t('dashboard.followUp');
+  const found = LEAD_STAGES.find((s) => s.value === status);
+  return enumLabel('stage', status, found?.label || status, lang);
 }
 
 function todayStr() {
@@ -158,7 +160,13 @@ function applyLeadFilters<Q extends { eq: any; in: any; or: any; gte: any; lt: a
  * needed for "Select All" (bulk delete) and Export, which both mean "every
  * matching lead," not just the visible page. PostgREST caps any single
  * request at 1000 rows, so this pages through in chunks internally; capped
- * at 20,000 total as a sane ceiling for a single bulk action. */
+ * at 20,000 total as a sane ceiling for a single bulk action.
+ *
+ * Sorting by created_at alone isn't a stable order — bulk-seeded rows
+ * routinely share the exact same timestamp, and ties can land on neither
+ * page's slice across separate range() queries, silently dropping rows
+ * from a "Select All" delete or export. `id` as a secondary sort key makes
+ * the order total, so every matching row is guaranteed exactly one page. */
 async function fetchAllMatchingLeads(f: LeadFilters, maxRows = 20_000): Promise<Lead[]> {
   const chunkSize = 1000;
   const all: Lead[] = [];
@@ -166,7 +174,7 @@ async function fetchAllMatchingLeads(f: LeadFilters, maxRows = 20_000): Promise<
   while (all.length < maxRows) {
     let query = supabase.from('leads').select('*') as any;
     query = applyLeadFilters(query, f);
-    const { data, error } = await query.order('created_at', { ascending: false }).range(from, from + chunkSize - 1);
+    const { data, error } = await query.order('created_at', { ascending: false }).order('id', { ascending: true }).range(from, from + chunkSize - 1);
     if (error) throw error;
     const rows = (data || []) as Lead[];
     all.push(...rows);
@@ -177,6 +185,7 @@ async function fetchAllMatchingLeads(f: LeadFilters, maxRows = 20_000): Promise<
 }
 
 function BulkDeleteUndoToast({ count }: { count: number }) {
+  const { t } = useTranslation();
   const [secondsLeft, setSecondsLeft] = useState(10);
   useEffect(() => {
     const interval = setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
@@ -195,8 +204,8 @@ function BulkDeleteUndoToast({ count }: { count: number }) {
         {secondsLeft}
       </div>
       <div className="min-w-0">
-        <p className="font-medium leading-tight">{count} lead{count === 1 ? '' : 's'} deleted</p>
-        <p className="text-xs leading-tight text-muted-foreground">Undo before this disappears</p>
+        <p className="font-medium leading-tight">{count} {t('leads.leadsDeletedCountSuffix')}</p>
+        <p className="text-xs leading-tight text-muted-foreground">{t('leads.undoDisappears')}</p>
       </div>
     </div>
   );
@@ -269,7 +278,7 @@ export default function Leads() {
   // fresh intent and should win over whatever was cached from a previous
   // visit — only fall back to the cache when arriving with no query at all.
   const restoredState = searchParams.get('status') || searchParams.get('grade') ? null : cachedListState;
-  const { t } = useTranslation();
+  const { t, lang } = useTranslation();
   usePageHeader(t('leads.title'), t('leads.subtitle'));
   const { user, role, department, myTeamIds } = useAuth();
   const { colors: statusColors } = useStatusColors();
@@ -380,12 +389,16 @@ export default function Leads() {
       const { column, ascending, nullsFirst } = sortSpec(sortBy);
       let query = supabase.from('leads').select('*', { count: 'exact' }) as any;
       query = applyLeadFilters(query, currentFilters);
-      query = query.order(column, { ascending, nullsFirst }).range((page - 1) * pageSize, (page - 1) * pageSize + pageSize - 1);
+      // `id` as a secondary sort key breaks ties in `column` deterministically
+      // (created_at/name/grade all have plenty of ties in bulk-seeded data) —
+      // without it, tied rows can land on neither page's slice across
+      // separate range() queries, so paging forward can silently skip leads.
+      query = query.order(column, { ascending, nullsFirst }).order('id', { ascending: true }).range((page - 1) * pageSize, (page - 1) * pageSize + pageSize - 1);
 
       const { data, error, count } = await query;
       if (!active) return;
       if (error) {
-        toast.error('Could not load leads.');
+        toast.error(t('leads.loadError'));
       } else {
         setPagedLeads((data || []) as Lead[]);
         setTotalCount(count ?? 0);
@@ -500,9 +513,9 @@ export default function Leads() {
         performed_by: user?.id,
         old_value: { name: deleteTarget.name, phone: deleteTarget.phone, owner_id: deleteTarget.owner_id },
       });
-      toast.success(`Lead "${deleteTarget.name}" deleted.`);
+      toast.success(`"${deleteTarget.name}" ${t('leads.deletedToast')}`);
     } catch {
-      toast.error('Could not delete the lead.');
+      toast.error(t('leads.deleteError'));
     } finally {
       setDeleting(false);
       setDeleteTarget(null);
@@ -564,7 +577,7 @@ export default function Leads() {
         );
       }
     } catch {
-      toast.error('Could not delete the selected leads.');
+      toast.error(t('leads.bulkDeleteError'));
     } finally {
       setPendingBulkDeletes((prev) => prev.filter((b) => b.id !== batchId));
     }
@@ -577,7 +590,7 @@ export default function Leads() {
       pendingDeleteTimersRef.current.delete(batchId);
     }
     setPendingBulkDeletes((prev) => prev.filter((b) => b.id !== batchId));
-    toast.success(`Restored ${count} lead${count === 1 ? '' : 's'}.`, { position: 'top-right' });
+    toast.success(`${count} ${t('leads.restoredToastSuffix')}`, { position: 'top-right' });
   };
 
   const handleBulkDelete = async () => {
@@ -585,12 +598,12 @@ export default function Leads() {
     setBulkDeleting(true);
     try {
       const { error: verifyErr } = await supabase.auth.signInWithPassword({ email: user.email, password: bulkDeletePassword });
-      if (verifyErr) { toast.error('Password is incorrect.'); return; }
+      if (verifyErr) { toast.error(t('leads.passwordIncorrect')); return; }
 
       const targets = selectAllMatchingActive
         ? await fetchAllMatchingLeads(currentFilters)
         : Array.from(selectedLeads.values());
-      if (targets.length === 0) { toast.error('No leads to delete.'); return; }
+      if (targets.length === 0) { toast.error(t('leads.noLeadsToDelete')); return; }
       const batchId = crypto.randomUUID();
 
       setPendingBulkDeletes((prev) => [...prev, { id: batchId, leads: targets }]);
@@ -606,10 +619,10 @@ export default function Leads() {
         position: 'top-right',
         duration: 10_000,
         closeButton: true,
-        action: { label: 'Undo', onClick: () => undoBulkDelete(batchId, targets.length) },
+        action: { label: t('leads.undo'), onClick: () => undoBulkDelete(batchId, targets.length) },
       });
     } catch {
-      toast.error('Could not delete the selected leads.');
+      toast.error(t('leads.bulkDeleteError'));
     } finally {
       setBulkDeleting(false);
     }
@@ -622,10 +635,10 @@ export default function Leads() {
     setExporting(true);
     try {
       const rows = await fetchAllMatchingLeads(currentFilters);
-      if (rows.length === 0) { toast.error('No leads to export.'); return; }
+      if (rows.length === 0) { toast.error(t('leads.noLeadsToExport')); return; }
       exportFn(rows.map((l) => ({ ...l, owner_name: nameOf(l.owner_id) })));
     } catch {
-      toast.error('Could not export leads.');
+      toast.error(t('leads.exportError'));
     } finally {
       setExporting(false);
     }
@@ -642,7 +655,7 @@ export default function Leads() {
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows: any[] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
       if (rows.length < 2) {
-        toast.error('No data found in the spreadsheet.');
+        toast.error(t('leads.noDataInSpreadsheet'));
         return;
       }
 
@@ -653,7 +666,7 @@ export default function Leads() {
       ) as Record<ImportField, number>;
 
       if (colIndex.name < 0 && colIndex.phone < 0) {
-        toast.error('Could not find a Name or Phone column in this file — nothing was imported. Recognized columns: Name, Phone, Email, Preferred Project, Budget.');
+        toast.error(t('leads.noNamePhoneColumn'));
         return;
       }
 
@@ -680,7 +693,7 @@ export default function Leads() {
       }
 
       if (rowsToInsert.length === 0) {
-        toast.error('No valid rows found to import — every row was missing both Name and Phone.');
+        toast.error(t('leads.noValidRows'));
         return;
       }
 
@@ -690,7 +703,7 @@ export default function Leads() {
         skippedCount,
       });
     } catch {
-      toast.error('Could not read this file — please check it\'s a valid Excel/CSV export.');
+      toast.error(t('leads.fileReadError'));
     } finally {
       setImporting(false);
       if (importFileRef.current) importFileRef.current.value = '';
@@ -703,10 +716,10 @@ export default function Leads() {
     try {
       const { error } = await supabase.from('leads').insert(importPreview.rows);
       if (error) throw error;
-      toast.success(`${importPreview.rows.length} lead${importPreview.rows.length === 1 ? '' : 's'} imported.`);
+      toast.success(`${importPreview.rows.length} ${t('leads.importedToastSuffix')}`);
       setImportPreview(null);
     } catch {
-      toast.error('Import failed.');
+      toast.error(t('leads.importFailed'));
     } finally {
       setImporting(false);
     }
@@ -728,7 +741,7 @@ export default function Leads() {
                 className="h-11 md:h-12 gap-2 active:scale-[0.98] transition-transform"
               >
                 {selectAllMatchingActive ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4" />}
-                <span className="hidden sm:inline">{selectAllMatchingActive ? 'Deselect All' : 'Select All'}</span>
+                <span className="hidden sm:inline">{selectAllMatchingActive ? t('leads.deselectAll') : t('leads.selectAll')}</span>
               </Button>
               {bulkSelectionCount > 0 && (
                 <Button
@@ -737,7 +750,7 @@ export default function Leads() {
                   className="h-11 md:h-12 gap-2 active:scale-[0.98] transition-transform"
                 >
                   <Trash2 className="w-4 h-4" />
-                  Delete Selected ({bulkSelectionCount})
+                  {t('leads.deleteSelected')} ({bulkSelectionCount})
                 </Button>
               )}
             </>
@@ -745,7 +758,7 @@ export default function Leads() {
           {isManagerOrAbove(role) && (
             <Button variant="outline" disabled={importing} onClick={() => importFileRef.current?.click()} className="h-11 md:h-12 gap-2 active:scale-[0.98] transition-transform">
               {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              <span className="hidden sm:inline">{importing ? 'Importing…' : 'Import'}</span>
+              <span className="hidden sm:inline">{importing ? t('leads.importing') : t('common.import')}</span>
             </Button>
           )}
           <DropdownMenu>
@@ -755,7 +768,7 @@ export default function Leads() {
                 className="h-11 md:h-12 gradient-primary hover:gradient-primary-hover text-white font-medium transition-all duration-300 hover:shadow-card-hover shrink-0 gap-2 active:scale-[0.98]"
               >
                 {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                Export
+                {t('common.export')}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-52">
@@ -793,7 +806,7 @@ export default function Leads() {
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute w-4 h-4 -translate-y-1/2 left-3 top-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="Search by name, phone, or sales person…"
+                  placeholder={t('leads.searchPlaceholder')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="h-11 pl-9 rounded-lg bg-muted/40 border-transparent focus-visible:bg-card focus-visible:border-input transition-colors"
@@ -817,7 +830,7 @@ export default function Leads() {
                   }`}
                 >
                   <UserIcon className="w-4 h-4" />
-                  <span className="hidden sm:inline">My Leads</span>
+                  <span className="hidden sm:inline">{t('leads.myLeads')}</span>
                 </button>
               )}
 
@@ -829,26 +842,26 @@ export default function Leads() {
                 <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
                   <SelectTrigger className="w-[150px] h-11 rounded-lg bg-muted/40 border-transparent">
                     <ArrowUpDown className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
-                    <SelectValue placeholder="Sort" />
+                    <SelectValue placeholder={t('leads.sortPlaceholder')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="newest">Newest first</SelectItem>
-                    <SelectItem value="oldest">Oldest first</SelectItem>
-                    <SelectItem value="name">Name (A–Z)</SelectItem>
-                    <SelectItem value="followup">Next follow-up</SelectItem>
-                    <SelectItem value="grade">Grade (A–C)</SelectItem>
+                    <SelectItem value="newest">{t('leads.sort.newest')}</SelectItem>
+                    <SelectItem value="oldest">{t('leads.sort.oldest')}</SelectItem>
+                    <SelectItem value="name">{t('leads.sort.name')}</SelectItem>
+                    <SelectItem value="followup">{t('leads.sort.followup')}</SelectItem>
+                    <SelectItem value="grade">{t('leads.sort.grade')}</SelectItem>
                   </SelectContent>
                 </Select>
                 <div className="flex items-center gap-0.5 rounded-lg bg-muted/40 p-1 shrink-0">
                   <Button
-                    variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label="Previous day"
+                    variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label={t('leads.previousDay')}
                     onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
                   >
                     <ChevronLeft className="w-4 h-4" />
                   </Button>
                   <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="h-9 w-[130px] text-sm border-0 bg-transparent shadow-none focus-visible:ring-0" />
                   <Button
-                    variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label="Next day"
+                    variant="ghost" size="icon" className="h-9 w-9 min-h-0 shrink-0" aria-label={t('leads.nextDay')}
                     disabled={(dateFilter || todayStr()) >= todayStr()}
                     onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
                   >
@@ -857,7 +870,7 @@ export default function Leads() {
                 </div>
                 {dateFilter && (
                   <Button variant="ghost" className="h-9 px-2.5 text-xs font-medium text-primary" onClick={() => setDateFilter('')}>
-                    All dates
+                    {t('leads.allDates')}
                   </Button>
                 )}
                 <Popover>
@@ -867,7 +880,7 @@ export default function Leads() {
                       className="flex items-center gap-1.5 px-3.5 h-11 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
                     >
                       <SlidersHorizontal className="w-4 h-4" />
-                      Filters
+                      {t('leads.filters')}
                       {(statusFilter !== 'all' || gradeFilter !== 'all' || projectFilters.length > 0 || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all') && (
                         <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
                           {[statusFilter, gradeFilter, deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0)}
@@ -900,7 +913,7 @@ export default function Leads() {
                     className="md:hidden flex items-center gap-1.5 px-3.5 h-11 rounded-lg border border-border bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors shrink-0"
                   >
                     <SlidersHorizontal className="w-4 h-4" />
-                    <span className="hidden sm:inline">Filters</span>
+                    <span className="hidden sm:inline">{t('leads.filters')}</span>
                     {(statusFilter !== 'all' || gradeFilter !== 'all' || projectFilters.length > 0 || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all' || dateFilter) && (
                       <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
                         {[statusFilter, gradeFilter, deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0) + (dateFilter ? 1 : 0)}
@@ -911,7 +924,7 @@ export default function Leads() {
                 <SheetContent side="bottom" className="rounded-t-2xl border-t border-border px-6 pt-6 pb-8 max-h-[85dvh] overflow-y-auto">
                   <SheetHeader className="pb-4">
                     <SheetTitle className="flex items-center gap-2 text-base font-semibold">
-                      <Filter className="w-4 h-4 text-primary" /> Search / Filter
+                      <Filter className="w-4 h-4 text-primary" /> {t('leads.searchFilterSheetTitle')}
                     </SheetTitle>
                   </SheetHeader>
                   <div className="space-y-5">
@@ -929,7 +942,7 @@ export default function Leads() {
                     />
                     <SheetClose asChild>
                       <button type="button" className="w-full h-12 text-sm font-medium transition-colors rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80">
-                        Done
+                        {t('common.done')}
                       </button>
                     </SheetClose>
                   </div>
@@ -942,8 +955,8 @@ export default function Leads() {
                 it already has its own always-visible control above. */}
             <div className="flex flex-wrap gap-2">
               {[
-                ['status', statusFilter, setStatusFilter, statusFilter !== 'all' ? stageLabel(statusFilter) : ''],
-                ['grade', gradeFilter, setGradeFilter, gradeFilter !== 'all' ? `Grade ${gradeFilter}` : ''],
+                ['status', statusFilter, setStatusFilter, statusFilter !== 'all' ? stageLabel(statusFilter, t, lang) : ''],
+                ['grade', gradeFilter, setGradeFilter, gradeFilter !== 'all' ? `${t('leads.filter.gradePrefix')} ${gradeFilter}` : ''],
                 ['dept', deptFilter, setDeptFilter, deptFilter !== 'all' ? getDepartmentLabel(deptFilter) : ''],
                 ['team', teamFilter, setTeamFilter, teamFilter !== 'all' ? (teamOptions.find((tm) => tm.id === teamFilter)?.name || '') : ''],
                 ['agent', agentFilter, setAgentFilter, agentFilter],
@@ -991,7 +1004,7 @@ export default function Leads() {
         <CardHeader className="px-6 py-4 border-b border-border/40 bg-muted/10">
           <CardTitle className="flex items-center gap-2 text-sm font-semibold text-foreground/90">
             <FileText className="w-4 h-4 text-muted-foreground/80" />
-            All Leads
+            {t('leads.allLeads')}
             <span className="text-xs font-medium text-muted-foreground bg-muted border border-border px-2 py-0.5 rounded-full ml-1 tabular-nums">{visibleTotalCount}</span>
           </CardTitle>
         </CardHeader>
@@ -1004,8 +1017,8 @@ export default function Leads() {
             ) : visibleTotalCount === 0 ? (
               <div className="flex flex-col items-center justify-center h-56 text-muted-foreground bg-muted/5">
                 <FileText className="mb-2 w-9 h-9 opacity-40" />
-                <p className="text-sm font-medium">No leads found</p>
-                <p className="mt-1 text-xs">Try adjusting your search or filters</p>
+                <p className="text-sm font-medium">{t('leads.noLeadsFound')}</p>
+                <p className="mt-1 text-xs">{t('leads.tryAdjusting')}</p>
               </div>
             ) : (
               <>
@@ -1016,16 +1029,16 @@ export default function Leads() {
                       <TableRow className="hover:bg-transparent bg-muted/30">
                         {isSuperAdmin && (
                           <TableHead className={`${TH_STYLE} pl-5 w-10`}>
-                            <Checkbox checked={selectAllMatchingActive} onCheckedChange={toggleSelectAll} aria-label="Select all leads" />
+                            <Checkbox checked={selectAllMatchingActive} onCheckedChange={toggleSelectAll} aria-label={t('leads.selectAll')} />
                           </TableHead>
                         )}
-                        <TableHead className={`${TH_STYLE} ${isSuperAdmin ? 'pl-3' : 'pl-5'}`}>Customer</TableHead>
-                        <TableHead className={TH_STYLE}>Project / Budget</TableHead>
-                        <TableHead className={TH_STYLE}>Grade</TableHead>
-                        <TableHead className={TH_STYLE}>Status</TableHead>
-                        <TableHead className={TH_STYLE}>Sales Person</TableHead>
-                        <TableHead className={TH_STYLE}>Follow-up</TableHead>
-                        <TableHead className={`${TH_STYLE} pr-5 text-right`}>Actions</TableHead>
+                        <TableHead className={`${TH_STYLE} ${isSuperAdmin ? 'pl-3' : 'pl-5'}`}>{t('leads.customer')}</TableHead>
+                        <TableHead className={TH_STYLE}>{t('leads.projectBudget')}</TableHead>
+                        <TableHead className={TH_STYLE}>{t('addLead.grade')}</TableHead>
+                        <TableHead className={TH_STYLE}>{t('common.status')}</TableHead>
+                        <TableHead className={TH_STYLE}>{t('leads.salesPerson')}</TableHead>
+                        <TableHead className={TH_STYLE}>{t('leads.followUpCol')}</TableHead>
+                        <TableHead className={`${TH_STYLE} pr-5 text-right`}>{t('leads.actions')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1048,7 +1061,7 @@ export default function Leads() {
                               </div>
                               <div className="min-w-0">
                                 <p className="text-sm font-medium text-foreground truncate max-w-[180px]">{lead.name}</p>
-                                <p className="text-xs text-muted-foreground tabular-nums">{lead.phone || 'No phone'}</p>
+                                <p className="text-xs text-muted-foreground tabular-nums">{lead.phone || t('leads.noPhone')}</p>
                               </div>
                             </div>
                           </TableCell>
@@ -1057,14 +1070,14 @@ export default function Leads() {
                             {lead.budget_range && <p className="text-xs text-muted-foreground truncate max-w-[170px] tabular-nums">{lead.budget_range}</p>}
                           </TableCell>
                           <TableCell className="px-4 py-2.5 whitespace-nowrap"><LeadLevelBadge grade={lead.lead_grade} /></TableCell>
-                          <TableCell className="px-4 py-2.5 whitespace-nowrap"><StatusBadge status={stageLabel(lead.status)} color={statusColors?.[lead.status] || '#8FA3BF'} /></TableCell>
+                          <TableCell className="px-4 py-2.5 whitespace-nowrap"><StatusBadge status={stageLabel(lead.status, t, lang)} color={statusColors?.[lead.status] || '#8FA3BF'} /></TableCell>
                           <TableCell className="px-4 py-2.5 whitespace-nowrap text-sm text-muted-foreground">
                             {lead.owner_id ? <NameLink id={lead.owner_id} name={lead.owner_name || '—'} showAvatar={false} /> : '—'}
                           </TableCell>
                           <TableCell className="px-4 py-2.5 whitespace-nowrap text-sm text-muted-foreground tabular-nums">
                             {lead.follow_up_state === 'cold' ? (
                               <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">
-                                <Snowflake className="w-3 h-3" /> Cold
+                                <Snowflake className="w-3 h-3" /> {t('grade.C.short')}
                               </span>
                             ) : lead.next_follow_up_at ? (
                               <span className="inline-flex items-center gap-1.5">
@@ -1076,15 +1089,15 @@ export default function Leads() {
                           <TableCell className="pl-4 pr-5 py-2.5 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
                             <div className="inline-flex items-center gap-0.5">
                               {lead.latitude && lead.longitude && (
-                                <Button variant="ghost" size="icon" title="View map" aria-label="View map" className="w-8 h-8 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => openMap(lead)}>
+                                <Button variant="ghost" size="icon" title={t('leads.viewMap')} aria-label={t('leads.viewMap')} className="w-8 h-8 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => openMap(lead)}>
                                   <MapPin className="w-4 h-4" />
                                 </Button>
                               )}
-                              <Button variant="ghost" size="icon" title="View details" aria-label="View details" className="w-8 h-8 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => navigate(`/lead/${lead.id}`)}>
+                              <Button variant="ghost" size="icon" title={t('leads.viewDetails')} aria-label={t('leads.viewDetails')} className="w-8 h-8 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => navigate(`/lead/${lead.id}`)}>
                                 <Eye className="w-4 h-4" />
                               </Button>
                               {canDeleteRow(lead) && (
-                                <Button variant="ghost" size="icon" title="Delete lead" aria-label="Delete lead" className="w-8 h-8 min-h-0 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteTarget(lead)}>
+                                <Button variant="ghost" size="icon" title={t('leads.deleteLead')} aria-label={t('leads.deleteLead')} className="w-8 h-8 min-h-0 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteTarget(lead)}>
                                   <Trash2 className="w-4 h-4" />
                                 </Button>
                               )}
@@ -1096,66 +1109,88 @@ export default function Leads() {
                   </Table>
                 </div>
 
-                {/* Mobile card list */}
+                {/* Mobile card list — one glance, one line each: a colored
+                    left edge for status (scan the whole list without
+                    reading), avatar + name + status pill up top, a single
+                    muted line for phone/project, and a compact chip row for
+                    everything else. Full detail lives on the lead page;
+                    this is for finding a lead fast, not displaying every
+                    field it has. */}
                 <div className="divide-y md:hidden divide-border">
-                  {visibleLeads.map((lead) => (
-                    <div key={lead.id} className="flex items-start gap-3 p-4 min-h-[72px] transition-colors hover:bg-muted/30 active:bg-muted/50">
-                      {isSuperAdmin && (
-                        <div className="pt-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                          <Checkbox
-                            checked={selectAllMatchingActive || selectedLeads.has(lead.id)}
-                            disabled={selectAllMatchingActive}
-                            onCheckedChange={() => toggleSelectLead(lead)}
-                            aria-label={`Select ${lead.name}`}
-                          />
-                        </div>
-                      )}
-                      {/* A plain div (not <button>) — it needs to contain the
-                          NameLink's <a> and the "View map" <button> below,
-                          and interactive elements can't nest inside a
-                          <button> per HTML semantics. */}
-                      <div role="button" tabIndex={0} onClick={() => navigate(`/lead/${lead.id}`)} onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/lead/${lead.id}`); }} className="flex-1 min-w-0 space-y-2 text-left cursor-pointer">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold truncate text-foreground">{lead.name}</span>
-                          <StatusBadge status={stageLabel(lead.status)} color={statusColors?.[lead.status] || '#8FA3BF'} />
-                        </div>
-                        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{lead.phone || '—'}</span>
-                          {lead.preferred_project && (<span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{lead.preferred_project}</span>)}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <LeadLevelBadge grade={lead.lead_grade} />
-                          {lead.owner_id ? (
-                            <NameLink id={lead.owner_id} name={lead.owner_name || '—'} size="sm" showAvatar={false} className="text-xs text-muted-foreground" />
-                          ) : lead.owner_name && (
-                            <span className="flex items-center gap-1 text-xs text-muted-foreground"><UserIcon className="w-3 h-3" />{lead.owner_name}</span>
-                          )}
-                        </div>
-                        {lead.follow_up_state === 'cold' ? (
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <Snowflake className="w-3 h-3" /> Cold — not actively tracked
-                          </div>
-                        ) : lead.next_follow_up_at && (
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <Calendar className="w-3 h-3" /> Next follow-up: {new Date(lead.next_follow_up_at).toLocaleDateString()}
-                          </div>
-                        )}
-                        {lead.latitude && lead.longitude && (
-                          <button type="button" onClick={(e) => { e.stopPropagation(); openMap(lead); }} className="inline-flex items-center gap-1 mt-1 text-xs font-medium text-primary">
-                            <MapPin className="w-3 h-3" /> View map
-                          </button>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setActionSheetLead(lead); }}
-                        className="w-10 h-10 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground active:bg-muted/50 transition-colors shrink-0 mt-0.5"
-                        aria-label="Actions"
+                  {visibleLeads.map((lead) => {
+                    const statusColor = statusColors?.[lead.status] || '#8FA3BF';
+                    const chipClass = 'inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border bg-muted/70 text-muted-foreground border-border shrink-0';
+                    return (
+                      <div
+                        key={lead.id}
+                        className="flex items-center gap-1 pl-1 pr-2 transition-colors active:bg-muted/50"
+                        style={{ borderLeft: `4px solid ${statusColor}` }}
                       >
-                        <MoreVertical className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
+                        {isSuperAdmin && (
+                          <div className="shrink-0 pl-1.5" onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              checked={selectAllMatchingActive || selectedLeads.has(lead.id)}
+                              disabled={selectAllMatchingActive}
+                              onCheckedChange={() => toggleSelectLead(lead)}
+                              aria-label={`Select ${lead.name}`}
+                            />
+                          </div>
+                        )}
+                        {/* A plain div (not <button>) — it needs to contain
+                            the map-pin <button> below, and interactive
+                            elements can't nest inside a <button> per HTML
+                            semantics. */}
+                        <div
+                          role="button" tabIndex={0}
+                          onClick={() => navigate(`/lead/${lead.id}`)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/lead/${lead.id}`); }}
+                          className="flex-1 min-w-0 flex items-center gap-3 py-3 pl-2.5 text-left cursor-pointer"
+                        >
+                          <div className="w-10 h-10 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center shrink-0">
+                            {initialsOf(lead.name)}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-[15px] font-semibold text-foreground truncate">{lead.name}</p>
+                              <StatusBadge status={stageLabel(lead.status, t, lang)} color={statusColor} className="shrink-0 text-[10px] px-2 py-0.5" />
+                            </div>
+                            <p className="text-[13px] text-muted-foreground truncate mt-0.5">
+                              {lead.phone || t('leads.noPhone')}{lead.preferred_project ? ` · ${lead.preferred_project}` : ''}
+                            </p>
+                            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                              <LeadLevelBadge grade={lead.lead_grade} compact />
+                              {lead.follow_up_state === 'cold' ? (
+                                <span className={chipClass}><Snowflake className="w-2.5 h-2.5" /> {t('grade.C.short')}</span>
+                              ) : lead.next_follow_up_at && (
+                                <span className={chipClass}><Calendar className="w-2.5 h-2.5" /> {new Date(lead.next_follow_up_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</span>
+                              )}
+                              {(lead.owner_id || lead.owner_name) && (
+                                <span className={chipClass}><UserIcon className="w-2.5 h-2.5" /> {lead.owner_name || '—'}</span>
+                              )}
+                              {lead.latitude && lead.longitude && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); openMap(lead); }}
+                                  aria-label={t('leads.viewMap')}
+                                  className="inline-flex items-center justify-center w-5 h-5 rounded-full text-primary bg-primary/10 shrink-0"
+                                >
+                                  <MapPin className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setActionSheetLead(lead); }}
+                          className="w-9 h-9 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground active:bg-muted/50 transition-colors shrink-0"
+                          aria-label={t('leads.actions')}
+                        >
+                          <MoreVertical className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               </>
             )}
@@ -1168,29 +1203,29 @@ export default function Leads() {
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 md:px-6 py-3.5 border-t border-border/60 bg-muted/5">
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 <span>
-                  Showing <span className="font-medium text-foreground tabular-nums">{(page - 1) * pageSize + 1}</span>
+                  {t('leads.showing')} <span className="font-medium text-foreground tabular-nums">{(page - 1) * pageSize + 1}</span>
                   –<span className="font-medium text-foreground tabular-nums">{Math.min(page * pageSize, visibleTotalCount)}</span>
-                  {' '}of <span className="font-medium text-foreground tabular-nums">{visibleTotalCount}</span>
+                  {' '}{t('leads.of')} <span className="font-medium text-foreground tabular-nums">{visibleTotalCount}</span>
                 </span>
                 <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
                   <SelectTrigger className="h-8 w-[100px] text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {[10, 25, 50, 100].map((n) => (<SelectItem key={n} value={String(n)}>{n} / page</SelectItem>))}
+                    {[10, 25, 50, 100].map((n) => (<SelectItem key={n} value={String(n)}>{n} {t('leads.perPage')}</SelectItem>))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex items-center gap-1">
-                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage(1)} aria-label="First page">
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage(1)} aria-label={t('leads.firstPage')}>
                   <ChevronsLeft className="w-4 h-4" />
                 </Button>
-                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label="Previous page">
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} aria-label={t('leads.previousPage')}>
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
-                <span className="px-2 text-xs font-medium text-foreground tabular-nums whitespace-nowrap">Page {page} of {totalPages}</span>
-                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label="Next page">
+                <span className="px-2 text-xs font-medium text-foreground tabular-nums whitespace-nowrap">{t('leads.pageOf')} {page} / {totalPages}</span>
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} aria-label={t('leads.nextPage')}>
                   <ChevronRight className="w-4 h-4" />
                 </Button>
-                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage(totalPages)} aria-label="Last page">
+                <Button variant="outline" size="icon" className="w-8 h-8 min-h-0 rounded-lg" disabled={page >= totalPages} onClick={() => setPage(totalPages)} aria-label={t('leads.lastPage')}>
                   <ChevronsRight className="w-4 h-4" />
                 </Button>
               </div>
@@ -1205,11 +1240,11 @@ export default function Leads() {
       <Dialog open={!!importPreview} onOpenChange={(open) => !open && !importing && setImportPreview(null)}>
         <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md rounded-xl p-6 border border-border/60 shadow-xl bg-card gap-0">
           <DialogHeader className="pb-4 border-b border-border/60">
-            <DialogTitle className="flex items-center gap-2 text-base font-semibold"><ListPlus className="w-5 h-5 text-primary" /> Import Preview</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-base font-semibold"><ListPlus className="w-5 h-5 text-primary" /> {t('leads.importPreviewTitle')}</DialogTitle>
           </DialogHeader>
           <div className="mt-5 space-y-4">
             <p className="text-sm text-muted-foreground">
-              Only these columns are ever read from your file — anything else in the spreadsheet is ignored.
+              {t('leads.importPreviewBody')}
             </p>
             <div className="space-y-1.5">
               {importPreview?.columnMap.map((col) => (
@@ -1218,21 +1253,21 @@ export default function Leads() {
                   {col.header ? (
                     <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success"><CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> "{col.header}"</span>
                   ) : (
-                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><XCircle className="w-3.5 h-3.5 shrink-0" /> Not found — skipped</span>
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><XCircle className="w-3.5 h-3.5 shrink-0" /> {t('leads.notFoundSkipped')}</span>
                   )}
                 </div>
               ))}
             </div>
             <div className="text-sm bg-primary/5 border border-primary/20 rounded-lg px-3.5 py-2.5">
-              <span className="font-semibold text-foreground">{importPreview?.rows.length}</span> lead{importPreview?.rows.length === 1 ? '' : 's'} ready to import
+              <span className="font-semibold text-foreground">{importPreview?.rows.length}</span> {t('leads.readyToImportSuffix')}
               {!!importPreview?.skippedCount && (
-                <span className="text-muted-foreground"> · {importPreview.skippedCount} row{importPreview.skippedCount === 1 ? '' : 's'} skipped (no name or phone)</span>
+                <span className="text-muted-foreground"> · {importPreview.skippedCount} {t('leads.rowsSkippedSuffix')}</span>
               )}
             </div>
             <div className="flex gap-3 pt-2">
-              <Button type="button" variant="outline" className="flex-1 h-11" disabled={importing} onClick={() => setImportPreview(null)}>Cancel</Button>
+              <Button type="button" variant="outline" className="flex-1 h-11" disabled={importing} onClick={() => setImportPreview(null)}>{t('common.cancel')}</Button>
               <Button type="button" className="flex-1 font-medium text-white h-11 gradient-primary" disabled={importing} onClick={confirmImport}>
-                {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : `Import ${importPreview?.rows.length ?? ''} Lead${importPreview?.rows.length === 1 ? '' : 's'}`}
+                {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : `${t('leads.importLeadPrefix')} ${importPreview?.rows.length ?? ''} ${t('leads.importLeadSuffix')}`.trim()}
               </Button>
             </div>
           </div>
@@ -1243,7 +1278,7 @@ export default function Leads() {
       <Dialog open={mapOpen} onOpenChange={setMapOpen}>
         <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-lg p-0 overflow-hidden">
           <DialogHeader className="px-6 pt-6 pb-2">
-            <DialogTitle className="text-base font-semibold">Lead location — {selectedLead?.name}</DialogTitle>
+            <DialogTitle className="text-base font-semibold">{t('leads.leadLocationPrefix')} — {selectedLead?.name}</DialogTitle>
           </DialogHeader>
           {selectedLead?.latitude && selectedLead?.longitude && (
             <div className="px-6 pb-6">
@@ -1269,7 +1304,7 @@ export default function Leads() {
             <div className="space-y-1">
               <div className="px-6 pt-5 pb-3 border-b border-border">
                 <p className="text-base font-semibold truncate text-foreground">{actionSheetLead.name}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">{actionSheetLead.phone || 'No phone number'}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{actionSheetLead.phone || t('leads.noPhoneNumber')}</p>
               </div>
               <div className="px-2 py-2 space-y-1">
                 <button
@@ -1278,28 +1313,28 @@ export default function Leads() {
                   className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium text-foreground hover:bg-muted/50 active:bg-muted transition-colors"
                 >
                   <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary/10 shrink-0"><Eye className="w-4 h-4 text-primary" /></div>
-                  View details
+                  {t('leads.viewDetails')}
                 </button>
                 {actionSheetLead.phone && (
                   <a href={`tel:${actionSheetLead.phone}`} onClick={() => setActionSheetLead(null)} className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium text-foreground hover:bg-muted/50 active:bg-muted transition-colors">
                     <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-success/10 shrink-0"><PhoneCall className="w-4 h-4 text-success" /></div>
-                    Call
+                    {t('leads.call')}
                   </a>
                 )}
                 {actionSheetLead.latitude && actionSheetLead.longitude && (
                   <button type="button" onClick={() => { openMap(actionSheetLead); setActionSheetLead(null); }} className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium text-foreground hover:bg-muted/50 active:bg-muted transition-colors">
                     <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-info/10 shrink-0"><Navigation className="w-4 h-4 text-info" /></div>
-                    View location
+                    {t('map.viewLocation')}
                   </button>
                 )}
                 {canDeleteRow(actionSheetLead) && (
                   <button type="button" onClick={() => { setDeleteTarget(actionSheetLead); setActionSheetLead(null); }} className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-sm font-medium text-destructive hover:bg-destructive/5 active:bg-destructive/10 transition-colors">
                     <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-destructive/10 shrink-0"><Trash2 className="w-4 h-4 text-destructive" /></div>
-                    Delete lead
+                    {t('leads.deleteLead')}
                   </button>
                 )}
                 <button type="button" onClick={() => setActionSheetLead(null)} className="w-full flex items-center justify-center px-4 py-3.5 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted/50 active:bg-muted transition-colors border border-border">
-                  Close
+                  {t('common.close')}
                 </button>
               </div>
             </div>
@@ -1311,21 +1346,24 @@ export default function Leads() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
         <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this lead?</AlertDialogTitle>
+            <AlertDialogTitle>{t('leads.deleteThisLeadTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              "{deleteTarget?.name}" and all of its follow-ups, warnings and history will be
-              permanently deleted. This cannot be undone.
+              {lang === 'mm' ? (
+                <>"{deleteTarget?.name}" {t('leads.deleteThisLeadBody')}</>
+              ) : (
+                <>"{deleteTarget?.name}" and all of its follow-ups, warnings and history will be permanently deleted. This cannot be undone.</>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               disabled={deleting}
               onClick={(e) => { e.preventDefault(); handleDeleteLead(); }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
-              {deleting ? 'Deleting…' : 'Delete'}
+              {deleting ? t('leads.deleting') : t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1340,18 +1378,15 @@ export default function Leads() {
       >
         <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {bulkSelectionCount} selected lead{bulkSelectionCount === 1 ? '' : 's'}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('leads.deleteSelectedLeadsTitle')} ({bulkSelectionCount})</AlertDialogTitle>
             <AlertDialogDescription>
-              This deletes every currently-selected lead — matching only what your active
-              search and filters show — along with all of their follow-ups, warnings and history.
-              You'll have 10 seconds to undo from a notice at the top right before it's final.
-              Enter your password to confirm.
+              {t('leads.bulkDeleteBody')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="py-1">
             <Input
               type="password"
-              placeholder="Your password"
+              placeholder={t('leads.yourPassword')}
               value={bulkDeletePassword}
               onChange={(e) => setBulkDeletePassword(e.target.value)}
               disabled={bulkDeleting}
@@ -1360,14 +1395,14 @@ export default function Leads() {
             />
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={bulkDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={bulkDeleting}>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               disabled={bulkDeleting || !bulkDeletePassword}
               onClick={(e) => { e.preventDefault(); handleBulkDelete(); }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {bulkDeleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
-              {bulkDeleting ? 'Deleting…' : `Delete ${bulkSelectionCount}`}
+              {bulkDeleting ? t('leads.deleting') : `${t('common.delete')} ${bulkSelectionCount}`}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1377,36 +1412,37 @@ export default function Leads() {
 }
 
 function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilter, projectFilters, toggleProjectFilter, setProjectFilters, deptFilter, setDeptFilter, teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter, sortBy, setSortBy, uniqueAgents, uniqueProjects, departments, teamOptions, showDept = true, showSortDate = true }: any) {
+  const { t, lang } = useTranslation();
   return (
     <>
       <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Status</label>
+        <label className="text-sm font-medium text-foreground">{t('leads.filter.status')}</label>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select status" /></SelectTrigger>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectStatus')} /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            <SelectItem value={FOLLOWUP_SENTINEL}>Follow Up (Contacted, Qualified, Negotiation)</SelectItem>
-            {LEAD_STAGES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
+            <SelectItem value="all">{t('leads.filter.allStatuses')}</SelectItem>
+            <SelectItem value={FOLLOWUP_SENTINEL}>{t('leads.filter.followUpSentinel')}</SelectItem>
+            {LEAD_STAGES.map((s) => (<SelectItem key={s.value} value={s.value}>{enumLabel('stage', s.value, s.label, lang)}</SelectItem>))}
           </SelectContent>
         </Select>
       </div>
       <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Grade</label>
+        <label className="text-sm font-medium text-foreground">{t('leads.filter.grade')}</label>
         <Select value={gradeFilter} onValueChange={setGradeFilter}>
-          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select grade" /></SelectTrigger>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectGrade')} /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All grades</SelectItem>
-            <SelectItem value="A">Grade A</SelectItem>
-            <SelectItem value="B">Grade B</SelectItem>
-            <SelectItem value="C">Grade C</SelectItem>
+            <SelectItem value="all">{t('leads.filter.allGrades')}</SelectItem>
+            <SelectItem value="A">{t('leads.filter.gradePrefix')} A</SelectItem>
+            <SelectItem value="B">{t('leads.filter.gradePrefix')} B</SelectItem>
+            <SelectItem value="C">{t('leads.filter.gradePrefix')} C</SelectItem>
           </SelectContent>
         </Select>
       </div>
       <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Project</label>
+        <label className="text-sm font-medium text-foreground">{t('leads.filter.project')}</label>
         <div className="max-h-48 overflow-y-auto rounded-md border border-input divide-y divide-border">
           {uniqueProjects.length === 0 ? (
-            <p className="text-xs text-muted-foreground p-3">No projects yet</p>
+            <p className="text-xs text-muted-foreground p-3">{t('leads.filter.noProjectsYet')}</p>
           ) : (
             uniqueProjects.map((p: string) => (
               <label key={p} className="flex items-center gap-2.5 px-3 py-2.5 text-sm cursor-pointer">
@@ -1418,17 +1454,17 @@ function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilt
         </div>
         {projectFilters.length > 0 && (
           <button type="button" onClick={() => setProjectFilters([])} className="text-xs font-medium text-primary">
-            Clear projects
+            {t('leads.filter.clearProjects')}
           </button>
         )}
       </div>
       {showDept && (
         <div className="space-y-2">
-          <label className="text-sm font-medium text-foreground">Department</label>
+          <label className="text-sm font-medium text-foreground">{t('leads.filter.department')}</label>
           <Select value={deptFilter} onValueChange={setDeptFilter}>
-            <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select department" /></SelectTrigger>
+            <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectDepartment')} /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All departments</SelectItem>
+              <SelectItem value="all">{t('leads.filter.allDepartments')}</SelectItem>
               {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
             </SelectContent>
           </Select>
@@ -1436,22 +1472,22 @@ function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilt
       )}
       {teamOptions.length > 0 && (
         <div className="space-y-2">
-          <label className="text-sm font-medium text-foreground">Team</label>
+          <label className="text-sm font-medium text-foreground">{t('leads.filter.team')}</label>
           <Select value={teamFilter} onValueChange={setTeamFilter}>
-            <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select team" /></SelectTrigger>
+            <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectTeam')} /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All teams</SelectItem>
+              <SelectItem value="all">{t('leads.filter.allTeams')}</SelectItem>
               {teamOptions.map((tm: { id: string; name: string }) => (<SelectItem key={tm.id} value={tm.id}>{tm.name}</SelectItem>))}
             </SelectContent>
           </Select>
         </div>
       )}
       <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">Sales Person</label>
+        <label className="text-sm font-medium text-foreground">{t('leads.filter.salesPerson')}</label>
         <Select value={agentFilter} onValueChange={setAgentFilter}>
-          <SelectTrigger className="w-full h-12"><SelectValue placeholder="Select sales person" /></SelectTrigger>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectSalesPerson')} /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All sales people</SelectItem>
+            <SelectItem value="all">{t('leads.filter.allSalesPeople')}</SelectItem>
             {uniqueAgents.map((a: string) => (<SelectItem key={a} value={a}>{a}</SelectItem>))}
           </SelectContent>
         </Select>
@@ -1459,30 +1495,30 @@ function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilt
       {showSortDate && (
         <>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Sort By</label>
+            <label className="text-sm font-medium text-foreground">{t('leads.filter.sortBy')}</label>
             <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger className="w-full h-12"><SelectValue placeholder="Sort" /></SelectTrigger>
+              <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.sortPlaceholder')} /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="newest">Newest first</SelectItem>
-                <SelectItem value="oldest">Oldest first</SelectItem>
-                <SelectItem value="name">Name (A–Z)</SelectItem>
-                <SelectItem value="followup">Next follow-up</SelectItem>
-                <SelectItem value="grade">Grade (A–C)</SelectItem>
+                <SelectItem value="newest">{t('leads.sort.newest')}</SelectItem>
+                <SelectItem value="oldest">{t('leads.sort.oldest')}</SelectItem>
+                <SelectItem value="name">{t('leads.sort.name')}</SelectItem>
+                <SelectItem value="followup">{t('leads.sort.followup')}</SelectItem>
+                <SelectItem value="grade">{t('leads.sort.grade')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Date Added</label>
+            <label className="text-sm font-medium text-foreground">{t('leads.filter.dateAdded')}</label>
             <div className="flex items-center gap-1.5">
               <Button
-                type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Previous day"
+                type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label={t('leads.previousDay')}
                 onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), -1))}
               >
                 <ChevronLeft className="w-4 h-4" />
               </Button>
               <Input type="date" value={dateFilter} max={todayStr()} onChange={(e) => setDateFilter(e.target.value)} className="w-full h-12 text-sm" />
               <Button
-                type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label="Next day"
+                type="button" variant="outline" size="icon" className="h-12 w-12 min-h-0 shrink-0" aria-label={t('leads.nextDay')}
                 disabled={(dateFilter || todayStr()) >= todayStr()}
                 onClick={() => setDateFilter(shiftDay(dateFilter || todayStr(), 1))}
               >
@@ -1491,7 +1527,7 @@ function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilt
             </div>
             {dateFilter && (
               <button type="button" onClick={() => setDateFilter('')} className="text-xs font-medium text-primary">
-                Clear — show all dates
+                {t('leads.filter.clearShowAllDates')}
               </button>
             )}
           </div>

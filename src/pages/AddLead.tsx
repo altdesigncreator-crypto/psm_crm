@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTranslation } from '@/contexts/TranslationContext';
 import { supabase } from '@/db/supabase';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -9,11 +10,12 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
-import { MapPin, User, FileText, TrendingUp, CheckCircle2, Circle, Navigation, X, AlertTriangle, Eye, Phone as PhoneIcon, Loader2, Sparkles, Camera, CalendarClock, ListChecks } from 'lucide-react';
+import { MapPin, User, FileText, TrendingUp, CheckCircle2, Circle, X, AlertTriangle, Eye, Phone as PhoneIcon, Loader2, Sparkles, Camera, CalendarClock, ListChecks } from 'lucide-react';
 import {
   INTEREST_TYPES, PROPERTY_TYPES, PURPOSES, LEAD_SOURCES, LEAD_GRADES,
 } from '@/types';
 import { BudgetStepperInput } from '@/components/ui/budget-stepper-input';
+import ProjectNameInput from '@/components/ProjectNameInput';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useTeams } from '@/hooks/useTeams';
@@ -28,9 +30,10 @@ function initialsOf(name: string) {
 export default function AddLead() {
   const navigate = useNavigate();
   const { user, role, department } = useAuth();
+  const { t } = useTranslation();
   const { profiles } = useProfiles();
   const { teams, teamsOf, membersOf } = useTeams();
-  usePageHeader('Add New Lead', 'Capture comprehensive lead information');
+  usePageHeader(t('addLead.title'), t('addLead.subtitle'));
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -53,10 +56,6 @@ export default function AddLead() {
   const [teamId, setTeamId] = useState('');
   const [nextFollowUpDate, setNextFollowUpDate] = useState('');
   const [remarks, setRemarks] = useState('');
-
-  const [leadLat, setLeadLat] = useState<number | null>(null);
-  const [leadLng, setLeadLng] = useState<number | null>(null);
-  const [gpsLoading, setGpsLoading] = useState(false);
 
   const [visitPhotoFile, setVisitPhotoFile] = useState<File | null>(null);
   const [visitPhotoPreview, setVisitPhotoPreview] = useState<string | null>(null);
@@ -102,26 +101,16 @@ export default function AddLead() {
 
   const readyChecks = useMemo(() => {
     const checks = [
-      { label: 'Customer name', done: !!name.trim() },
-      { label: 'Phone number', done: !!phone.trim() },
-      { label: 'Preferred project', done: !!preferredProject.trim() },
-      { label: 'Lead grade', done: !!leadGrade },
+      { labelKey: 'addLead.checkCustomerName', done: !!name.trim() },
+      { labelKey: 'addLead.checkPhoneNumber', done: !!phone.trim() },
+      { labelKey: 'addLead.checkPreferredProject', done: !!preferredProject.trim() },
+      { labelKey: 'addLead.checkLeadGrade', done: !!leadGrade },
     ];
-    if (teamOptions.length > 1) checks.push({ label: 'Team', done: !!teamId });
+    if (teamOptions.length > 1) checks.push({ labelKey: 'addLead.checkTeam', done: !!teamId });
     return checks;
   }, [name, phone, preferredProject, leadGrade, teamOptions.length, teamId]);
   const readyCount = readyChecks.filter((c) => c.done).length;
   const allReady = readyCount === readyChecks.length;
-
-  const handleCaptureLeadGPS = () => {
-    if (!navigator.geolocation) { toast.error('GPS is not supported on this device.'); return; }
-    setGpsLoading(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => { setLeadLat(pos.coords.latitude); setLeadLng(pos.coords.longitude); setGpsLoading(false); toast.success('Lead GPS captured.'); },
-      () => { setGpsLoading(false); toast.error('Could not get GPS — check permissions.'); },
-      { enableHighAccuracy: true, timeout: 15000 }
-    );
-  };
 
   const buildLeadPayload = () => ({
     name: name.trim(),
@@ -141,8 +130,6 @@ export default function AddLead() {
     created_by: user?.id,
     next_follow_up_at: nextFollowUpDate || null,
     remarks: remarks.trim() || null,
-    latitude: leadLat,
-    longitude: leadLng,
   });
 
   const handleAutoScore = async () => {
@@ -161,13 +148,13 @@ export default function AddLead() {
           },
         },
       });
-      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, 'AI scoring failed.'));
-      if (!data?.score) throw new Error('AI scoring failed.');
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, t('addLead.aiScoringFailed')));
+      if (!data?.score) throw new Error(t('addLead.aiScoringFailed'));
       setLeadGrade(data.score);
       setAiScoreReason(data.reasoning || '');
-      toast.success(`AI score: ${data.score} — ${data.reasoning}`);
+      toast.success(`${t('addLead.aiScoreToastPrefix')}: ${data.score} — ${data.reasoning}`);
     } catch (err: any) {
-      toast.error(err.message || 'AI scoring failed.');
+      toast.error(err.message || t('addLead.aiScoringFailed'));
     } finally {
       setAiScoring(false);
     }
@@ -189,7 +176,7 @@ export default function AddLead() {
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!file.type.startsWith('image/')) { toast.error('Please choose an image file.'); return; }
+    if (!file.type.startsWith('image/')) { toast.error(t('addLead.imageFileRequired')); return; }
     setFile(file);
     setPreview(URL.createObjectURL(file));
   };
@@ -213,7 +200,7 @@ export default function AddLead() {
         if (appointmentPhotoFile) updates.appointment_photo_url = await uploadLeadPhoto(leadId, appointmentPhotoFile, 'appointment');
         await supabase.from('leads').update(updates).eq('id', leadId);
       } catch {
-        toast.error("Lead saved, but the photo upload failed — you can add it later from the lead's page.");
+        toast.error(t('addLead.photoUploadFailed'));
       }
     }
 
@@ -225,11 +212,11 @@ export default function AddLead() {
     setError('');
 
     if (!name.trim() || !phone.trim() || !preferredProject.trim() || !leadGrade) {
-      setError('Name, phone, project, and lead grade are required.');
+      setError(t('addLead.requiredFieldsError'));
       return;
     }
     if (teamOptions.length > 1 && !teamId) {
-      setError('Please select which team this lead is for.');
+      setError(t('addLead.selectTeamError'));
       return;
     }
 
@@ -250,7 +237,7 @@ export default function AddLead() {
       // now-stale empty form instead of wherever the user came from.
       navigate(`/lead/${leadId}`, { replace: true });
     } catch (err: any) {
-      setError(err.message || 'Could not save the lead. Please try again.');
+      setError(err.message || t('addLead.saveErrorRetry'));
     } finally {
       setSubmitting(false);
     }
@@ -265,7 +252,7 @@ export default function AddLead() {
       // now-stale empty form instead of wherever the user came from.
       navigate(`/lead/${leadId}`, { replace: true });
     } catch (err: any) {
-      setError(err.message || 'Could not save the lead.');
+      setError(err.message || t('addLead.saveError'));
     } finally {
       setSubmitting(false);
     }
@@ -288,7 +275,7 @@ export default function AddLead() {
     // transform of matrix(1,0,0,1,0,0) on this div being the culprit.
     <div>
       <div className="mb-5 md:hidden">
-        <h1 className="text-xl md:text-2xl font-semibold text-foreground">Add New Lead</h1>
+        <h1 className="text-xl md:text-2xl font-semibold text-foreground">{t('addLead.title')}</h1>
       </div>
 
       <form onSubmit={handleSubmit}>
@@ -302,23 +289,23 @@ export default function AddLead() {
         <div className="lg:col-span-2 space-y-6">
           <Card className="shadow-card rounded-xl border-0">
             <CardContent className="p-5 md:p-6">
-              <SectionHeader icon={User} title="Basic Information" />
+              <SectionHeader icon={User} title={t('addLead.basicInfo')} />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">Customer Name <span className="text-destructive">*</span></Label>
-                  <Input placeholder="Customer name" value={name} onChange={(e) => setName(e.target.value)} required className="h-12" />
+                  <Label className="text-sm font-medium">{t('addLead.customerName')} <span className="text-destructive">*</span></Label>
+                  <Input placeholder={t('addLead.customerName')} value={name} onChange={(e) => setName(e.target.value)} required className="h-12" />
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">Phone <span className="text-destructive">*</span></Label>
-                  <Input type="tel" placeholder="Phone number" value={phone} onChange={(e) => setPhone(e.target.value)} required className="h-12" />
+                  <Label className="text-sm font-medium">{t('common.phone')} <span className="text-destructive">*</span></Label>
+                  <Input type="tel" placeholder={t('common.phone')} value={phone} onChange={(e) => setPhone(e.target.value)} required className="h-12" />
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">Email</Label>
-                  <Input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} className="h-12" />
+                  <Label className="text-sm font-medium">{t('common.email')}</Label>
+                  <Input type="email" placeholder={t('common.email')} value={email} onChange={(e) => setEmail(e.target.value)} className="h-12" />
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">Current Location</Label>
-                  <Input placeholder="Current location" value={currentLocation} onChange={(e) => setCurrentLocation(e.target.value)} className="h-12" />
+                  <Label className="text-sm font-medium">{t('addLead.currentLocation')}</Label>
+                  <Input placeholder={t('addLead.currentLocation')} value={currentLocation} onChange={(e) => setCurrentLocation(e.target.value)} className="h-12" />
                 </div>
               </div>
             </CardContent>
@@ -326,34 +313,34 @@ export default function AddLead() {
 
           <Card className="shadow-card rounded-xl border-0">
             <CardContent className="p-5 md:p-6">
-              <SectionHeader icon={FileText} title="Requirements" />
+              <SectionHeader icon={FileText} title={t('addLead.requirements')} />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">Interest</Label>
+                  <Label className="text-sm font-medium">{t('addLead.interest')}</Label>
                   <Select value={interestType} onValueChange={setInterestType}>
-                    <SelectTrigger className="h-12"><SelectValue placeholder="Select interest" /></SelectTrigger>
-                    <SelectContent>{INTEREST_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                    <SelectTrigger className="h-12"><SelectValue placeholder={t('addLead.selectInterest')} /></SelectTrigger>
+                    <SelectContent>{INTEREST_TYPES.map((it) => <SelectItem key={it} value={it}>{it}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">Property Type</Label>
+                  <Label className="text-sm font-medium">{t('addLead.propertyType')}</Label>
                   <Select value={propertyType} onValueChange={setPropertyType}>
-                    <SelectTrigger className="h-12"><SelectValue placeholder="Select property type" /></SelectTrigger>
-                    <SelectContent>{PROPERTY_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                    <SelectTrigger className="h-12"><SelectValue placeholder={t('addLead.selectPropertyType')} /></SelectTrigger>
+                    <SelectContent>{PROPERTY_TYPES.map((pt) => <SelectItem key={pt} value={pt}>{pt}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">Preferred Project <span className="text-destructive">*</span></Label>
-                  <Input placeholder="Enter project name" value={preferredProject} onChange={(e) => setPreferredProject(e.target.value)} required className="h-12" />
+                  <Label className="text-sm font-medium">{t('addLead.preferredProject')} <span className="text-destructive">*</span></Label>
+                  <ProjectNameInput placeholder={t('addLead.enterProjectName')} value={preferredProject} onChange={setPreferredProject} required className="h-12" />
                 </div>
                 <div className="space-y-3 md:col-span-2">
-                  <Label className="text-sm font-medium">Estimated Budget</Label>
+                  <Label className="text-sm font-medium">{t('addLead.estimatedBudget')}</Label>
                   <BudgetStepperInput minValue={budgetMin} maxValue={budgetMax} isUnlimited={budgetUnlimited} step={1000} onMinChange={setBudgetMin} onMaxChange={setBudgetMax} onUnlimitedToggle={setBudgetUnlimited} />
                 </div>
                 <div className="space-y-2 md:col-span-2">
-                  <Label className="text-sm font-medium">Purpose</Label>
+                  <Label className="text-sm font-medium">{t('addLead.purpose')}</Label>
                   <Select value={purpose} onValueChange={setPurpose}>
-                    <SelectTrigger className="h-12"><SelectValue placeholder="Select purpose" /></SelectTrigger>
+                    <SelectTrigger className="h-12"><SelectValue placeholder={t('addLead.selectPurpose')} /></SelectTrigger>
                     <SelectContent>{PURPOSES.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
@@ -363,29 +350,29 @@ export default function AddLead() {
 
           <Card className="shadow-card rounded-xl border-0">
             <CardContent className="p-5 md:p-6">
-              <SectionHeader icon={TrendingUp} title="Sales Tracking" />
+              <SectionHeader icon={TrendingUp} title={t('addLead.salesTracking')} />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
                 <div className="space-y-2">
-                  <div className="h-5 flex items-center"><Label className="text-sm font-medium">Lead Source</Label></div>
+                  <div className="h-5 flex items-center"><Label className="text-sm font-medium">{t('addLead.leadSource')}</Label></div>
                   <Select value={leadSource} onValueChange={setLeadSource}>
-                    <SelectTrigger className="h-12"><SelectValue placeholder="Select source" /></SelectTrigger>
+                    <SelectTrigger className="h-12"><SelectValue placeholder={t('addLead.selectSource')} /></SelectTrigger>
                     <SelectContent>{LEAD_SOURCES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
                   <div className="h-5 flex items-center justify-between gap-2">
-                    <Label className="text-sm font-medium shrink-0 whitespace-nowrap">Lead Grade <span className="text-destructive">*</span></Label>
+                    <Label className="text-sm font-medium shrink-0 whitespace-nowrap">{t('addLead.leadGrade')} <span className="text-destructive">*</span></Label>
                     <button type="button" onClick={handleAutoScore} disabled={aiScoring} className="text-xs font-medium text-primary hover:text-primary/80 flex items-center gap-1 shrink-0 whitespace-nowrap disabled:opacity-40 transition-colors">
                       {aiScoring ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                      {aiScoring ? 'Scoring…' : 'AI Score'}
+                      {aiScoring ? t('addLead.scoring') : t('addLead.aiScore')}
                     </button>
                   </div>
                   <Select value={leadGrade} onValueChange={setLeadGrade}>
-                    <SelectTrigger className="h-12"><SelectValue placeholder="Select grade" /></SelectTrigger>
-                    <SelectContent>{LEAD_GRADES.map((g) => <SelectItem key={g.value} value={g.value}>{g.label}</SelectItem>)}</SelectContent>
+                    <SelectTrigger className="h-12"><SelectValue placeholder={t('addLead.selectGrade')} /></SelectTrigger>
+                    <SelectContent>{LEAD_GRADES.map((g) => <SelectItem key={g.value} value={g.value}>{t(`grade.${g.value}.label`)}</SelectItem>)}</SelectContent>
                   </Select>
                   {aiScoreReason && <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-2 py-1.5">{aiScoreReason}</p>}
-                  <p className="text-[11px] text-muted-foreground">This is the starting grade. Once follow-ups are recorded, the grade updates automatically based on each follow-up's outcome.</p>
+                  <p className="text-[11px] text-muted-foreground">{t('addLead.gradeHint')}</p>
                 </div>
                 {/* Team first, then who on that team owns the lead — since a
                     manager can run more than one team and a salesperson can
@@ -393,23 +380,23 @@ export default function AddLead() {
                     guessed from a name alone. */}
                 {teamOptions.length > 1 && (
                   <div className="space-y-2">
-                    <Label className="text-sm font-medium">Team <span className="text-destructive">*</span></Label>
+                    <Label className="text-sm font-medium">{t('addLead.team')} <span className="text-destructive">*</span></Label>
                     <Select value={teamId} onValueChange={setTeamId}>
-                      <SelectTrigger className="h-12"><SelectValue placeholder="Select team" /></SelectTrigger>
+                      <SelectTrigger className="h-12"><SelectValue placeholder={t('addLead.selectTeam')} /></SelectTrigger>
                       <SelectContent>
-                        {teamOptions.map((t) => (
-                          <SelectItem key={t.id} value={t.id}>
-                            {t.name}{isAdminOrAbove(role) ? ` · ${getDepartmentLabel(t.department_code)}` : ''}
+                        {teamOptions.map((tm) => (
+                          <SelectItem key={tm.id} value={tm.id}>
+                            {tm.name}{isAdminOrAbove(role) ? ` · ${getDepartmentLabel(tm.department_code)}` : ''}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    <p className="text-[11px] text-muted-foreground">Only this team's manager (plus Admin/exec) will be able to see this lead.</p>
+                    <p className="text-[11px] text-muted-foreground">{t('addLead.teamPermissionHint')}</p>
                   </div>
                 )}
                 {teamOptions.length === 1 && (
                   <div className="space-y-2">
-                    <Label className="text-sm font-medium">Team</Label>
+                    <Label className="text-sm font-medium">{t('addLead.team')}</Label>
                     <div className="h-12 flex items-center px-4 rounded-xl border border-border bg-muted/30 text-sm text-foreground">
                       {teamOptions[0].name}
                     </div>
@@ -417,26 +404,26 @@ export default function AddLead() {
                 )}
                 {canAssign ? (
                   <div className="space-y-2">
-                    <Label className="text-sm font-medium">Assign to Sales Person</Label>
+                    <Label className="text-sm font-medium">{t('addLead.assignToSales')}</Label>
                     <Select value={ownerId} onValueChange={setOwnerId} disabled={!teamId && teamOptions.length > 0}>
-                      <SelectTrigger className="h-12"><SelectValue placeholder={!teamId && teamOptions.length > 0 ? 'Select a team first' : 'Assign to…'} /></SelectTrigger>
+                      <SelectTrigger className="h-12"><SelectValue placeholder={!teamId && teamOptions.length > 0 ? t('addLead.selectTeamFirst') : t('addLead.assignTo')} /></SelectTrigger>
                       <SelectContent>
-                        {user && <SelectItem value={user.id}>Myself</SelectItem>}
+                        {user && <SelectItem value={user.id}>{t('addLead.myself')}</SelectItem>}
                         {teamMemberProfiles.map((p) => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>))}
                       </SelectContent>
                     </Select>
                     {teamId && teamMemberProfiles.length === 0 && (
-                      <p className="text-[11px] text-muted-foreground">This team has no sales people yet — you can still assign the lead to yourself.</p>
+                      <p className="text-[11px] text-muted-foreground">{t('addLead.noSalesInTeam')}</p>
                     )}
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    <Label className="text-sm font-medium">Owner</Label>
-                    <Input value="This lead will be assigned to you" disabled className="h-12 text-sm" />
+                    <Label className="text-sm font-medium">{t('addLead.owner')}</Label>
+                    <Input value={t('addLead.autoAssignedToYou')} disabled className="h-12 text-sm" />
                   </div>
                 )}
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">Next Follow-up Date</Label>
+                  <Label className="text-sm font-medium">{t('addLead.nextFollowUpDate')}</Label>
                   <Input type="date" value={nextFollowUpDate} onChange={(e) => setNextFollowUpDate(e.target.value)} className="h-12" />
                 </div>
               </div>
@@ -445,35 +432,17 @@ export default function AddLead() {
 
           <Card className="shadow-card rounded-xl border-0">
             <CardContent className="p-5 md:p-6">
-              <SectionHeader icon={MapPin} title="Site Details" />
+              <SectionHeader icon={MapPin} title={t('addLead.siteDetails')} />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
                 <div className="space-y-2 md:col-span-2">
-                  <Label className="text-sm font-medium">Remarks</Label>
-                  <Textarea placeholder="Additional remarks…" value={remarks} onChange={(e) => setRemarks(e.target.value)} className="min-h-[100px]" />
+                  <Label className="text-sm font-medium">{t('addLead.remarks')}</Label>
+                  <Textarea placeholder={t('addLead.remarksPlaceholder')} value={remarks} onChange={(e) => setRemarks(e.target.value)} className="min-h-[100px]" />
                 </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label className="text-sm font-medium">Lead GPS Location</Label>
-                  <button
-                    type="button" onClick={handleCaptureLeadGPS} disabled={gpsLoading}
-                    className="w-full flex items-center justify-between p-4 rounded-xl border border-border bg-card active:bg-muted/50 transition-colors text-left min-h-[64px]"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                        {gpsLoading ? <Loader2 className="w-5 h-5 text-primary animate-spin" /> : leadLat != null ? <Navigation className="w-5 h-5 text-success" /> : <MapPin className="w-5 h-5 text-primary" />}
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-foreground">{leadLat != null ? 'GPS captured' : 'Capture Lead GPS'}</p>
-                        <p className="text-xs text-muted-foreground">{leadLat != null ? `${leadLat.toFixed(5)}, ${leadLng?.toFixed(5)}` : 'Tags this lead\'s location for the map view'}</p>
-                      </div>
-                    </div>
-                  </button>
-                </div>
-
                 {/* Both optional — either can be skipped here and added later
                     from the lead's own page once it exists. */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:col-span-2">
                   <div className="space-y-2">
-                    <Label className="text-sm font-medium">Site Visit Photo</Label>
+                    <Label className="text-sm font-medium">{t('addLead.siteVisitPhoto')}</Label>
                     <input ref={visitPhotoInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => selectPhoto(e, setVisitPhotoFile, setVisitPhotoPreview)} />
                     {visitPhotoPreview ? (
                       <div className="relative rounded-xl overflow-hidden border border-border h-40">
@@ -482,7 +451,7 @@ export default function AddLead() {
                           type="button"
                           onClick={() => { setVisitPhotoFile(null); setVisitPhotoPreview(null); if (visitPhotoInputRef.current) visitPhotoInputRef.current.value = ''; }}
                           className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center active:scale-90 transition-transform"
-                          aria-label="Remove site visit photo"
+                          aria-label={t('addLead.removeSiteVisitPhoto')}
                         >
                           <X className="w-4 h-4" />
                         </button>
@@ -494,15 +463,15 @@ export default function AddLead() {
                       >
                         <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center"><Camera className="w-5 h-5 text-primary" /></div>
                         <div>
-                          <p className="text-sm font-semibold text-foreground">Upload Site Visit Photo</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">Optional — can add later</p>
+                          <p className="text-sm font-semibold text-foreground">{t('addLead.uploadSiteVisitPhoto')}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{t('addLead.optionalCanAddLater')}</p>
                         </div>
                       </button>
                     )}
                   </div>
 
                   <div className="space-y-2">
-                    <Label className="text-sm font-medium">Appointment Photo</Label>
+                    <Label className="text-sm font-medium">{t('addLead.appointmentPhoto')}</Label>
                     <input ref={appointmentPhotoInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => selectPhoto(e, setAppointmentPhotoFile, setAppointmentPhotoPreview)} />
                     {appointmentPhotoPreview ? (
                       <div className="relative rounded-xl overflow-hidden border border-border h-40">
@@ -511,7 +480,7 @@ export default function AddLead() {
                           type="button"
                           onClick={() => { setAppointmentPhotoFile(null); setAppointmentPhotoPreview(null); if (appointmentPhotoInputRef.current) appointmentPhotoInputRef.current.value = ''; }}
                           className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center active:scale-90 transition-transform"
-                          aria-label="Remove appointment photo"
+                          aria-label={t('addLead.removeAppointmentPhoto')}
                         >
                           <X className="w-4 h-4" />
                         </button>
@@ -523,8 +492,8 @@ export default function AddLead() {
                       >
                         <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center"><CalendarClock className="w-5 h-5 text-primary" /></div>
                         <div>
-                          <p className="text-sm font-semibold text-foreground">Upload Appointment Photo</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">Optional — can add later</p>
+                          <p className="text-sm font-semibold text-foreground">{t('addLead.uploadAppointmentPhoto')}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{t('addLead.optionalCanAddLater')}</p>
                         </div>
                       </button>
                     )}
@@ -542,7 +511,7 @@ export default function AddLead() {
           <div className="lg:hidden space-y-3">
             {error && <div className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-3">{error}</div>}
             <Button type="submit" disabled={submitting || checkingDuplicate || !allReady} className="w-full h-14 md:h-12 gradient-primary hover:gradient-primary-hover text-white font-semibold text-base transition-all duration-300 hover:shadow-card-hover active:scale-[0.98]">
-              {checkingDuplicate ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Checking for duplicates…</>) : submitting ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving…</>) : (<><CheckCircle2 className="w-4 h-4 mr-2" /> Save Lead</>)}
+              {checkingDuplicate ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t('addLead.checkingDuplicates')}</>) : submitting ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t('addLead.saving')}</>) : (<><CheckCircle2 className="w-4 h-4 mr-2" /> {t('addLead.saveLead')}</>)}
             </Button>
           </div>
         </div>
@@ -566,31 +535,31 @@ export default function AddLead() {
                     {name.trim() ? initialsOf(name) : <User className="w-5 h-5" />}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-foreground truncate">{name.trim() || 'New Lead'}</p>
-                    <p className="text-xs text-muted-foreground truncate">{phone.trim() || 'No phone yet'}</p>
+                    <p className="text-sm font-semibold text-foreground truncate">{name.trim() || t('addLead.newLeadFallback')}</p>
+                    <p className="text-xs text-muted-foreground truncate">{phone.trim() || t('addLead.noPhoneYet')}</p>
                   </div>
                 </div>
                 <div className="space-y-2.5 text-sm">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Project</span>
+                    <span className="text-muted-foreground">{t('addLead.project')}</span>
                     <span className="font-medium text-foreground truncate max-w-[60%] text-right">{preferredProject.trim() || '—'}</span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Budget</span>
+                    <span className="text-muted-foreground">{t('addLead.budget')}</span>
                     <span className="font-medium text-foreground tabular-nums">{budgetRangeDisplay}</span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Grade</span>
-                    <span className="font-medium text-foreground">{leadGrade ? LEAD_GRADES.find((g) => g.value === leadGrade)?.label : '—'}</span>
+                    <span className="text-muted-foreground">{t('addLead.grade')}</span>
+                    <span className="font-medium text-foreground">{leadGrade ? t(`grade.${leadGrade}.label`) : '—'}</span>
                   </div>
                   {selectedTeam && (
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-muted-foreground">Team</span>
+                      <span className="text-muted-foreground">{t('addLead.team')}</span>
                       <span className="font-medium text-foreground truncate max-w-[60%] text-right">{selectedTeam.name}</span>
                     </div>
                   )}
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Assigned to</span>
+                    <span className="text-muted-foreground">{t('addLead.assignedTo')}</span>
                     <span className="font-medium text-foreground truncate max-w-[60%] text-right">{ownerName || '—'}</span>
                   </div>
                 </div>
@@ -601,13 +570,13 @@ export default function AddLead() {
               <CardContent className="p-5">
                 <div className="flex items-center gap-2.5 mb-3">
                   <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><ListChecks className="w-4 h-4 text-primary" /></div>
-                  <h3 className="text-sm font-semibold text-foreground">Before you save</h3>
+                  <h3 className="text-sm font-semibold text-foreground">{t('addLead.beforeYouSave')}</h3>
                 </div>
                 <div className="space-y-2">
                   {readyChecks.map((c) => (
-                    <div key={c.label} className={`flex items-center gap-2 text-sm ${c.done ? 'text-foreground' : 'text-muted-foreground'}`}>
+                    <div key={c.labelKey} className={`flex items-center gap-2 text-sm ${c.done ? 'text-foreground' : 'text-muted-foreground'}`}>
                       {c.done ? <CheckCircle2 className="w-4 h-4 text-success shrink-0" /> : <Circle className="w-4 h-4 shrink-0" />}
-                      {c.label}
+                      {t(c.labelKey)}
                     </div>
                   ))}
                 </div>
@@ -617,9 +586,9 @@ export default function AddLead() {
             <div className="space-y-3">
               {error && <div className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-3">{error}</div>}
               <Button type="submit" disabled={submitting || checkingDuplicate || !allReady} className="w-full h-12 gradient-primary hover:gradient-primary-hover text-white font-semibold text-base transition-all duration-300 hover:shadow-card-hover active:scale-[0.98]">
-                {checkingDuplicate ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Checking for duplicates…</>) : submitting ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving…</>) : (<><CheckCircle2 className="w-4 h-4 mr-2" /> Save Lead</>)}
+                {checkingDuplicate ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t('addLead.checkingDuplicates')}</>) : submitting ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t('addLead.saving')}</>) : (<><CheckCircle2 className="w-4 h-4 mr-2" /> {t('addLead.saveLead')}</>)}
               </Button>
-              {!allReady && <p className="text-xs text-muted-foreground text-center">{readyChecks.length - readyCount} more thing{readyChecks.length - readyCount === 1 ? '' : 's'} needed before you can save.</p>}
+              {!allReady && <p className="text-xs text-muted-foreground text-center">{readyChecks.length - readyCount} {t('addLead.moreThingsNeeded')}</p>}
             </div>
           </div>
         </div>
@@ -628,9 +597,9 @@ export default function AddLead() {
 
       <Dialog open={duplicateDialogOpen} onOpenChange={setDuplicateDialogOpen}>
         <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-lg p-0 overflow-hidden">
-          <DialogHeader className="px-6 pt-6 pb-2"><DialogTitle className="flex items-center gap-2 text-warning"><AlertTriangle className="w-5 h-5 text-warning" /> Possible Duplicate Lead</DialogTitle></DialogHeader>
+          <DialogHeader className="px-6 pt-6 pb-2"><DialogTitle className="flex items-center gap-2 text-warning"><AlertTriangle className="w-5 h-5 text-warning" /> {t('addLead.duplicateTitle')}</DialogTitle></DialogHeader>
           <div className="px-6 pb-6 space-y-4">
-            <p className="text-sm text-muted-foreground">A lead with this phone or email may already exist. Please review:</p>
+            <p className="text-sm text-muted-foreground">{t('addLead.duplicateBody')}</p>
             <div className="space-y-2 max-h-[40vh] overflow-y-auto">
               {duplicateLeads.map((dup) => (
                 <div key={dup.id} className="flex items-start gap-3 p-3 rounded-xl border border-border bg-card">
@@ -643,17 +612,17 @@ export default function AddLead() {
                     </div>
                   </div>
                   <button type="button" onClick={() => navigate(`/lead/${dup.id}`)} className="shrink-0 flex items-center gap-1 text-xs font-medium text-primary hover:bg-primary/10 active:bg-primary/20 rounded-md px-2 py-1 transition-colors">
-                    <Eye className="w-3.5 h-3.5" /> <span className="hidden md:inline">View</span>
+                    <Eye className="w-3.5 h-3.5" /> <span className="hidden md:inline">{t('addLead.view')}</span>
                   </button>
                 </div>
               ))}
             </div>
             <div className="flex flex-col sm:flex-row items-stretch gap-2 pt-2">
               <Button type="button" variant="outline" className="flex-1 h-11 border-border" onClick={() => setDuplicateDialogOpen(false)}>
-                <X className="w-4 h-4 mr-1.5" /> Cancel
+                <X className="w-4 h-4 mr-1.5" /> {t('common.cancel')}
               </Button>
               <Button type="button" className="flex-1 h-11 gradient-primary hover:gradient-primary-hover text-white font-medium active:scale-[0.98]" onClick={proceedWithSubmit} disabled={submitting}>
-                {submitting ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-1.5" />} Add Anyway
+                {submitting ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-1.5" />} {t('addLead.addAnyway')}
               </Button>
             </div>
           </div>

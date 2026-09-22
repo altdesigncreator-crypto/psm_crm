@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Loader2, ZoomIn } from 'lucide-react';
+import { useTranslation } from '@/contexts/TranslationContext';
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -40,6 +41,7 @@ interface AvatarCropDialogProps {
 /** Circular crop-and-zoom step shown between picking a photo and uploading
  * it as a profile picture (see Settings.tsx). */
 export default function AvatarCropDialog({ imageSrc, onCancel, onCropped }: AvatarCropDialogProps) {
+  const { t } = useTranslation();
   const [crop, setCrop] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [croppedArea, setCroppedArea] = useState<Area | null>(null);
@@ -70,7 +72,7 @@ export default function AvatarCropDialog({ imageSrc, onCancel, onCropped }: Avat
     <Dialog open={!!imageSrc} onOpenChange={(open) => !open && !saving && onCancel()}>
       <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md rounded-xl p-6 border border-border/60 shadow-xl bg-card gap-0">
         <DialogHeader className="pb-4 border-b border-border/60">
-          <DialogTitle className="text-base font-semibold">Adjust Your Photo</DialogTitle>
+          <DialogTitle className="text-base font-semibold">{t('avatarCrop.title')}</DialogTitle>
         </DialogHeader>
 
         {imageSrc && (
@@ -96,13 +98,13 @@ export default function AvatarCropDialog({ imageSrc, onCancel, onCropped }: Avat
 
             <div className="flex gap-3 pt-5 mt-3 border-t border-border/60">
               <Button type="button" variant="outline" className="flex-1 h-11" onClick={handleReset} disabled={saving}>
-                Reset
+                {t('avatarCrop.reset')}
               </Button>
               <Button type="button" variant="outline" className="flex-1 h-11" onClick={onCancel} disabled={saving}>
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="button" className="flex-1 h-11 gradient-primary text-white font-medium" onClick={handleSave} disabled={saving || !croppedArea}>
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : t('settings.save')}
               </Button>
             </div>
           </>

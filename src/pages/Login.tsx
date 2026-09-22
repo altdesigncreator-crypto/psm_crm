@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTranslation } from '@/contexts/TranslationContext';
 import { setRememberMe } from '@/db/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +14,7 @@ import { toast } from 'sonner';
 export default function Login() {
   const navigate = useNavigate();
   const { login } = useAuth();
+  const { t } = useTranslation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -28,13 +30,13 @@ export default function Login() {
     try {
       setRememberMe(remember);
       const staffUser = await login(email.toLowerCase().trim(), password);
-      toast.success(`Welcome back, ${staffUser.name}`);
+      toast.success(`${t('login.welcomeToast')}, ${staffUser.name}`);
       // Replace, not push — otherwise /login stays in history and the
       // system back button lands back on it, where the route guard just
       // bounces you straight back to /dashboard (looks completely stuck).
       navigate('/dashboard', { replace: true });
     } catch (err: any) {
-      setError(err?.message || 'Unable to sign in.');
+      setError(err?.message || t('login.genericError'));
     } finally {
       setLoading(false);
     }
@@ -48,13 +50,13 @@ export default function Login() {
         <div className="bg-white rounded-2xl shadow-elevated border border-border/40 p-6 sm:p-8">
           <div className="flex flex-col items-center mb-8">
             <img src="/logo.png" alt="PSM Properties" className="h-20 w-auto mb-4" draggable={false} />
-            <h1 className="text-xl font-semibold text-foreground">Welcome Back</h1>
-            <p className="text-sm text-muted-foreground mt-1">Sign in to your PSM Sale CRM account</p>
+            <h1 className="text-xl font-semibold text-foreground">{t('login.welcomeBack')}</h1>
+            <p className="text-sm text-muted-foreground mt-1">{t('login.subtitle')}</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-sm font-medium">Email</Label>
+              <Label htmlFor="email" className="text-sm font-medium">{t('common.email')}</Label>
               <Input
                 id="email"
                 type="email"
@@ -68,12 +70,12 @@ export default function Login() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-sm font-medium">Password</Label>
+              <Label htmlFor="password" className="text-sm font-medium">{t('common.password')}</Label>
               <div className="relative">
                 <Input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter your password"
+                  placeholder={t('login.passwordPlaceholder')}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -84,7 +86,7 @@ export default function Login() {
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full text-muted-foreground"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-label={showPassword ? t('login.hidePassword') : t('login.showPassword')}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -93,7 +95,7 @@ export default function Login() {
 
             <label className="flex items-center gap-2 cursor-pointer select-none w-fit">
               <Checkbox checked={remember} onCheckedChange={(v) => setRemember(v === true)} />
-              <span className="text-sm text-muted-foreground">Remember me on this device</span>
+              <span className="text-sm text-muted-foreground">{t('login.rememberMe')}</span>
             </label>
 
             {error && (
@@ -107,12 +109,12 @@ export default function Login() {
               disabled={loading}
               className="w-full h-12 gradient-primary hover:gradient-primary-hover text-white font-medium transition-all duration-300 hover:shadow-card-hover active:scale-[0.98]"
             >
-              {loading ? 'Signing in…' : 'Sign In'}
+              {loading ? t('login.signingIn') : t('login.signIn')}
             </Button>
           </form>
 
           <p className="mt-6 text-center text-xs text-muted-foreground">
-            Staff accounts are provisioned by your administrator — there is no self-service sign-up.
+            {t('login.footerNote')}
           </p>
         </div>
       </div>

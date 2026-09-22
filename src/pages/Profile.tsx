@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
+import { useTranslation } from '@/contexts/TranslationContext';
+import { enumLabel } from '@/lib/translations';
 import { getRoleLabel, getDepartmentLabel, isExec } from '@/lib/permissions';
 import { useTeams } from '@/hooks/useTeams';
 import { useProfiles } from '@/hooks/useProfiles';
@@ -10,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import NameLink from '@/components/NameLink';
+import StorageImage from '@/components/StorageImage';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import StatusBadge from '@/components/StatusBadge';
 import { useStatusColors } from '@/hooks/useStatusColors';
@@ -24,9 +27,6 @@ function initialsOf(name: string): string {
   return name.split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('') || '?';
 }
 
-function followUpStatusLabel(status: string) {
-  return FOLLOWUP_STATUSES.find((s) => s.value === status)?.label || status;
-}
 
 function todayStr(): string {
   const d = new Date();
@@ -59,13 +59,14 @@ export default function Profile() {
   const { colors: statusColors } = useStatusColors();
   const { teams, teamsOf, teamsManagedBy, membersOf } = useTeams();
   const { nameOf } = useProfiles();
+  const { t, lang } = useTranslation();
 
   const [profile, setProfile] = useState<ProfileRecord | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [followUps, setFollowUps] = useState<FollowUpWithLead[]>([]);
   const [loading, setLoading] = useState(true);
 
-  usePageHeader('Profile', profile ? `${profile.name} · ${getRoleLabel(profile.role)}` : undefined);
+  usePageHeader(t('profile.title'), profile ? `${profile.name} · ${getRoleLabel(profile.role, lang)}` : undefined);
 
   useEffect(() => {
     if (!id) { setLoading(false); return; }
@@ -116,8 +117,8 @@ export default function Profile() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-muted-foreground animate-fade-in-up">
         <ShieldAlert className="w-10 h-10 mb-3 opacity-40" />
-        <p className="text-base font-medium">This profile isn't available to you.</p>
-        <Button variant="outline" className="mt-4" onClick={() => navigate(-1)}><ArrowLeft className="w-4 h-4 mr-2" />Go back</Button>
+        <p className="text-base font-medium">{t('profile.notAvailable')}</p>
+        <Button variant="outline" className="mt-4" onClick={() => navigate(-1)}><ArrowLeft className="w-4 h-4 mr-2" />{t('profile.goBack')}</Button>
       </div>
     );
   }
@@ -129,7 +130,7 @@ export default function Profile() {
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div className="min-w-0 flex-1 md:hidden">
-          <h1 className="text-xl md:text-2xl font-bold text-foreground">Profile</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">{t('profile.title')}</h1>
         </div>
       </div>
 
@@ -137,7 +138,7 @@ export default function Profile() {
       <Card className="shadow-card rounded-xl border-0">
         <CardContent className="p-5 flex items-start gap-4">
           {profile.avatar_url ? (
-            <img src={profile.avatar_url} alt={profile.name} className="w-14 h-14 rounded-full object-cover shrink-0" />
+            <StorageImage src={profile.avatar_url} alt={profile.name} className="w-14 h-14 rounded-full object-cover shrink-0" />
           ) : (
             <div className="w-14 h-14 rounded-full bg-primary/10 text-primary text-base font-semibold flex items-center justify-center shrink-0">
               {initialsOf(profile.name)}
@@ -147,12 +148,12 @@ export default function Profile() {
             <div>
               <p className="text-lg font-semibold text-foreground truncate">{profile.name}</p>
               <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                <span className="text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">{getRoleLabel(profile.role)}</span>
+                <span className="text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">{getRoleLabel(profile.role, lang)}</span>
                 {profile.department_code && (
                   <span className="text-xs font-medium px-2 py-1 rounded-full bg-muted text-muted-foreground border border-border">{getDepartmentLabel(profile.department_code)}</span>
                 )}
                 <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border ${profile.status === 'active' ? 'bg-emerald-500/5 text-emerald-600 border-emerald-500/20' : 'bg-destructive/5 text-destructive border-destructive/20'}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${profile.status === 'active' ? 'bg-emerald-500' : 'bg-destructive'}`} /> {profile.status === 'active' ? 'Active' : 'Inactive'}
+                  <span className={`w-1.5 h-1.5 rounded-full ${profile.status === 'active' ? 'bg-emerald-500' : 'bg-destructive'}`} /> {profile.status === 'active' ? t('profile.active') : t('profile.inactive')}
                 </span>
               </div>
             </div>
@@ -167,10 +168,10 @@ export default function Profile() {
       {/* Teams & reporting */}
       {profile.role === 'sale' && (
         <Card className="shadow-card rounded-xl border-0">
-          <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Users className="w-4 h-4 text-primary" /></div>Teams & Manager</CardTitle></CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Users className="w-4 h-4 text-primary" /></div>{t('profile.teamsAndManager')}</CardTitle></CardHeader>
           <CardContent className="pt-0">
             {mySalesTeams.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Not yet assigned to a team.</p>
+              <p className="text-sm text-muted-foreground">{t('profile.notAssignedToTeam')}</p>
             ) : (
               <div className="space-y-2.5">
                 {mySalesTeams.map((team) => (
@@ -182,7 +183,7 @@ export default function Profile() {
                     {team.manager_id ? (
                       <NameLink id={team.manager_id} name={nameOf(team.manager_id)} size="sm" />
                     ) : (
-                      <span className="text-xs text-muted-foreground shrink-0">No manager assigned</span>
+                      <span className="text-xs text-muted-foreground shrink-0">{t('profile.noManagerAssigned')}</span>
                     )}
                   </div>
                 ))}
@@ -194,10 +195,10 @@ export default function Profile() {
 
       {profile.role === 'manager' && (
         <Card className="shadow-card rounded-xl border-0">
-          <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><UserCog className="w-4 h-4 text-primary" /></div>Teams Managed</CardTitle></CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><UserCog className="w-4 h-4 text-primary" /></div>{t('profile.teamsManaged')}</CardTitle></CardHeader>
           <CardContent className="pt-0">
             {myManagedTeams.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Not yet running any team.</p>
+              <p className="text-sm text-muted-foreground">{t('profile.notRunningTeam')}</p>
             ) : (
               <div className="space-y-2.5">
                 {myManagedTeams.map((team) => (
@@ -206,7 +207,7 @@ export default function Profile() {
                       <p className="text-sm font-medium text-foreground truncate">{team.name}</p>
                       <p className="text-xs text-muted-foreground">{getDepartmentLabel(team.department_code)}</p>
                     </div>
-                    <span className="text-xs font-medium text-muted-foreground shrink-0">{membersOf(team.id).length} member{membersOf(team.id).length === 1 ? '' : 's'}</span>
+                    <span className="text-xs font-medium text-muted-foreground shrink-0">{membersOf(team.id).length} {t('profile.membersSuffix')}</span>
                   </div>
                 ))}
               </div>
@@ -221,8 +222,8 @@ export default function Profile() {
             <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Globe className="w-4 h-4 text-primary" /></div>
             <p className="text-sm text-muted-foreground">
               {isExec(profile.role)
-                ? 'Global access — not scoped to a single department or team.'
-                : `Department-wide access across ${profile.department_code ? getDepartmentLabel(profile.department_code) : 'their department'}.`}
+                ? t('profile.globalAccess')
+                : `${t('profile.departmentWideAccessPrefix')} ${profile.department_code ? getDepartmentLabel(profile.department_code) : t('profile.theirDepartment')}.`}
             </p>
           </CardContent>
         </Card>
@@ -233,29 +234,29 @@ export default function Profile() {
           person. */}
       <Card className="shadow-card rounded-xl border-0">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Activity className="w-4 h-4 text-primary" /></div>Daily Activity</CardTitle>
+          <CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Activity className="w-4 h-4 text-primary" /></div>{t('profile.dailyActivity')}</CardTitle>
         </CardHeader>
         <CardContent className="pt-0 space-y-4">
           <div className="flex items-center gap-1.5">
-            <Button variant="outline" size="icon" className="h-10 w-10 min-h-0 shrink-0" aria-label="Previous day" onClick={() => setDay(shiftDay(day, -1))}>
+            <Button variant="outline" size="icon" className="h-10 w-10 min-h-0 shrink-0" aria-label={t('leads.previousDay')} onClick={() => setDay(shiftDay(day, -1))}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
             <Input type="date" value={day} max={todayStr()} onChange={(e) => e.target.value && setDay(e.target.value)} className="h-10 w-[150px] text-sm" />
-            <Button variant="outline" size="icon" className="h-10 w-10 min-h-0 shrink-0" aria-label="Next day" disabled={isToday} onClick={() => setDay(shiftDay(day, 1))}>
+            <Button variant="outline" size="icon" className="h-10 w-10 min-h-0 shrink-0" aria-label={t('leads.nextDay')} disabled={isToday} onClick={() => setDay(shiftDay(day, 1))}>
               <ChevronRight className="w-4 h-4" />
             </Button>
             {!isToday && (
-              <Button variant="ghost" className="h-10 px-3 text-xs font-medium text-primary" onClick={() => setDay(todayStr())}>Today</Button>
+              <Button variant="ghost" className="h-10 px-3 text-xs font-medium text-primary" onClick={() => setDay(todayStr())}>{t('profile.today')}</Button>
             )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-0 md:divide-x divide-border/50">
             <div className="md:pr-5">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2.5 flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5 text-primary" /> Leads Added ({dayLeads.length})
+                <Users className="w-3.5 h-3.5 text-primary" /> {t('profile.leadsAdded')} ({dayLeads.length})
               </p>
               {dayLeads.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-1.5">No leads added.</p>
+                <p className="text-xs text-muted-foreground py-1.5">{t('profile.noLeadsAdded')}</p>
               ) : (
                 <div className="space-y-1.5">
                   {dayLeads.map((l) => (
@@ -274,18 +275,18 @@ export default function Profile() {
 
             <div className="md:pl-5">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2.5 flex items-center gap-1.5">
-                <ListChecks className="w-3.5 h-3.5 text-info" /> Follow-ups ({dayFollowUps.length})
+                <ListChecks className="w-3.5 h-3.5 text-info" /> {t('leadDetail.followUps')} ({dayFollowUps.length})
               </p>
               {dayFollowUps.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-1.5">No follow-ups made.</p>
+                <p className="text-xs text-muted-foreground py-1.5">{t('profile.noFollowUpsMade')}</p>
               ) : (
                 <div className="space-y-1.5">
                   {dayFollowUps.map((f) => (
                     <button key={f.id} type="button" onClick={() => navigate(`/lead/${f.lead_id}`)} className="w-full flex items-center gap-2.5 p-2 rounded-lg text-left hover:bg-muted/40 active:bg-muted/60 transition-colors">
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-foreground truncate">{f.leads?.name || 'Lead'}</p>
+                        <p className="text-sm font-medium text-foreground truncate">{f.leads?.name || t('profile.leadFallback')}</p>
                         <div className="flex items-center gap-1.5 mt-0.5">
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">{followUpStatusLabel(f.status)}</span>
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full border bg-muted text-muted-foreground border-border">{enumLabel('followupStatus', f.status, FOLLOWUP_STATUSES.find((s) => s.value === f.status)?.label || f.status, lang)}</span>
                           {f.notes && <span className="text-xs text-muted-foreground truncate">{f.notes}</span>}
                         </div>
                       </div>
@@ -301,18 +302,18 @@ export default function Profile() {
 
       {/* Overview stats */}
       <div className="flex md:grid md:grid-cols-4 gap-3 overflow-x-auto md:overflow-visible pb-2 md:pb-0 -mx-4 px-4 md:mx-0 md:px-0 snap-x snap-mandatory">
-        <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Users className="w-5 h-5 text-primary" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.totalLeads}</p><p className="text-xs text-muted-foreground">Total Leads</p></div></CardContent></Card>
-        <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0"><TrendingUp className="w-5 h-5 text-destructive" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.gradeA}</p><p className="text-xs text-muted-foreground">Grade A</p></div></CardContent></Card>
-        <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center shrink-0"><CheckCircle2 className="w-5 h-5 text-emerald-500" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.sold}</p><p className="text-xs text-muted-foreground">Sold</p></div></CardContent></Card>
-        <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-info/10 flex items-center justify-center shrink-0"><ListChecks className="w-5 h-5 text-info" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.totalFollowUps}</p><p className="text-xs text-muted-foreground">Follow-ups</p></div></CardContent></Card>
+        <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Users className="w-5 h-5 text-primary" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.totalLeads}</p><p className="text-xs text-muted-foreground">{t('dashboard.totalLeads')}</p></div></CardContent></Card>
+        <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0"><TrendingUp className="w-5 h-5 text-destructive" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.gradeA}</p><p className="text-xs text-muted-foreground">{t('dashboard.gradeA')}</p></div></CardContent></Card>
+        <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center shrink-0"><CheckCircle2 className="w-5 h-5 text-emerald-500" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.sold}</p><p className="text-xs text-muted-foreground">{t('stage.sold')}</p></div></CardContent></Card>
+        <Card className="shadow-card rounded-xl border-0 min-w-[140px] md:min-w-0 snap-start flex-1"><CardContent className="p-4 flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-info/10 flex items-center justify-center shrink-0"><ListChecks className="w-5 h-5 text-info" /></div><div><p className="text-xl font-bold text-foreground tabular-nums">{stats.totalFollowUps}</p><p className="text-xs text-muted-foreground">{t('leadDetail.followUps')}</p></div></CardContent></Card>
       </div>
 
       {/* Leads */}
       <Card className="shadow-card rounded-xl border-0">
-        <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Users className="w-4 h-4 text-primary" /></div>Leads ({stats.totalLeads})</CardTitle></CardHeader>
+        <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Users className="w-4 h-4 text-primary" /></div>{t('profile.leads')} ({stats.totalLeads})</CardTitle></CardHeader>
         <CardContent className="p-0">
           {leads.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-32 text-muted-foreground"><Users className="w-8 h-8 mb-2 opacity-30" /><p className="text-sm font-medium">No leads yet</p></div>
+            <div className="flex flex-col items-center justify-center h-32 text-muted-foreground"><Users className="w-8 h-8 mb-2 opacity-30" /><p className="text-sm font-medium">{t('profile.noLeadsYet')}</p></div>
           ) : (
             <ScrollArea className="h-[340px] md:h-80">
               <div className="divide-y divide-border">
@@ -323,7 +324,7 @@ export default function Profile() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-semibold text-foreground">{lead.name}</p>
                         <LeadLevelBadge grade={lead.lead_grade} />
-                        <StatusBadge status={LEAD_STAGES.find((s) => s.value === lead.status)?.label || lead.status} color={statusColors[lead.status] || '#8FA3BF'} />
+                        <StatusBadge status={enumLabel('stage', lead.status, LEAD_STAGES.find((s) => s.value === lead.status)?.label || lead.status, lang)} color={statusColors[lead.status] || '#8FA3BF'} />
                       </div>
                       <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground flex-wrap">
                         <span className="flex items-center gap-1"><Phone className="w-3.5 h-3.5" />{lead.phone}</span>
@@ -331,7 +332,7 @@ export default function Profile() {
                         <span className="flex items-center gap-1 tabular-nums"><Calendar className="w-3.5 h-3.5" />{lead.next_follow_up_at ? new Date(lead.next_follow_up_at).toLocaleDateString() : '—'}</span>
                       </div>
                     </div>
-                    <button type="button" onClick={() => navigate(`/lead/${lead.id}`)} className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center active:bg-primary/20 active:scale-95 transition-all shrink-0 mt-0.5" aria-label="View lead">
+                    <button type="button" onClick={() => navigate(`/lead/${lead.id}`)} className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center active:bg-primary/20 active:scale-95 transition-all shrink-0 mt-0.5" aria-label={t('profile.viewLead')}>
                       <ArrowLeft className="w-4 h-4 rotate-180" />
                     </button>
                   </div>
@@ -344,10 +345,10 @@ export default function Profile() {
 
       {/* Follow-ups */}
       <Card className="shadow-card rounded-xl border-0">
-        <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-info/10 flex items-center justify-center"><ListChecks className="w-4 h-4 text-info" /></div>Follow-ups ({stats.totalFollowUps})</CardTitle></CardHeader>
+        <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-info/10 flex items-center justify-center"><ListChecks className="w-4 h-4 text-info" /></div>{t('leadDetail.followUps')} ({stats.totalFollowUps})</CardTitle></CardHeader>
         <CardContent className="p-0">
           {followUps.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-32 text-muted-foreground"><ListChecks className="w-8 h-8 mb-2 opacity-30" /><p className="text-sm font-medium">No follow-ups logged yet</p></div>
+            <div className="flex flex-col items-center justify-center h-32 text-muted-foreground"><ListChecks className="w-8 h-8 mb-2 opacity-30" /><p className="text-sm font-medium">{t('profile.noFollowUpsLoggedYet')}</p></div>
           ) : (
             <ScrollArea className="h-[340px] md:h-80">
               <div className="divide-y divide-border">
@@ -356,8 +357,8 @@ export default function Profile() {
                     <div className="mt-0.5 w-10 h-10 rounded-full bg-info/10 flex items-center justify-center shrink-0"><ListChecks className="w-4 h-4 text-info" /></div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm font-semibold text-foreground truncate">{f.leads?.name || 'Unknown lead'}</p>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border capitalize">{f.status.replace(/_/g, ' ')}</span>
+                        <p className="text-sm font-semibold text-foreground truncate">{f.leads?.name || t('profile.unknownLead')}</p>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border">{enumLabel('followupStatus', f.status, FOLLOWUP_STATUSES.find((s) => s.value === f.status)?.label || f.status, lang)}</span>
                       </div>
                       {f.notes && <p className="text-xs text-muted-foreground mt-1 truncate">{f.notes}</p>}
                       <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground flex-wrap">
@@ -366,7 +367,7 @@ export default function Profile() {
                       </div>
                     </div>
                     {f.lead_id && (
-                      <button type="button" onClick={() => navigate(`/lead/${f.lead_id}`)} className="w-9 h-9 rounded-full bg-info/10 text-info flex items-center justify-center active:bg-info/20 active:scale-95 transition-all shrink-0 mt-0.5" aria-label="View lead">
+                      <button type="button" onClick={() => navigate(`/lead/${f.lead_id}`)} className="w-9 h-9 rounded-full bg-info/10 text-info flex items-center justify-center active:bg-info/20 active:scale-95 transition-all shrink-0 mt-0.5" aria-label={t('profile.viewLead')}>
                         <ArrowLeft className="w-4 h-4 rotate-180" />
                       </button>
                     )}

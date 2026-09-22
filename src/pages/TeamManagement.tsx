@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
+import { useTranslation } from '@/contexts/TranslationContext';
 import { useDepartments } from '@/hooks/useDepartments';
 import { useTeams } from '@/hooks/useTeams';
 import { useProfiles } from '@/hooks/useProfiles';
@@ -24,7 +25,8 @@ export default function TeamManagement() {
   const { departments } = useDepartments();
   const { profiles } = useProfiles();
   const { teams, createTeam, updateTeam, deleteTeam, deactivateTeam, addMember, removeMember, membersOf } = useTeams();
-  usePageHeader('Team Management', 'Organize each department into teams — one manager and any number of sales people per team.');
+  const { t, lang } = useTranslation();
+  usePageHeader(t('teamManagement.pageTitle'), t('teamManagement.subtitle'));
 
   const isBoss = isExec(role);
   const [selectedDept, setSelectedDept] = useState('');
@@ -65,42 +67,42 @@ export default function TeamManagement() {
     return (
       <div className="flex flex-col items-center justify-center h-[60dvh] text-center px-4 animate-fade-in">
         <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center text-destructive mb-4"><ShieldAlert className="w-8 h-8" /></div>
-        <h2 className="text-lg font-semibold text-foreground">No department assigned</h2>
-        <p className="text-sm text-muted-foreground max-w-sm mt-1">Ask a Boss/Super Admin to assign you a department first.</p>
+        <h2 className="text-lg font-semibold text-foreground">{t('teamManagement.noDeptAssigned')}</h2>
+        <p className="text-sm text-muted-foreground max-w-sm mt-1">{t('teamManagement.noDeptAssignedDesc')}</p>
       </div>
     );
   }
 
   const handleAddTeam = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTeamName.trim() || !selectedDept) { toast.error('Enter a team name.'); return; }
+    if (!newTeamName.trim() || !selectedDept) { toast.error(t('teamManagement.enterTeamName')); return; }
     setSavingTeam(true);
     const error = await createTeam(newTeamName, selectedDept, newTeamManager || null);
     setSavingTeam(false);
-    if (error) { toast.error(error.message || 'Could not create the team.'); return; }
-    toast.success(`${newTeamName.trim()} created.`);
+    if (error) { toast.error(error.message || t('teamManagement.createTeamError')); return; }
+    toast.success(`${newTeamName.trim()} ${t('teamManagement.createdToastSuffix')}`);
     setNewTeamName('');
     setNewTeamManager('');
   };
 
   const handleRenameTeam = async (id: string) => {
-    if (!editingTeamName.trim()) { toast.error('Enter a team name.'); return; }
+    if (!editingTeamName.trim()) { toast.error(t('teamManagement.enterTeamName')); return; }
     setSavingEdit(true);
     const error = await updateTeam(id, { name: editingTeamName.trim() });
     setSavingEdit(false);
-    if (error) { toast.error(error.message || 'Could not rename the team.'); return; }
-    toast.success('Team renamed.');
+    if (error) { toast.error(error.message || t('teamManagement.renameTeamError')); return; }
+    toast.success(t('teamManagement.teamRenamedToast'));
     setEditingTeamId(null);
   };
 
   const handleChangeManager = async (id: string, managerId: string) => {
     const error = await updateTeam(id, { manager_id: managerId || null });
-    if (error) toast.error(error.message || 'Could not change the manager.');
+    if (error) toast.error(error.message || t('teamManagement.changeManagerError'));
   };
 
   const handleToggleMember = async (teamId: string, salePersonId: string, isMember: boolean) => {
     const error = isMember ? await removeMember(teamId, salePersonId) : await addMember(teamId, salePersonId);
-    if (error) toast.error(error.message || 'Could not update team membership.');
+    if (error) toast.error(error.message || t('teamManagement.updateMembershipError'));
   };
 
   const handleDeleteTeam = async () => {
@@ -111,14 +113,14 @@ export default function TeamManagement() {
       if (error) {
         if ((error as { code?: string }).code === '23503') {
           const softErr = await deactivateTeam(deleteTarget.id);
-          if (softErr) { toast.error(softErr.message || 'Could not remove the team.'); return; }
-          toast.success(`${deleteTarget.name} had leads filed under it, so it was deactivated instead.`);
+          if (softErr) { toast.error(softErr.message || t('teamManagement.removeTeamError')); return; }
+          toast.success(`${deleteTarget.name} ${t('teamManagement.deactivatedToastSuffix')}`);
         } else {
-          toast.error(error.message || 'Could not delete the team.');
+          toast.error(error.message || t('teamManagement.deleteTeamError'));
           return;
         }
       } else {
-        toast.success(`${deleteTarget.name} deleted.`);
+        toast.success(`${deleteTarget.name} ${t('teamManagement.deletedToastSuffix')}`);
       }
     } finally {
       setDeleting(false);
@@ -131,14 +133,14 @@ export default function TeamManagement() {
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 active:bg-muted/50" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-5 h-5" /></Button>
         <div className="min-w-0 flex-1 md:hidden">
-          <h1 className="text-xl md:text-2xl font-bold text-foreground">Team Management</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">{t('teamManagement.pageTitle')}</h1>
         </div>
       </div>
 
       {isBoss && (
         <Card className="shadow-card rounded-xl border-0">
           <CardContent className="p-4 md:p-5">
-            <Label className="text-xs font-medium text-muted-foreground">Department</Label>
+            <Label className="text-xs font-medium text-muted-foreground">{t('leads.filter.department')}</Label>
             <Select value={selectedDept} onValueChange={setSelectedDept}>
               <SelectTrigger className="h-11 mt-1.5"><SelectValue /></SelectTrigger>
               <SelectContent>{departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}</SelectContent>
@@ -151,24 +153,24 @@ export default function TeamManagement() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Plus className="w-4 h-4 text-primary" /></div>
-            New Team in {getDepartmentLabel(selectedDept)}
+            {lang === 'mm' ? <>{getDepartmentLabel(selectedDept)} {t('teamManagement.newTeamInPrefix')}</> : <>{t('teamManagement.newTeamInPrefix')} {getDepartmentLabel(selectedDept)}</>}
           </CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleAddTeam} className="flex flex-col sm:flex-row gap-2.5">
-            <Input placeholder="Team name (e.g. Downtown Team)" value={newTeamName} onChange={(e) => setNewTeamName(e.target.value)} className="h-11 flex-1" />
+            <Input placeholder={t('teamManagement.teamNamePlaceholder')} value={newTeamName} onChange={(e) => setNewTeamName(e.target.value)} className="h-11 flex-1" />
             <Select value={newTeamManager} onValueChange={setNewTeamManager}>
-              <SelectTrigger className="h-11 sm:w-56"><SelectValue placeholder="Manager (optional)" /></SelectTrigger>
+              <SelectTrigger className="h-11 sm:w-56"><SelectValue placeholder={t('teamManagement.managerOptional')} /></SelectTrigger>
               <SelectContent>
                 {managersInDept.map((m) => (<SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>))}
               </SelectContent>
             </Select>
             <Button type="submit" disabled={savingTeam} className="h-11 gap-1.5 shrink-0">
-              {savingTeam ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add Team
+              {savingTeam ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} {t('teamManagement.addTeam')}
             </Button>
           </form>
           {managersInDept.length === 0 && (
-            <p className="text-xs text-muted-foreground mt-2.5">No Manager accounts in this department yet — create one from Staff first, or add the team without a manager and assign one later.</p>
+            <p className="text-xs text-muted-foreground mt-2.5">{t('teamManagement.noManagersYet')}</p>
           )}
         </CardContent>
       </Card>
@@ -177,7 +179,9 @@ export default function TeamManagement() {
         {teamsInDept.length === 0 ? (
           <div className="md:col-span-2 flex flex-col items-center justify-center h-40 text-muted-foreground bg-muted/5 rounded-xl border border-dashed border-border">
             <Users className="w-8 h-8 mb-2 opacity-40" />
-            <p className="text-sm font-medium">No teams yet in {getDepartmentLabel(selectedDept)}</p>
+            <p className="text-sm font-medium">
+              {lang === 'mm' ? <>{getDepartmentLabel(selectedDept)} {t('teamManagement.noTeamsYetPrefix')}</> : <>{t('teamManagement.noTeamsYetPrefix')} {getDepartmentLabel(selectedDept)}</>}
+            </p>
           </div>
         ) : (
           teamsInDept.map((team) => {
@@ -189,8 +193,8 @@ export default function TeamManagement() {
                     {editingTeamId === team.id ? (
                       <>
                         <Input value={editingTeamName} onChange={(e) => setEditingTeamName(e.target.value)} className="h-9 flex-1" autoFocus />
-                        <Button size="sm" disabled={savingEdit} onClick={() => handleRenameTeam(team.id)} className="h-9 shrink-0">{savingEdit ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Save'}</Button>
-                        <Button size="sm" variant="ghost" onClick={() => setEditingTeamId(null)} className="h-9 shrink-0">Cancel</Button>
+                        <Button size="sm" disabled={savingEdit} onClick={() => handleRenameTeam(team.id)} className="h-9 shrink-0">{savingEdit ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : t('settings.save')}</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setEditingTeamId(null)} className="h-9 shrink-0">{t('common.cancel')}</Button>
                       </>
                     ) : (
                       <>
@@ -203,9 +207,9 @@ export default function TeamManagement() {
                 </CardHeader>
                 <CardContent className="p-4 space-y-4">
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><UserCog className="w-3.5 h-3.5" /> Manager</Label>
+                    <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><UserCog className="w-3.5 h-3.5" /> {t('teamManagement.manager')}</Label>
                     <Select value={team.manager_id || ''} onValueChange={(v) => handleChangeManager(team.id, v)}>
-                      <SelectTrigger className="h-10"><SelectValue placeholder="Unassigned" /></SelectTrigger>
+                      <SelectTrigger className="h-10"><SelectValue placeholder={t('teamManagement.unassigned')} /></SelectTrigger>
                       <SelectContent>
                         {managersInDept.map((m) => (<SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>))}
                       </SelectContent>
@@ -214,11 +218,11 @@ export default function TeamManagement() {
 
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5" /> Members
+                      <Users className="w-3.5 h-3.5" /> {t('teamManagement.members')}
                       <span className="text-[10px] font-semibold text-muted-foreground bg-muted border border-border px-1.5 py-0.5 rounded-full tabular-nums">{memberIds.length}</span>
                     </Label>
                     {salesInDept.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">No Sales Person accounts in this department yet.</p>
+                      <p className="text-xs text-muted-foreground">{t('teamManagement.noSalesInDept')}</p>
                     ) : (
                       <div className="flex flex-wrap gap-1.5">
                         {salesInDept.map((s) => {
@@ -252,17 +256,16 @@ export default function TeamManagement() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
         <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete the {deleteTarget?.name} team?</AlertDialogTitle>
+            <AlertDialogTitle>{lang === 'mm' ? <>{deleteTarget?.name} {t('teamManagement.deleteTeamTitleSuffix')}</> : <>{t('teamManagement.deleteTeamTitlePrefix')} {deleteTarget?.name} {t('teamManagement.deleteTeamTitleSuffix')}</>}</AlertDialogTitle>
             <AlertDialogDescription>
-              Sales people stay in the department — they just leave this team. If leads are still
-              filed under this team, it's deactivated instead of deleted so their history keeps its label.
+              {t('teamManagement.deleteTeamBody')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction disabled={deleting} onClick={(e) => { e.preventDefault(); handleDeleteTeam(); }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               {deleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
-              {deleting ? 'Deleting…' : 'Delete'}
+              {deleting ? t('leads.deleting') : t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

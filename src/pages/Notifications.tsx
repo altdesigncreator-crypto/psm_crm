@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useNotifications, type Notification } from '@/contexts/NotificationsContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
+import { useTranslation } from '@/contexts/TranslationContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -9,13 +10,13 @@ import {
   UserPlus, PartyPopper, ShieldAlert, Eye, Check, Inbox,
 } from 'lucide-react';
 
-const TYPE_STYLES: Record<string, { bg: string; text: string; icon: React.ReactNode; label: string }> = {
-  new_lead_assigned: { bg: 'bg-primary/10', text: 'text-primary', icon: <UserPlus className="w-4 h-4" />, label: 'New Lead Assigned' },
-  followup_reminder: { bg: 'bg-warning/10', text: 'text-warning', icon: <Clock className="w-4 h-4" />, label: 'Follow-up Reminder' },
-  appointment_reminder: { bg: 'bg-info/10', text: 'text-info', icon: <CalendarDays className="w-4 h-4" />, label: 'Appointment Reminder' },
-  site_visit_reminder: { bg: 'bg-info/10', text: 'text-info', icon: <CalendarDays className="w-4 h-4" />, label: 'Site Visit Reminder' },
-  booking_confirmation: { bg: 'bg-success/10', text: 'text-success', icon: <PartyPopper className="w-4 h-4" />, label: 'Booking Confirmation' },
-  warning_notification: { bg: 'bg-destructive/10', text: 'text-destructive', icon: <ShieldAlert className="w-4 h-4" />, label: 'Warning' },
+const TYPE_STYLES: Record<string, { bg: string; text: string; icon: React.ReactNode; labelKey: string }> = {
+  new_lead_assigned: { bg: 'bg-primary/10', text: 'text-primary', icon: <UserPlus className="w-4 h-4" />, labelKey: 'notifications.type.newLeadAssigned' },
+  followup_reminder: { bg: 'bg-warning/10', text: 'text-warning', icon: <Clock className="w-4 h-4" />, labelKey: 'notifications.type.followupReminder' },
+  appointment_reminder: { bg: 'bg-info/10', text: 'text-info', icon: <CalendarDays className="w-4 h-4" />, labelKey: 'notifications.type.appointmentReminder' },
+  site_visit_reminder: { bg: 'bg-info/10', text: 'text-info', icon: <CalendarDays className="w-4 h-4" />, labelKey: 'notifications.type.siteVisitReminder' },
+  booking_confirmation: { bg: 'bg-success/10', text: 'text-success', icon: <PartyPopper className="w-4 h-4" />, labelKey: 'notifications.type.bookingConfirmation' },
+  warning_notification: { bg: 'bg-destructive/10', text: 'text-destructive', icon: <ShieldAlert className="w-4 h-4" />, labelKey: 'notifications.type.warning' },
 };
 
 function formatNotifDate(iso?: string) {
@@ -23,30 +24,31 @@ function formatNotifDate(iso?: string) {
   return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-function dayGroupLabel(iso?: string): string {
-  if (!iso) return 'Earlier';
+function dayGroupKey(iso?: string): string {
+  if (!iso) return 'notifications.earlier';
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
   const d = new Date(iso); d.setHours(0, 0, 0, 0);
-  if (d.getTime() === today.getTime()) return 'Today';
-  if (d.getTime() === yesterday.getTime()) return 'Yesterday';
-  return 'Earlier';
+  if (d.getTime() === today.getTime()) return 'notifications.today';
+  if (d.getTime() === yesterday.getTime()) return 'notifications.yesterday';
+  return 'notifications.earlier';
 }
 
 export default function Notifications() {
   const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
   const navigate = useNavigate();
-  usePageHeader('Notifications', 'Real-time updates from your team');
+  const { t } = useTranslation();
+  usePageHeader(t('notifications.pageTitle'), t('notifications.subtitle'));
 
   // Notifications already arrive newest-first, so grouping while iterating
   // in order naturally clusters same-day items without a separate sort.
   const groups = useMemo(() => {
-    const out: { label: string; items: Notification[] }[] = [];
+    const out: { labelKey: string; items: Notification[] }[] = [];
     for (const n of notifications) {
-      const label = dayGroupLabel(n.timestamp);
+      const labelKey = dayGroupKey(n.timestamp);
       const last = out[out.length - 1];
-      if (last && last.label === label) last.items.push(n);
-      else out.push({ label, items: [n] });
+      if (last && last.labelKey === labelKey) last.items.push(n);
+      else out.push({ labelKey, items: [n] });
     }
     return out;
   }, [notifications]);
@@ -62,10 +64,10 @@ export default function Notifications() {
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-5 h-5" /></Button>
         <div className="min-w-0 flex-1 md:hidden">
-          <h1 className="text-xl md:text-2xl font-bold text-foreground">Notifications</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">{t('notifications.pageTitle')}</h1>
         </div>
         {unreadCount > 0 && (
-          <Button variant="outline" size="sm" className="h-10 gap-2 shrink-0 ml-auto" onClick={markAllAsRead}><CheckCircle2 className="w-4 h-4" /><span className="text-sm">Mark all read</span></Button>
+          <Button variant="outline" size="sm" className="h-10 gap-2 shrink-0 ml-auto" onClick={markAllAsRead}><CheckCircle2 className="w-4 h-4" /><span className="text-sm">{t('notifications.markAllRead')}</span></Button>
         )}
       </div>
 
@@ -75,13 +77,13 @@ export default function Notifications() {
             <CardContent className="p-0">
               {notifications.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-56 text-muted-foreground">
-                  <Bell className="w-10 h-10 mb-2 opacity-30" /><p className="text-sm font-medium">No notifications</p>
+                  <Bell className="w-10 h-10 mb-2 opacity-30" /><p className="text-sm font-medium">{t('notifications.noNotifications')}</p>
                 </div>
               ) : (
                 groups.map((group) => (
-                  <div key={group.label}>
+                  <div key={group.labelKey}>
                     <div className="px-5 py-2.5 bg-muted/30 border-y border-border/60 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      {group.label}
+                      {t(group.labelKey)}
                     </div>
                     <div className="divide-y divide-border">
                       {group.items.map((n) => {
@@ -103,12 +105,12 @@ export default function Notifications() {
                             </div>
                             <div className="flex flex-col gap-1.5 shrink-0">
                               {n.leadId && (
-                                <button type="button" onClick={() => { markAsRead(n.id); navigate(`/lead/${n.leadId}`); }} className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center active:bg-primary/20 active:scale-95 transition-all" aria-label="View lead">
+                                <button type="button" onClick={() => { markAsRead(n.id); navigate(`/lead/${n.leadId}`); }} className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center active:bg-primary/20 active:scale-95 transition-all" aria-label={t('notifications.viewLead')}>
                                   <Eye className="w-4 h-4" />
                                 </button>
                               )}
                               {!n.isRead && (
-                                <button type="button" onClick={() => markAsRead(n.id)} className="w-9 h-9 rounded-full bg-success/10 text-success flex items-center justify-center active:bg-success/20 active:scale-95 transition-all" aria-label="Mark as read">
+                                <button type="button" onClick={() => markAsRead(n.id)} className="w-9 h-9 rounded-full bg-success/10 text-success flex items-center justify-center active:bg-success/20 active:scale-95 transition-all" aria-label={t('notifications.markAsRead')}>
                                   <Check className="w-4 h-4" />
                                 </button>
                               )}
@@ -129,15 +131,15 @@ export default function Notifications() {
             <CardContent className="p-5">
               <div className="flex items-center gap-2.5 mb-4">
                 <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Inbox className="w-4 h-4 text-primary" /></div>
-                <h3 className="text-sm font-semibold text-foreground">Overview</h3>
+                <h3 className="text-sm font-semibold text-foreground">{t('notifications.overview')}</h3>
               </div>
               <div className="space-y-2.5 text-sm">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-muted-foreground">Unread</span>
+                  <span className="text-muted-foreground">{t('notifications.unread')}</span>
                   <span className="font-semibold text-foreground tabular-nums">{unreadCount}</span>
                 </div>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-muted-foreground">Total</span>
+                  <span className="text-muted-foreground">{t('notifications.total')}</span>
                   <span className="font-semibold text-foreground tabular-nums">{notifications.length}</span>
                 </div>
               </div>
@@ -147,14 +149,14 @@ export default function Notifications() {
           {typeCounts.length > 0 && (
             <Card className="shadow-card rounded-xl border-0">
               <CardContent className="p-5">
-                <h3 className="text-sm font-semibold text-foreground mb-3">By Type</h3>
+                <h3 className="text-sm font-semibold text-foreground mb-3">{t('notifications.byType')}</h3>
                 <div className="space-y-2">
                   {typeCounts.map(([type, count]) => {
                     const style = TYPE_STYLES[type] || TYPE_STYLES.appointment_reminder;
                     return (
                       <div key={type} className="flex items-center gap-2.5 text-sm">
                         <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${style.bg}`}><span className={`${style.text} [&>svg]:w-3.5 [&>svg]:h-3.5`}>{style.icon}</span></div>
-                        <span className="flex-1 min-w-0 text-muted-foreground truncate">{style.label}</span>
+                        <span className="flex-1 min-w-0 text-muted-foreground truncate">{t(style.labelKey)}</span>
                         <span className="font-semibold text-foreground tabular-nums">{count}</span>
                       </div>
                     );

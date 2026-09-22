@@ -70,10 +70,15 @@ const SheetContent = React.forwardRef<
     >
       {/* Explicit 48x48 circle: the global `button { min-height: 48px }`
           touch-target rule would otherwise stretch an unsized close button
-          into a tall 16px-wide oval. */}
+          into a tall 16px-wide oval.
+          z-10 is load-bearing: this renders before `children` in the DOM,
+          so any content that's itself positioned (e.g. a `relative` header
+          row, common for decorative overlays) would otherwise stack above
+          it at the same z-index:auto level and silently eat its clicks —
+          the button stays visible but stops responding to taps. */}
       <SheetPrimitive.Close
         className={cn(
-          "absolute right-3 top-3 flex h-12 w-12 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:bg-muted/80 focus:outline-none focus:ring-2 focus:ring-ring disabled:pointer-events-none",
+          "absolute right-3 top-3 z-10 flex h-12 w-12 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:bg-muted/80 focus:outline-none focus:ring-2 focus:ring-ring disabled:pointer-events-none",
           closeClassName
         )}
       >

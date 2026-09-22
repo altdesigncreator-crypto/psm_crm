@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
+import { useTranslation } from '@/contexts/TranslationContext';
 import { isExec, getDepartmentLabel, type Department } from '@/lib/permissions';
 import { exportKPIAsExcel, exportKPIAsPDF } from '@/lib/exportUtils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -51,7 +52,8 @@ export default function KPIBoard() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [deptFilter, setDeptFilter] = useState<string>('all');
-  usePageHeader('KPI Board', 'Sales performance leaderboard');
+  const { t } = useTranslation();
+  usePageHeader(t('kpiBoard.pageTitle'), t('kpiBoard.subtitle'));
 
   const { period, setPeriod, isCurrentPeriod, shiftPeriod, periodLabel, matchesPeriod } = usePeriodFilter();
 
@@ -66,7 +68,7 @@ export default function KPIBoard() {
       try {
         setLeads(await fetchAllRows<Lead>('leads'));
       } catch {
-        toast.error('Could not load KPI data.');
+        toast.error(t('kpiBoard.loadError'));
       }
       setLoading(false);
     })();
@@ -76,8 +78,8 @@ export default function KPIBoard() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-muted-foreground animate-fade-in-up">
         <Target className="w-10 h-10 mb-3 opacity-40" />
-        <p className="text-base font-medium">This page is restricted to Boss and Super Admin.</p>
-        <Button variant="outline" className="mt-4" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-4 h-4 mr-2" />Back to Dashboard</Button>
+        <p className="text-base font-medium">{t('kpiBoard.restricted')}</p>
+        <Button variant="outline" className="mt-4" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-4 h-4 mr-2" />{t('kpiBoard.backToDashboard')}</Button>
       </div>
     );
   }
@@ -131,12 +133,12 @@ export default function KPIBoard() {
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" className="h-12 w-12 shrink-0 active:bg-muted/50" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-5 h-5" /></Button>
-          <div className="min-w-0 flex-1 md:hidden"><h1 className="text-xl md:text-2xl font-bold text-foreground">KPI Board</h1></div>
+          <div className="min-w-0 flex-1 md:hidden"><h1 className="text-xl md:text-2xl font-bold text-foreground">{t('kpiBoard.pageTitle')}</h1></div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {topAgent && (
             <div className="flex items-center gap-2 bg-warning/10 border border-warning/20 rounded-lg px-3 py-2">
-              <Trophy className="w-4 h-4 text-warning" /><span className="text-xs font-medium text-warning">Top performer — <NameLink id={topAgent.id} name={topAgent.name} showAvatar={false} className="text-warning" /> (Grade A: {topAgent.gradeA})</span>
+              <Trophy className="w-4 h-4 text-warning" /><span className="text-xs font-medium text-warning">{t('kpiBoard.topPerformer')} — <NameLink id={topAgent.id} name={topAgent.name} showAvatar={false} className="text-warning" /> ({t('kpiBoard.gradeALabel')}: {topAgent.gradeA})</span>
             </div>
           )}
           <Button variant="outline" size="sm" className="h-12 gap-2 text-sm font-medium active:bg-muted/30" onClick={() => exportKPIAsExcel(agentStats, departmentStats.map((d) => ({ displayName: getDepartmentLabel(d.department), totalLeads: d.totalLeads, soldCount: 0, agentCount: d.agentCount })))} disabled={agentStats.length === 0}>
@@ -158,20 +160,20 @@ export default function KPIBoard() {
         <Card className="shadow-card rounded-xl border-0 min-w-[150px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-4 flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center shrink-0"><Users className="w-5 h-5 text-primary" /></div>
-            <div><p className="text-2xl font-bold text-foreground tabular-nums">{periodLeads.length}</p><p className="text-xs text-muted-foreground">Total Leads</p></div>
+            <div><p className="text-2xl font-bold text-foreground tabular-nums">{periodLeads.length}</p><p className="text-xs text-muted-foreground">{t('dashboard.totalLeads')}</p></div>
           </CardContent>
         </Card>
         <Card className="shadow-card rounded-xl border-0 min-w-[150px] md:min-w-0 snap-start flex-1">
           <CardContent className="p-4 flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0"><Target className="w-5 h-5 text-destructive" /></div>
-            <div><p className="text-2xl font-bold text-foreground tabular-nums">{periodLeads.filter((l) => l.lead_grade === 'A').length}</p><p className="text-xs text-muted-foreground">Grade A Leads</p></div>
+            <div><p className="text-2xl font-bold text-foreground tabular-nums">{periodLeads.filter((l) => l.lead_grade === 'A').length}</p><p className="text-xs text-muted-foreground">{t('kpiBoard.gradeALeads')}</p></div>
           </CardContent>
         </Card>
       </div>
 
       {departmentStats.length > 0 && (
         <Card className="shadow-card rounded-xl border-0">
-          <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><BarChart3 className="w-4 h-4 text-primary" /></div>Department Performance</CardTitle></CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><BarChart3 className="w-4 h-4 text-primary" /></div>{t('kpiBoard.departmentPerformance')}</CardTitle></CardHeader>
           <CardContent className="p-0">
             <div className="flex md:grid md:grid-cols-3 gap-3 p-4 md:p-5 overflow-x-auto md:overflow-visible snap-x snap-mandatory">
               {departmentStats.map((dept, idx) => {
@@ -181,12 +183,12 @@ export default function KPIBoard() {
                   <div className="flex items-center gap-2 mb-3">
                     <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${palette.bg} ${palette.text}`}><Building2 className="w-4 h-4" /></div>
                     <p className="text-sm font-semibold text-foreground">{getDepartmentLabel(dept.department)}</p>
-                    {deptFilter === dept.department && <span className="ml-auto text-[10px] font-medium px-2 py-0.5 rounded-full bg-primary text-white">Filtered</span>}
+                    {deptFilter === dept.department && <span className="ml-auto text-[10px] font-medium px-2 py-0.5 rounded-full bg-primary text-white">{t('kpiBoard.filtered')}</span>}
                   </div>
                   <div className="grid grid-cols-3 gap-3">
-                    <div><p className="text-lg font-bold text-foreground tabular-nums">{dept.totalLeads}</p><p className="text-[10px] text-muted-foreground">Leads</p></div>
-                    <div><p className="text-lg font-bold text-foreground tabular-nums">{dept.gradeACount}</p><p className="text-[10px] text-muted-foreground">Grade A</p></div>
-                    <div><p className="text-lg font-bold text-foreground tabular-nums">{dept.agentCount}</p><p className="text-[10px] text-muted-foreground">Staff</p></div>
+                    <div><p className="text-lg font-bold text-foreground tabular-nums">{dept.totalLeads}</p><p className="text-[10px] text-muted-foreground">{t('kpiBoard.leads')}</p></div>
+                    <div><p className="text-lg font-bold text-foreground tabular-nums">{dept.gradeACount}</p><p className="text-[10px] text-muted-foreground">{t('kpiBoard.gradeALabel')}</p></div>
+                    <div><p className="text-lg font-bold text-foreground tabular-nums">{dept.agentCount}</p><p className="text-[10px] text-muted-foreground">{t('kpiBoard.staff')}</p></div>
                   </div>
                 </button>
                 );
@@ -200,30 +202,30 @@ export default function KPIBoard() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><BarChart3 className="w-4 h-4 text-primary" /></div>
-            Individual Performance
-            {deptFilter !== 'all' && <span className="ml-2 text-xs font-normal text-muted-foreground">· {getDepartmentLabel(deptFilter)} only</span>}
+            {t('kpiBoard.individualPerformance')}
+            {deptFilter !== 'all' && <span className="ml-2 text-xs font-normal text-muted-foreground">· {getDepartmentLabel(deptFilter)} {t('kpiBoard.onlySuffix')}</span>}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           {agentStats.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 text-muted-foreground"><Trophy className="w-10 h-10 mb-2 opacity-30" /><p className="text-sm font-medium">No records yet</p></div>
+            <div className="flex flex-col items-center justify-center h-40 text-muted-foreground"><Trophy className="w-10 h-10 mb-2 opacity-30" /><p className="text-sm font-medium">{t('kpiBoard.noRecordsYet')}</p></div>
           ) : (
             <div className="divide-y divide-border">
               {agentStats.map((agent, idx) => (
                 <div key={agent.id} className="flex flex-col md:flex-row md:items-center gap-3 p-4 md:p-5 min-h-[80px] transition-colors active:bg-muted/50 hover:bg-muted/30 group">
                   <div className="flex items-center gap-3 shrink-0">
                     <div className={`w-11 h-11 rounded-full flex items-center justify-center text-xs font-bold ${idx === 0 ? 'bg-warning text-white' : idx === 1 ? 'bg-muted text-foreground' : idx === 2 ? 'bg-primary/10 text-primary' : 'bg-muted/50 text-muted-foreground'}`}>{idx + 1}</div>
-                    <div className="min-w-0 flex-1"><NameLink id={agent.id} name={agent.name} showAvatar={false} className="text-sm font-semibold" /><p className="text-xs text-muted-foreground tabular-nums">{agent.totalLeads} leads · {agent.soldCount} sold</p></div>
-                    <button type="button" onClick={() => navigate(`/profile/${agent.id}`)} className="md:hidden w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center active:bg-primary/20 active:scale-95 transition-all shrink-0" aria-label="View profile"><Eye className="w-4 h-4" /></button>
+                    <div className="min-w-0 flex-1"><NameLink id={agent.id} name={agent.name} showAvatar={false} className="text-sm font-semibold" /><p className="text-xs text-muted-foreground tabular-nums">{agent.totalLeads} {t('kpiBoard.leadsWord')} · {agent.soldCount} {t('kpiBoard.soldWord')}</p></div>
+                    <button type="button" onClick={() => navigate(`/profile/${agent.id}`)} className="md:hidden w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center active:bg-primary/20 active:scale-95 transition-all shrink-0" aria-label={t('kpiBoard.viewProfile')}><Eye className="w-4 h-4" /></button>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="grid grid-cols-2 gap-2 md:gap-3">
-                      <div className="bg-primary/5 rounded-lg p-2.5 text-center"><div className="flex items-center justify-center gap-1 mb-0.5"><Users className="w-3.5 h-3.5 text-primary" /><span className="text-xs font-medium text-primary">Leads</span></div><p className="text-lg font-bold text-foreground tabular-nums">{agent.totalLeads}</p></div>
-                      <div className="bg-destructive/5 rounded-lg p-2.5 text-center"><div className="flex items-center justify-center gap-1 mb-0.5"><TrendingUp className="w-3.5 h-3.5 text-destructive" /><span className="text-xs font-medium text-destructive">Grade A</span></div><p className="text-lg font-bold text-foreground tabular-nums">{agent.gradeA}</p></div>
+                      <div className="bg-primary/5 rounded-lg p-2.5 text-center"><div className="flex items-center justify-center gap-1 mb-0.5"><Users className="w-3.5 h-3.5 text-primary" /><span className="text-xs font-medium text-primary">{t('kpiBoard.leads')}</span></div><p className="text-lg font-bold text-foreground tabular-nums">{agent.totalLeads}</p></div>
+                      <div className="bg-destructive/5 rounded-lg p-2.5 text-center"><div className="flex items-center justify-center gap-1 mb-0.5"><TrendingUp className="w-3.5 h-3.5 text-destructive" /><span className="text-xs font-medium text-destructive">{t('kpiBoard.gradeALabel')}</span></div><p className="text-lg font-bold text-foreground tabular-nums">{agent.gradeA}</p></div>
                     </div>
                   </div>
                   <div className="shrink-0 w-full md:w-40">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground mb-1"><span>Grade Breakdown</span><span className="flex items-center gap-0.5"><ArrowUpRight className="w-3.5 h-3.5 text-success" />{agent.gradeA > 0 ? 'Active' : '—'}</span></div>
+                    <div className="flex items-center justify-between text-xs text-muted-foreground mb-1"><span>{t('kpiBoard.gradeBreakdown')}</span><span className="flex items-center gap-0.5"><ArrowUpRight className="w-3.5 h-3.5 text-success" />{agent.gradeA > 0 ? t('kpiBoard.active') : '—'}</span></div>
                     <div className="h-2.5 w-full rounded-full overflow-hidden flex">
                       {agent.totalLeads > 0 ? (
                         <>

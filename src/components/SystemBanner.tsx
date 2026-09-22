@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '@/db/supabase';
 import { Info, AlertTriangle, Wrench, Siren, X } from 'lucide-react';
 import type { SystemMessage, SystemMessageType } from '@/types';
+import { useTranslation } from '@/contexts/TranslationContext';
 
 const DISMISS_KEY = 'psm_banner_dismissed';
 
@@ -20,6 +21,7 @@ const TYPE_STYLE: Record<SystemMessageType, { bar: string; badge: string }> = {
  * database/crm.sql section 16) and updates live via Realtime. Managed at
  * /system-banner-admin, a login unrelated to any CRM staff account. */
 export default function SystemBanner() {
+  const { t } = useTranslation();
   const [active, setActive] = useState<SystemMessage | null>(null);
   const [dismissedKey, setDismissedKey] = useState<string | null>(() => sessionStorage.getItem(DISMISS_KEY));
 
@@ -64,7 +66,7 @@ export default function SystemBanner() {
         type="button"
         onClick={() => { sessionStorage.setItem(DISMISS_KEY, dismissKeyForMessage); setDismissedKey(dismissKeyForMessage); }}
         className="shrink-0 h-8 w-8 min-h-0 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-black/5 transition-colors"
-        aria-label="Dismiss"
+        aria-label={t('systemBannerBar.dismiss')}
       >
         <X className="w-4 h-4" />
       </button>

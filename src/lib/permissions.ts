@@ -9,6 +9,7 @@
  */
 
 import { getDepartmentLabel as lookupDepartmentLabel } from '@/lib/departments';
+import { translations, type Lang } from '@/lib/translations';
 
 export type RoleTier = 'boss' | 'super_admin' | 'admin' | 'manager' | 'sale';
 /** Departments are dynamic data (public.departments table), not a fixed set
@@ -129,12 +130,11 @@ export function canAddFollowUp(user: CurrentUser | null, lead: LeadRecord): bool
   if (!user) return false;
   if (isExec(user.role)) return true;
   if (user.role === 'admin') return lead.departmentCode === user.department;
-  // Managers are excluded outright — FRD: Follow-up = "View Only" for Manager.
-  // Explicit, not just a fallthrough: a manager can end up as a lead's
-  // owner_id (AddLead.tsx lets any manager-or-above assign a lead to
-  // themselves), and without this check the generic owner-match below would
-  // wrongly let a manager add a follow-up to a lead they happen to own.
-  if (user.role === 'manager') return false;
+  // Manager is otherwise "view only" for follow-ups (can't add on a lead
+  // they merely manage/monitor), but can add on a lead they personally own
+  // — AddLead.tsx lets a manager-or-above assign a lead to themselves, and
+  // that self-owned case falls through to the generic owner-match below,
+  // same as it already works for a sale rep.
   return lead.ownerId === user.id;
 }
 
@@ -200,9 +200,9 @@ export function canAccessRoute(role: RoleTier | null | undefined, routeKey: Rout
   }
 }
 
-export function getRoleLabel(role: RoleTier | null | undefined): string {
+export function getRoleLabel(role: RoleTier | null | undefined, lang: Lang = 'en'): string {
   if (!role) return '—';
-  return ROLE_LABELS[role] || role;
+  return translations[`role.${role}`]?.[lang] || ROLE_LABELS[role] || role;
 }
 
 export function getDepartmentLabel(department: string | null | undefined): string {

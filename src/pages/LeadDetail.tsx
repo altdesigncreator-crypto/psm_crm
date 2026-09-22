@@ -24,10 +24,13 @@ import {
 } from '@/types';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
+import StorageImage from '@/components/StorageImage';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useTeams } from '@/hooks/useTeams';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTranslation } from '@/contexts/TranslationContext';
+import { enumLabel } from '@/lib/translations';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { canEditLead, canAddFollowUp, canAssignLead, canIssueWarning, canMonitorLead, canDeleteLead } from '@/lib/permissions';
 import { supabase } from '@/db/supabase';
@@ -61,14 +64,12 @@ function EditField({ label, icon, children }: { label: string; icon?: React.Reac
   );
 }
 
-function stageLabel(status: string) {
-  return LEAD_STAGES.find((s) => s.value === status)?.label || status;
-}
-
 export default function LeadDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user, role, myTeamIds } = useAuth();
+  const { t, lang } = useTranslation();
+  const stageLabel = (status: string) => enumLabel('stage', status, LEAD_STAGES.find((s) => s.value === status)?.label || status, lang);
   const [lead, setLead] = useState<Lead | null>(null);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [warnings, setWarnings] = useState<WarningRecord[]>([]);
@@ -122,7 +123,7 @@ export default function LeadDetail() {
     ? profiles.filter((p) => teamStaff.includes(p.id) && p.role === 'sale')
     : profiles.filter((p) => p.department_code === lead?.department_code && p.role === 'sale');
 
-  usePageHeader('Lead Profile', lead ? `${lead.name} — ${lead.phone}` : undefined);
+  usePageHeader(t('leadDetail.pageTitle'), lead ? `${lead.name} — ${lead.phone}` : undefined);
 
   if (loading) {
     return (
@@ -136,9 +137,9 @@ export default function LeadDetail() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-muted-foreground">
         <FileText className="w-10 h-10 mb-3 opacity-40" />
-        <p className="text-base font-medium">Lead not found</p>
+        <p className="text-base font-medium">{t('leadDetail.notFound')}</p>
         <Button variant="outline" className="mt-4" onClick={() => navigate('/leads')}>
-          <ArrowLeft className="w-4 h-4 mr-2" /> Back to Leads
+          <ArrowLeft className="w-4 h-4 mr-2" /> {t('leadDetail.backToLeads')}
         </Button>
       </div>
     );
@@ -163,7 +164,7 @@ export default function LeadDetail() {
   const handleCancelEdit = () => setEditMode(false);
 
   const handleSaveEdit = async () => {
-    if (!editForm.name.trim() || !editForm.phone.trim()) { toast.error('Name and phone are required.'); return; }
+    if (!editForm.name.trim() || !editForm.phone.trim()) { toast.error(t('leadDetail.nameRequired')); return; }
     setSavingEdit(true);
     const patch = {
       name: editForm.name.trim(),
@@ -180,10 +181,10 @@ export default function LeadDetail() {
     };
     const { error } = await supabase.from('leads').update(patch).eq('id', lead.id);
     setSavingEdit(false);
-    if (error) { toast.error('Could not save changes.'); return; }
+    if (error) { toast.error(t('leadDetail.saveError')); return; }
     setLead((prev) => (prev ? { ...prev, ...patch } : prev));
     setEditMode(false);
-    toast.success('Lead updated.');
+    toast.success(t('leadDetail.updatedToast'));
   };
 
   const handleDeleteLead = async () => {
@@ -198,12 +199,12 @@ export default function LeadDetail() {
         performed_by: user?.id,
         old_value: { name: lead.name, phone: lead.phone, owner_id: lead.owner_id },
       });
-      toast.success(`Lead "${lead.name}" deleted.`);
+      toast.success(`"${lead.name}" ${t('leads.deletedToast')}`);
       // Replace, not push — the lead page we're leaving no longer exists,
       // so back should return to the leads list, not to a dead lead page.
       navigate('/leads', { replace: true });
     } catch {
-      toast.error('Could not delete the lead.');
+      toast.error(t('leads.deleteError'));
       setDeleting(false);
       setDeleteOpen(false);
     }
@@ -215,7 +216,7 @@ export default function LeadDetail() {
     column: 'visit_photo_url' | 'appointment_photo_url',
     setUploading: (v: boolean) => void
   ) => {
-    if (!file.type.startsWith('image/')) { toast.error('Please choose an image file.'); return; }
+    if (!file.type.startsWith('image/')) { toast.error(t('leadDetail.imageFileRequired')); return; }
     setUploading(true);
     try {
       const path = `${lead.id}/${kind}-${Date.now()}.jpg`;
@@ -227,9 +228,9 @@ export default function LeadDetail() {
       if (error) throw error;
 
       setLead((prev) => (prev ? { ...prev, [column]: url } : prev));
-      toast.success('Photo uploaded.');
+      toast.success(t('leadDetail.photoUploadedToast'));
     } catch {
-      toast.error('Could not upload the photo.');
+      toast.error(t('leadDetail.photoUploadError'));
     } finally {
       setUploading(false);
     }
@@ -237,44 +238,44 @@ export default function LeadDetail() {
 
   const handleStageChange = async (newStage: string) => {
     const { error } = await supabase.from('leads').update({ status: newStage }).eq('id', lead.id);
-    if (error) { toast.error('Could not update stage.'); return; }
+    if (error) { toast.error(t('leadDetail.stageUpdateError')); return; }
     setLead((prev) => (prev ? { ...prev, status: newStage as Lead['status'] } : prev));
-    toast.success('Pipeline stage updated.');
+    toast.success(t('leadDetail.stageUpdatedToast'));
   };
 
   const handleAddFollowUp = async () => {
-    if (!followUpForm.notes.trim()) { toast.error('Add a note for this follow-up.'); return; }
+    if (!followUpForm.notes.trim()) { toast.error(t('leadDetail.noteRequiredError')); return; }
     setSavingFollowUp(true);
     const { error } = await supabase.from('follow_ups').insert({
       lead_id: lead.id, created_by: user?.id,
       type: followUpForm.type, status: followUpForm.status, notes: followUpForm.notes,
     });
     setSavingFollowUp(false);
-    if (error) { toast.error('Could not add follow-up.'); return; }
+    if (error) { toast.error(t('leadDetail.addFollowUpError')); return; }
     setFollowUpForm({ type: 'phone', status: 'interested', notes: '' });
-    toast.success('Follow-up added.');
+    toast.success(t('leadDetail.followUpAddedToast'));
     loadAll();
   };
 
   const handleIssueWarning = async () => {
-    if (!lead.owner_id) { toast.error('This lead has no owner to warn.'); return; }
+    if (!lead.owner_id) { toast.error(t('leadDetail.noOwnerToWarnError')); return; }
     setSavingWarning(true);
     const { error } = await supabase.from('warnings').insert({
       lead_id: lead.id, issued_to: lead.owner_id, issued_by: user?.id,
       reason: warningForm.reason, message: warningForm.message || null,
     });
     setSavingWarning(false);
-    if (error) { toast.error('Could not issue warning.'); return; }
+    if (error) { toast.error(t('leadDetail.issueWarningError')); return; }
     setWarningForm({ reason: 'followup_overdue', message: '' });
-    toast.success('Warning issued.');
+    toast.success(t('leadDetail.warningIssuedToast'));
     loadAll();
   };
 
   const handleReassign = async () => {
     if (!reassignTo) return;
     const { error } = await supabase.rpc('reassign_lead', { p_lead_id: lead.id, p_new_owner: reassignTo });
-    if (error) { toast.error('Could not reassign lead.'); return; }
-    toast.success('Lead reassigned.');
+    if (error) { toast.error(t('leadDetail.reassignError')); return; }
+    toast.success(t('leadDetail.reassignedToast'));
     setReassignTo('');
     loadAll();
   };
@@ -292,7 +293,7 @@ export default function LeadDetail() {
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div className="min-w-0 flex-1 md:hidden">
-          <h1 className="text-xl md:text-2xl font-bold text-foreground">Lead Profile</h1>
+          <h1 className="text-xl md:text-2xl font-bold text-foreground">{t('leadDetail.pageTitle')}</h1>
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto sm:shrink-0">
           <LeadLevelBadge grade={lead.lead_grade} />
@@ -300,7 +301,7 @@ export default function LeadDetail() {
             <Select value={lead.status} onValueChange={handleStageChange}>
               <SelectTrigger className="h-9 flex-1 sm:flex-none sm:w-[150px]"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {LEAD_STAGES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}
+                {LEAD_STAGES.map((s) => (<SelectItem key={s.value} value={s.value}>{enumLabel('stage', s.value, s.label, lang)}</SelectItem>))}
               </SelectContent>
             </Select>
           ) : (
@@ -309,21 +310,21 @@ export default function LeadDetail() {
           {editable && (
             editMode ? (
               <>
-                <Button variant="outline" size="icon" onClick={handleCancelEdit} disabled={savingEdit} className="h-9 w-9 shrink-0" aria-label="Cancel edit">
+                <Button variant="outline" size="icon" onClick={handleCancelEdit} disabled={savingEdit} className="h-9 w-9 shrink-0" aria-label={t('leadDetail.cancelEdit')}>
                   <X className="w-4 h-4" />
                 </Button>
-                <Button size="icon" onClick={handleSaveEdit} disabled={savingEdit} className="h-9 w-9 shrink-0" aria-label="Save changes">
+                <Button size="icon" onClick={handleSaveEdit} disabled={savingEdit} className="h-9 w-9 shrink-0" aria-label={t('leadDetail.saveChanges')}>
                   {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                 </Button>
               </>
             ) : (
-              <Button variant="outline" size="icon" onClick={startEdit} className="h-9 w-9 shrink-0" aria-label="Edit lead">
+              <Button variant="outline" size="icon" onClick={startEdit} className="h-9 w-9 shrink-0" aria-label={t('leadDetail.editLead')}>
                 <Edit2 className="w-4 h-4" />
               </Button>
             )
           )}
           {canDelete && (
-            <Button variant="outline" size="icon" onClick={() => setDeleteOpen(true)} className="h-9 w-9 shrink-0 border-destructive/30 text-destructive hover:bg-destructive/5 hover:text-destructive" aria-label="Delete lead">
+            <Button variant="outline" size="icon" onClick={() => setDeleteOpen(true)} className="h-9 w-9 shrink-0 border-destructive/30 text-destructive hover:bg-destructive/5 hover:text-destructive" aria-label={t('leadDetail.deleteLead')}>
               <Trash2 className="w-4 h-4" />
             </Button>
           )}
@@ -334,21 +335,24 @@ export default function LeadDetail() {
       <AlertDialog open={deleteOpen} onOpenChange={(open) => !deleting && setDeleteOpen(open)}>
         <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-md rounded-xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this lead?</AlertDialogTitle>
+            <AlertDialogTitle>{t('leads.deleteThisLeadTitle')}</AlertDialogTitle>
             <AlertDialogDescription>
-              "{lead.name}" and all of its follow-ups, warnings and history will be
-              permanently deleted. This cannot be undone.
+              {lang === 'mm' ? (
+                <>"{lead.name}" {t('leads.deleteThisLeadBody')}</>
+              ) : (
+                <>"{lead.name}" and all of its follow-ups, warnings and history will be permanently deleted. This cannot be undone.</>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               disabled={deleting}
               onClick={(e) => { e.preventDefault(); handleDeleteLead(); }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {deleting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Trash2 className="w-4 h-4 mr-2" />}
-              {deleting ? 'Deleting…' : 'Delete'}
+              {deleting ? t('leads.deleting') : t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -358,12 +362,12 @@ export default function LeadDetail() {
       <div className="md:hidden flex items-center gap-2 -mx-4 px-4 py-3 bg-card border-y border-border sticky top-0 z-30">
         {lead.phone && (
           <a href={`tel:${lead.phone}`} className="flex-1 h-12 flex items-center justify-center gap-2 rounded-xl bg-primary text-white font-medium text-sm active:bg-primary/90 active:scale-[0.98] transition-all shadow-sm">
-            <Phone className="w-4 h-4" /> Call
+            <Phone className="w-4 h-4" /> {t('leadDetail.call')}
           </a>
         )}
         {lead.latitude && lead.longitude && (
           <button type="button" onClick={() => setMapOpen(true)} className="flex-1 h-12 flex items-center justify-center gap-2 rounded-xl border border-primary/30 text-primary font-medium text-sm active:bg-primary/5 active:scale-[0.98] transition-all">
-            <MapPin className="w-4 h-4" /> Location
+            <MapPin className="w-4 h-4" /> {t('leadDetail.location')}
           </button>
         )}
       </div>
@@ -375,33 +379,33 @@ export default function LeadDetail() {
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><User className="w-4 h-4 text-primary" /></div>
-                Basic Information
+                {t('leadDetail.basicInfo')}
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0 space-y-1">
               {editMode ? (
                 <>
-                  <EditField label="Customer Name" icon={<User className="w-4 h-4" />}>
+                  <EditField label={t('addLead.customerName')} icon={<User className="w-4 h-4" />}>
                     <Input value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} className="h-10" />
                   </EditField>
-                  <EditField label="Phone" icon={<Phone className="w-4 h-4" />}>
+                  <EditField label={t('common.phone')} icon={<Phone className="w-4 h-4" />}>
                     <Input type="tel" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} className="h-10" />
                   </EditField>
-                  <EditField label="Email" icon={<Mail className="w-4 h-4" />}>
+                  <EditField label={t('common.email')} icon={<Mail className="w-4 h-4" />}>
                     <Input type="email" value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} className="h-10" />
                   </EditField>
-                  <EditField label="Current Location" icon={<MapPin className="w-4 h-4" />}>
+                  <EditField label={t('addLead.currentLocation')} icon={<MapPin className="w-4 h-4" />}>
                     <Input value={editForm.current_location} onChange={(e) => setEditForm((f) => ({ ...f, current_location: e.target.value }))} className="h-10" />
                   </EditField>
-                  <DetailRow label="Created" value={createdDate} icon={<Clock className="w-4 h-4" />} />
+                  <DetailRow label={t('leadDetail.created')} value={createdDate} icon={<Clock className="w-4 h-4" />} />
                 </>
               ) : (
                 <>
-                  <DetailRow label="Customer Name" value={lead.name} icon={<User className="w-4 h-4" />} />
-                  <DetailRow label="Phone" value={lead.phone} icon={<Phone className="w-4 h-4" />} />
-                  <DetailRow label="Email" value={lead.email} icon={<Mail className="w-4 h-4" />} />
-                  <DetailRow label="Current Location" value={lead.current_location} icon={<MapPin className="w-4 h-4" />} />
-                  <DetailRow label="Created" value={createdDate} icon={<Clock className="w-4 h-4" />} />
+                  <DetailRow label={t('addLead.customerName')} value={lead.name} icon={<User className="w-4 h-4" />} />
+                  <DetailRow label={t('common.phone')} value={lead.phone} icon={<Phone className="w-4 h-4" />} />
+                  <DetailRow label={t('common.email')} value={lead.email} icon={<Mail className="w-4 h-4" />} />
+                  <DetailRow label={t('addLead.currentLocation')} value={lead.current_location} icon={<MapPin className="w-4 h-4" />} />
+                  <DetailRow label={t('leadDetail.created')} value={createdDate} icon={<Clock className="w-4 h-4" />} />
                   {lead.lead_grade_reason && (
                     <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-2 py-1.5">{lead.lead_grade_reason}</p>
                   )}
@@ -415,35 +419,35 @@ export default function LeadDetail() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
                   <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Camera className="w-4 h-4 text-primary" /></div>
-                  Photos
+                  {t('leadDetail.photos')}
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-0 grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <p className="text-xs font-medium text-muted-foreground">Site Visit</p>
+                  <p className="text-xs font-medium text-muted-foreground">{t('leadDetail.siteVisit')}</p>
                   <input ref={visitPhotoInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadLeadPhoto(f, 'visit', 'visit_photo_url', setUploadingVisitPhoto); e.target.value = ''; }} />
                   {lead.visit_photo_url ? (
                     <div className="rounded-xl overflow-hidden border border-border bg-card">
                       <button
-                        type="button" onClick={() => setViewingPhoto({ url: lead.visit_photo_url!, label: 'Site Visit Photo' })}
+                        type="button" onClick={() => setViewingPhoto({ url: lead.visit_photo_url!, label: t('leadDetail.siteVisitPhotoLabel') })}
                         className="block w-full h-28"
-                        aria-label="View site visit photo"
+                        aria-label={t('leadDetail.viewSiteVisitPhoto')}
                       >
-                        <img src={lead.visit_photo_url} alt="Site visit" className="w-full h-full object-cover" />
+                        <StorageImage src={lead.visit_photo_url} alt="Site visit" className="w-full h-full object-cover" />
                       </button>
                       <div className="flex items-stretch divide-x divide-border border-t border-border">
                         <button
-                          type="button" onClick={() => setViewingPhoto({ url: lead.visit_photo_url!, label: 'Site Visit Photo' })}
+                          type="button" onClick={() => setViewingPhoto({ url: lead.visit_photo_url!, label: t('leadDetail.siteVisitPhotoLabel') })}
                           className="flex-1 h-9 flex items-center justify-center gap-1.5 text-xs font-medium text-foreground hover:bg-muted/60 active:bg-muted transition-colors"
                         >
-                          <Eye className="w-3.5 h-3.5" /> View
+                          <Eye className="w-3.5 h-3.5" /> {t('leadDetail.view')}
                         </button>
                         {canManagePhotos && (
                           <button
                             type="button" onClick={() => visitPhotoInputRef.current?.click()} disabled={uploadingVisitPhoto}
                             className="flex-1 h-9 flex items-center justify-center gap-1.5 text-xs font-medium text-foreground hover:bg-muted/60 active:bg-muted transition-colors disabled:opacity-50"
                           >
-                            {uploadingVisitPhoto ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Replace
+                            {uploadingVisitPhoto ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} {t('leadDetail.replace')}
                           </button>
                         )}
                       </div>
@@ -454,38 +458,38 @@ export default function LeadDetail() {
                       className="w-full h-28 flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-card active:bg-muted/50 transition-colors"
                     >
                       {uploadingVisitPhoto ? <Loader2 className="w-4 h-4 text-primary animate-spin" /> : <Camera className="w-4 h-4 text-primary" />}
-                      <span className="text-xs font-medium text-muted-foreground">Upload</span>
+                      <span className="text-xs font-medium text-muted-foreground">{t('leadDetail.upload')}</span>
                     </button>
                   ) : (
-                    <div className="w-full h-28 flex items-center justify-center rounded-xl border border-dashed border-border text-xs text-muted-foreground">Not added</div>
+                    <div className="w-full h-28 flex items-center justify-center rounded-xl border border-dashed border-border text-xs text-muted-foreground">{t('leadDetail.notAdded')}</div>
                   )}
                 </div>
 
                 <div className="space-y-1.5">
-                  <p className="text-xs font-medium text-muted-foreground">Appointment</p>
+                  <p className="text-xs font-medium text-muted-foreground">{t('leadDetail.appointment')}</p>
                   <input ref={appointmentPhotoInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUploadLeadPhoto(f, 'appointment', 'appointment_photo_url', setUploadingAppointmentPhoto); e.target.value = ''; }} />
                   {lead.appointment_photo_url ? (
                     <div className="rounded-xl overflow-hidden border border-border bg-card">
                       <button
-                        type="button" onClick={() => setViewingPhoto({ url: lead.appointment_photo_url!, label: 'Appointment Photo' })}
+                        type="button" onClick={() => setViewingPhoto({ url: lead.appointment_photo_url!, label: t('leadDetail.appointmentPhotoLabel') })}
                         className="block w-full h-28"
-                        aria-label="View appointment photo"
+                        aria-label={t('leadDetail.viewAppointmentPhoto')}
                       >
-                        <img src={lead.appointment_photo_url} alt="Appointment" className="w-full h-full object-cover" />
+                        <StorageImage src={lead.appointment_photo_url} alt="Appointment" className="w-full h-full object-cover" />
                       </button>
                       <div className="flex items-stretch divide-x divide-border border-t border-border">
                         <button
-                          type="button" onClick={() => setViewingPhoto({ url: lead.appointment_photo_url!, label: 'Appointment Photo' })}
+                          type="button" onClick={() => setViewingPhoto({ url: lead.appointment_photo_url!, label: t('leadDetail.appointmentPhotoLabel') })}
                           className="flex-1 h-9 flex items-center justify-center gap-1.5 text-xs font-medium text-foreground hover:bg-muted/60 active:bg-muted transition-colors"
                         >
-                          <Eye className="w-3.5 h-3.5" /> View
+                          <Eye className="w-3.5 h-3.5" /> {t('leadDetail.view')}
                         </button>
                         {canManagePhotos && (
                           <button
                             type="button" onClick={() => appointmentPhotoInputRef.current?.click()} disabled={uploadingAppointmentPhoto}
                             className="flex-1 h-9 flex items-center justify-center gap-1.5 text-xs font-medium text-foreground hover:bg-muted/60 active:bg-muted transition-colors disabled:opacity-50"
                           >
-                            {uploadingAppointmentPhoto ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Replace
+                            {uploadingAppointmentPhoto ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} {t('leadDetail.replace')}
                           </button>
                         )}
                       </div>
@@ -496,10 +500,10 @@ export default function LeadDetail() {
                       className="w-full h-28 flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-border bg-card active:bg-muted/50 transition-colors"
                     >
                       {uploadingAppointmentPhoto ? <Loader2 className="w-4 h-4 text-primary animate-spin" /> : <CalendarClock className="w-4 h-4 text-primary" />}
-                      <span className="text-xs font-medium text-muted-foreground">Upload</span>
+                      <span className="text-xs font-medium text-muted-foreground">{t('leadDetail.upload')}</span>
                     </button>
                   ) : (
-                    <div className="w-full h-28 flex items-center justify-center rounded-xl border border-dashed border-border text-xs text-muted-foreground">Not added</div>
+                    <div className="w-full h-28 flex items-center justify-center rounded-xl border border-dashed border-border text-xs text-muted-foreground">{t('leadDetail.notAdded')}</div>
                   )}
                 </div>
               </CardContent>
@@ -511,27 +515,27 @@ export default function LeadDetail() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
                   <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><ArrowRightLeft className="w-4 h-4 text-primary" /></div>
-                  Assignment
+                  {t('leadDetail.assignment')}
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-0 space-y-3">
                 <div className="flex items-start gap-3 py-2.5 min-h-[48px]">
                   <div className="mt-0.5 text-muted-foreground shrink-0"><User className="w-4 h-4" /></div>
                   <div className="min-w-0">
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Currently owned by</p>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{t('leadDetail.currentlyOwnedBy')}</p>
                     <div className="mt-1">
-                      {lead.owner_id ? <NameLink id={lead.owner_id} name={nameOf(lead.owner_id)} avatarUrl={byId[lead.owner_id]?.avatar_url} size="sm" /> : <p className="text-sm font-medium text-foreground">Unassigned</p>}
+                      {lead.owner_id ? <NameLink id={lead.owner_id} name={nameOf(lead.owner_id)} avatarUrl={byId[lead.owner_id]?.avatar_url} size="sm" /> : <p className="text-sm font-medium text-foreground">{t('leadDetail.unassigned')}</p>}
                     </div>
                   </div>
                 </div>
                 <div className="flex gap-2">
                   <Select value={reassignTo} onValueChange={setReassignTo}>
-                    <SelectTrigger className="h-11 flex-1"><SelectValue placeholder="Assign to…" /></SelectTrigger>
+                    <SelectTrigger className="h-11 flex-1"><SelectValue placeholder={t('leadDetail.assignTo')} /></SelectTrigger>
                     <SelectContent>
                       {departmentStaff.map((p) => (<SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>))}
                     </SelectContent>
                   </Select>
-                  <Button disabled={!reassignTo} onClick={handleReassign} className="h-11">Reassign</Button>
+                  <Button disabled={!reassignTo} onClick={handleReassign} className="h-11">{t('leadDetail.reassign')}</Button>
                 </div>
               </CardContent>
             </Card>
@@ -542,14 +546,14 @@ export default function LeadDetail() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
                   <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Navigation className="w-4 h-4 text-primary" /></div>
-                  Recorded Location
+                  {t('leadDetail.recordedLocation')}
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-0 space-y-3">
-                <DetailRow label="Latitude" value={lead.latitude.toFixed(6)} icon={<MapPin className="w-4 h-4" />} />
-                <DetailRow label="Longitude" value={lead.longitude.toFixed(6)} icon={<MapPin className="w-4 h-4" />} />
+                <DetailRow label={t('leadDetail.latitude')} value={lead.latitude.toFixed(6)} icon={<MapPin className="w-4 h-4" />} />
+                <DetailRow label={t('leadDetail.longitude')} value={lead.longitude.toFixed(6)} icon={<MapPin className="w-4 h-4" />} />
                 <Button variant="outline" className="w-full h-12 gap-2 text-primary border-primary/30 hover:bg-primary/5" onClick={() => setMapOpen(true)}>
-                  <MapPin className="w-4 h-4" /> View on map
+                  <MapPin className="w-4 h-4" /> {t('leadDetail.viewOnMap')}
                 </Button>
               </CardContent>
             </Card>
@@ -562,58 +566,58 @@ export default function LeadDetail() {
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Target className="w-4 h-4 text-primary" /></div>
-                Requirements
+                {t('leadDetail.requirements')}
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
               {editMode ? (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
-                    <EditField label="Interest" icon={<TrendingUp className="w-4 h-4" />}>
+                    <EditField label={t('addLead.interest')} icon={<TrendingUp className="w-4 h-4" />}>
                       <Select value={editForm.interest_type} onValueChange={(v) => setEditForm((f) => ({ ...f, interest_type: v }))}>
-                        <SelectTrigger className="h-10"><SelectValue placeholder="Select interest" /></SelectTrigger>
-                        <SelectContent>{INTEREST_TYPES.map((t) => (<SelectItem key={t} value={t}>{t}</SelectItem>))}</SelectContent>
+                        <SelectTrigger className="h-10"><SelectValue placeholder={t('addLead.selectInterest')} /></SelectTrigger>
+                        <SelectContent>{INTEREST_TYPES.map((it) => (<SelectItem key={it} value={it}>{it}</SelectItem>))}</SelectContent>
                       </Select>
                     </EditField>
-                    <EditField label="Property Type" icon={<Building2 className="w-4 h-4" />}>
+                    <EditField label={t('addLead.propertyType')} icon={<Building2 className="w-4 h-4" />}>
                       <Select value={editForm.property_type} onValueChange={(v) => setEditForm((f) => ({ ...f, property_type: v }))}>
-                        <SelectTrigger className="h-10"><SelectValue placeholder="Select property type" /></SelectTrigger>
-                        <SelectContent>{PROPERTY_TYPES.map((t) => (<SelectItem key={t} value={t}>{t}</SelectItem>))}</SelectContent>
+                        <SelectTrigger className="h-10"><SelectValue placeholder={t('addLead.selectPropertyType')} /></SelectTrigger>
+                        <SelectContent>{PROPERTY_TYPES.map((pt) => (<SelectItem key={pt} value={pt}>{pt}</SelectItem>))}</SelectContent>
                       </Select>
                     </EditField>
-                    <EditField label="Preferred Project" icon={<Building2 className="w-4 h-4" />}>
+                    <EditField label={t('addLead.preferredProject')} icon={<Building2 className="w-4 h-4" />}>
                       <Input value={editForm.preferred_project} onChange={(e) => setEditForm((f) => ({ ...f, preferred_project: e.target.value }))} className="h-10" />
                     </EditField>
-                    <EditField label="Budget" icon={<DollarSign className="w-4 h-4" />}>
+                    <EditField label={t('addLead.budget')} icon={<DollarSign className="w-4 h-4" />}>
                       <Input value={editForm.budget_range} onChange={(e) => setEditForm((f) => ({ ...f, budget_range: e.target.value }))} className="h-10" />
                     </EditField>
-                    <EditField label="Purpose" icon={<Target className="w-4 h-4" />}>
+                    <EditField label={t('addLead.purpose')} icon={<Target className="w-4 h-4" />}>
                       <Select value={editForm.purpose} onValueChange={(v) => setEditForm((f) => ({ ...f, purpose: v }))}>
-                        <SelectTrigger className="h-10"><SelectValue placeholder="Select purpose" /></SelectTrigger>
+                        <SelectTrigger className="h-10"><SelectValue placeholder={t('addLead.selectPurpose')} /></SelectTrigger>
                         <SelectContent>{PURPOSES.map((p) => (<SelectItem key={p} value={p}>{p}</SelectItem>))}</SelectContent>
                       </Select>
                     </EditField>
-                    <EditField label="Source" icon={<TrendingUp className="w-4 h-4" />}>
+                    <EditField label={t('leadDetail.source')} icon={<TrendingUp className="w-4 h-4" />}>
                       <Select value={editForm.lead_source} onValueChange={(v) => setEditForm((f) => ({ ...f, lead_source: v }))}>
-                        <SelectTrigger className="h-10"><SelectValue placeholder="Select source" /></SelectTrigger>
+                        <SelectTrigger className="h-10"><SelectValue placeholder={t('addLead.selectSource')} /></SelectTrigger>
                         <SelectContent>{LEAD_SOURCES.map((s) => (<SelectItem key={s} value={s}>{s}</SelectItem>))}</SelectContent>
                       </Select>
                     </EditField>
                   </div>
                   <Separator className="my-3" />
-                  <EditField label="Remarks" icon={<MessageSquare className="w-4 h-4" />}>
-                    <Textarea value={editForm.remarks} onChange={(e) => setEditForm((f) => ({ ...f, remarks: e.target.value }))} className="min-h-[80px]" placeholder="Additional remarks…" />
+                  <EditField label={t('leadDetail.remarks')} icon={<MessageSquare className="w-4 h-4" />}>
+                    <Textarea value={editForm.remarks} onChange={(e) => setEditForm((f) => ({ ...f, remarks: e.target.value }))} className="min-h-[80px]" placeholder={t('addLead.remarksPlaceholder')} />
                   </EditField>
                 </>
               ) : (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
-                    <DetailRow label="Interest" value={lead.interest_type} icon={<TrendingUp className="w-4 h-4" />} />
-                    <DetailRow label="Property Type" value={lead.property_type} icon={<Building2 className="w-4 h-4" />} />
-                    <DetailRow label="Preferred Project" value={lead.preferred_project} icon={<Building2 className="w-4 h-4" />} />
-                    <DetailRow label="Budget" value={lead.budget_range} icon={<DollarSign className="w-4 h-4" />} />
-                    <DetailRow label="Purpose" value={lead.purpose} icon={<Target className="w-4 h-4" />} />
-                    <DetailRow label="Source" value={lead.lead_source} icon={<TrendingUp className="w-4 h-4" />} />
+                    <DetailRow label={t('addLead.interest')} value={lead.interest_type} icon={<TrendingUp className="w-4 h-4" />} />
+                    <DetailRow label={t('addLead.propertyType')} value={lead.property_type} icon={<Building2 className="w-4 h-4" />} />
+                    <DetailRow label={t('addLead.preferredProject')} value={lead.preferred_project} icon={<Building2 className="w-4 h-4" />} />
+                    <DetailRow label={t('addLead.budget')} value={lead.budget_range} icon={<DollarSign className="w-4 h-4" />} />
+                    <DetailRow label={t('addLead.purpose')} value={lead.purpose} icon={<Target className="w-4 h-4" />} />
+                    <DetailRow label={t('leadDetail.source')} value={lead.lead_source} icon={<TrendingUp className="w-4 h-4" />} />
                   </div>
                   {lead.remarks && (
                     <>
@@ -621,7 +625,7 @@ export default function LeadDetail() {
                       <div className="flex items-start gap-3 py-1">
                         <MessageSquare className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
                         <div className="min-w-0">
-                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Remarks</p>
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{t('leadDetail.remarks')}</p>
                           <p className="text-sm font-medium text-foreground mt-1 break-words leading-relaxed">{lead.remarks}</p>
                         </div>
                       </div>
@@ -637,7 +641,7 @@ export default function LeadDetail() {
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><History className="w-4 h-4 text-primary" /></div>
-                Follow-ups ({followUps.length})
+                {t('leadDetail.followUps')} ({followUps.length})
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0 space-y-4">
@@ -646,38 +650,38 @@ export default function LeadDetail() {
                   <div className="grid grid-cols-2 gap-2">
                     <Select value={followUpForm.type} onValueChange={(v) => setFollowUpForm((f) => ({ ...f, type: v }))}>
                       <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
-                      <SelectContent>{FOLLOWUP_TYPES.map((t) => (<SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>))}</SelectContent>
+                      <SelectContent>{FOLLOWUP_TYPES.map((ft) => (<SelectItem key={ft.value} value={ft.value}>{enumLabel('followupType', ft.value, ft.label, lang)}</SelectItem>))}</SelectContent>
                     </Select>
                     <Select value={followUpForm.status} onValueChange={(v) => setFollowUpForm((f) => ({ ...f, status: v }))}>
                       <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
-                      <SelectContent>{FOLLOWUP_STATUSES.map((s) => (<SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>))}</SelectContent>
+                      <SelectContent>{FOLLOWUP_STATUSES.map((s) => (<SelectItem key={s.value} value={s.value}>{enumLabel('followupStatus', s.value, s.label, lang)}</SelectItem>))}</SelectContent>
                     </Select>
                   </div>
                   <Textarea
-                    placeholder="What happened in this follow-up?"
+                    placeholder={t('followups.notesPlaceholder')}
                     value={followUpForm.notes}
                     onChange={(e) => setFollowUpForm((f) => ({ ...f, notes: e.target.value }))}
                     className="min-h-[70px]"
                   />
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <span>This outcome will set the lead's grade to</span>
+                    <span>{t('followups.outcomeGradeSets')}</span>
                     <LeadLevelBadge grade={getGradeForFollowUpStatus(followUpForm.status as any)} />
                   </div>
                   <Button onClick={handleAddFollowUp} disabled={savingFollowUp} className="w-full sm:w-auto gap-2">
-                    {savingFollowUp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add Follow-up
+                    {savingFollowUp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} {t('leadDetail.addFollowUp')}
                   </Button>
                 </div>
               )}
               {followUps.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">No follow-ups recorded yet.</p>
+                <p className="text-sm text-muted-foreground text-center py-6">{t('leadDetail.noFollowUpsRecorded')}</p>
               ) : (
                 <div className="space-y-3">
                   {followUps.map((f) => (
                     <div key={f.id} className="flex items-start gap-3 pb-3 border-b border-border last:border-0 last:pb-0">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-semibold">{FOLLOWUP_TYPES.find((t) => t.value === f.type)?.label}</span>
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{FOLLOWUP_STATUSES.find((s) => s.value === f.status)?.label}</span>
+                          <span className="text-sm font-semibold">{enumLabel('followupType', f.type, FOLLOWUP_TYPES.find((ft) => ft.value === f.type)?.label || f.type, lang)}</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{enumLabel('followupStatus', f.status, FOLLOWUP_STATUSES.find((s) => s.value === f.status)?.label || f.status, lang)}</span>
                         </div>
                         {f.notes && <p className="text-sm text-muted-foreground mt-1">{f.notes}</p>}
                         <p className="text-xs text-muted-foreground mt-1 tabular-nums">{new Date(f.created_at).toLocaleString()}</p>
@@ -695,7 +699,7 @@ export default function LeadDetail() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
                   <div className="w-8 h-8 rounded-lg bg-destructive/10 flex items-center justify-center"><AlertTriangle className="w-4 h-4 text-destructive" /></div>
-                  Warnings ({warnings.length})
+                  {t('leadDetail.warnings')} ({warnings.length})
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-0 space-y-4">
@@ -703,23 +707,23 @@ export default function LeadDetail() {
                   <div className="rounded-xl border border-border p-3 space-y-3 bg-muted/20">
                     <Select value={warningForm.reason} onValueChange={(v) => setWarningForm((f) => ({ ...f, reason: v }))}>
                       <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
-                      <SelectContent>{WARNING_REASONS.map((r) => (<SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>))}</SelectContent>
+                      <SelectContent>{WARNING_REASONS.map((r) => (<SelectItem key={r.value} value={r.value}>{t(`warningReason.${r.value}`)}</SelectItem>))}</SelectContent>
                     </Select>
                     <Textarea
-                      placeholder="Message to the salesperson (optional)"
+                      placeholder={t('leadDetail.warningMessagePlaceholder')}
                       value={warningForm.message}
                       onChange={(e) => setWarningForm((f) => ({ ...f, message: e.target.value }))}
                       className="min-h-[60px]"
                     />
                     <Button variant="destructive" onClick={handleIssueWarning} disabled={savingWarning} className="w-full sm:w-auto gap-2">
-                      {savingWarning ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />} Issue Warning
+                      {savingWarning ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />} {t('leadDetail.issueWarning')}
                     </Button>
                   </div>
                 )}
                 {warnings.map((w) => (
                   <div key={w.id} className="flex items-start gap-3 pb-3 border-b border-border last:border-0 last:pb-0">
                     <div className="min-w-0 flex-1">
-                      <span className="text-sm font-semibold text-destructive">{WARNING_REASONS.find((r) => r.value === w.reason)?.label}</span>
+                      <span className="text-sm font-semibold text-destructive">{t(`warningReason.${w.reason}`)}</span>
                       {w.message && <p className="text-sm text-muted-foreground mt-1">{w.message}</p>}
                       <p className="text-xs text-muted-foreground mt-1 tabular-nums">{new Date(w.created_at).toLocaleString()}</p>
                     </div>
@@ -735,7 +739,7 @@ export default function LeadDetail() {
       <Dialog open={mapOpen} onOpenChange={setMapOpen}>
         <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-lg p-0 overflow-hidden">
           <DialogHeader className="px-6 pt-6 pb-2">
-            <DialogTitle className="text-base font-semibold">Lead Location</DialogTitle>
+            <DialogTitle className="text-base font-semibold">{t('leadDetail.leadLocation')}</DialogTitle>
           </DialogHeader>
           {lead.latitude && lead.longitude && (
             <div className="px-6 pb-6">
@@ -762,13 +766,13 @@ export default function LeadDetail() {
           <button
             type="button" onClick={() => setViewingPhoto(null)}
             className="absolute top-3 right-3 z-10 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center backdrop-blur-sm transition-colors"
-            aria-label="Close"
+            aria-label={t('leadDetail.close')}
           >
             <X className="w-5 h-5" />
           </button>
           {viewingPhoto && (
             <>
-              <img src={viewingPhoto.url} alt={viewingPhoto.label} className="max-w-full max-h-full object-contain" />
+              <StorageImage src={viewingPhoto.url} alt={viewingPhoto.label} className="max-w-full max-h-full object-contain" />
               <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-white text-xs font-medium">
                 {viewingPhoto.label}
               </div>

@@ -3,8 +3,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Shield, ShieldAlert, Check, X, Users2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
+import { useTranslation } from '@/contexts/TranslationContext';
 import {
-  ROLE_TIERS, ROLE_LABELS, isExec, isAdminOrAbove, isManagerOrAbove,
+  ROLE_TIERS, isExec, isAdminOrAbove, isManagerOrAbove, getRoleLabel,
   canViewLead, canEditLead, canDeleteLead, canAssignLead, canAddFollowUp,
   canWarnStaff, canAccessRoute,
   type RoleTier, type CurrentUser,
@@ -12,7 +13,10 @@ import {
 
 type Access = 'yes' | 'no' | 'own' | 'team' | 'branch' | 'view';
 
-const ACCESS_LABEL: Record<Access, string> = { yes: 'Full', no: 'No access', own: 'Own only', team: 'Own team', branch: 'Department', view: 'View only' };
+const ACCESS_LABEL_KEY: Record<Access, string> = {
+  yes: 'roleManagement.access.full', no: 'roleManagement.access.noAccess', own: 'roleManagement.access.ownOnly',
+  team: 'roleManagement.access.ownTeam', branch: 'roleManagement.access.department', view: 'roleManagement.access.viewOnly',
+};
 const ACCESS_STYLE: Record<Access, string> = {
   yes: 'bg-success/10 text-success border-success/20',
   no: 'bg-destructive/10 text-destructive border-destructive/20',
@@ -128,7 +132,7 @@ function buildMatrix(): MatrixRow[] {
     rowFromLead('Edit Lead', canEditLead, 'Narrower than viewing for Manager — a manager loses edit rights the moment a lead is handed off to a salesperson.'),
     rowFromLead('Delete Lead', canDeleteLead, 'Admin has no delete rights at all, by design.'),
     rowFromBoolean('Assign / Reassign Lead', (r) => canAssignLead(userFor(r))),
-    rowFromLead('Follow-up (Add)', canAddFollowUp, "Manager can't add one at all, on purpose — they can still view their team's follow-up history via the Pipeline/Lead Management rows above."),
+    rowFromLead('Follow-up (Add)', canAddFollowUp, "Manager can only add on a lead they personally own — otherwise view only, via the Pipeline/Lead Management rows above."),
     rowFromLead('Pipeline', canViewLead),
     rowFromLead('Reports', canViewLead),
     { feature: 'Warnings (Issue to Staff)', access: Object.fromEntries(ROLE_TIERS.map((r) => [r, classifyWarnStaffAccess(r)])) as Record<RoleTier, Access>, note: 'Admin is deliberately not department-scoped here — Admin can warn any staff member, including Managers.' },
@@ -144,24 +148,26 @@ function buildMatrix(): MatrixRow[] {
 const MATRIX = buildMatrix();
 
 function AccessBadge({ value }: { value: Access }) {
+  const { t } = useTranslation();
   const Icon = value === 'no' ? X : value === 'yes' ? Check : Shield;
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border ${ACCESS_STYLE[value]}`}>
-      <Icon className="w-3 h-3" /> {ACCESS_LABEL[value]}
+      <Icon className="w-3 h-3" /> {t(ACCESS_LABEL_KEY[value])}
     </span>
   );
 }
 
 export default function RoleManagement() {
   const { role } = useAuth();
-  usePageHeader('Role & Permission Reference', 'Computed live from src/lib/permissions.ts — not a hand-maintained list.');
+  const { t, lang } = useTranslation();
+  usePageHeader(t('roleManagement.pageTitle'), t('roleManagement.subtitle'));
 
   if (!isExec(role)) {
     return (
       <div className="flex flex-col items-center justify-center h-[60dvh] text-center px-4 animate-fade-in">
         <div className="w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center text-destructive mb-4"><ShieldAlert className="w-8 h-8" /></div>
-        <h2 className="text-lg font-semibold text-foreground">Access Denied</h2>
-        <p className="text-sm text-muted-foreground max-w-sm mt-1">Role reference is restricted to Boss and Super Admin.</p>
+        <h2 className="text-lg font-semibold text-foreground">{t('roleManagement.accessDenied')}</h2>
+        <p className="text-sm text-muted-foreground max-w-sm mt-1">{t('roleManagement.accessDeniedDesc')}</p>
       </div>
     );
   }
@@ -169,21 +175,21 @@ export default function RoleManagement() {
   return (
     <div className="space-y-6 animate-fade-in-up">
       <div className="md:hidden">
-        <h1 className="text-xl md:text-2xl font-semibold text-foreground flex items-center gap-2"><Shield className="w-5 h-5 text-primary" /> Role & Permission Reference</h1>
+        <h1 className="text-xl md:text-2xl font-semibold text-foreground flex items-center gap-2"><Shield className="w-5 h-5 text-primary" /> {t('roleManagement.pageTitle')}</h1>
       </div>
 
       <Card className="shadow-card rounded-xl border-0 overflow-hidden">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base font-semibold flex items-center gap-2"><Users2 className="w-4 h-4 text-primary" /> Permission Matrix</CardTitle>
-          <CardDescription>Each row calls the real exported function from src/lib/permissions.ts for every role tier — mirrors the RLS policies enforced in database/crm.sql, which remain the actual security boundary.</CardDescription>
+          <CardTitle className="text-base font-semibold flex items-center gap-2"><Users2 className="w-4 h-4 text-primary" /> {t('roleManagement.permissionMatrix')}</CardTitle>
+          <CardDescription>{t('roleManagement.matrixDesc')}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           <div className="w-full overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent bg-muted/30">
-                  <TableHead className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Feature</TableHead>
-                  {ROLE_TIERS.map((r) => (<TableHead key={r} className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{ROLE_LABELS[r]}</TableHead>))}
+                  <TableHead className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{t('roleManagement.feature')}</TableHead>
+                  {ROLE_TIERS.map((r) => (<TableHead key={r} className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{getRoleLabel(r, lang)}</TableHead>))}
                 </TableRow>
               </TableHeader>
               <TableBody>

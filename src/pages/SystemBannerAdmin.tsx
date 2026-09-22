@@ -11,6 +11,7 @@ import {
   fetchMaintenanceSettings, saveMaintenanceSettings, sendPushNotification,
 } from '@/lib/bannerAdmin';
 import { SYSTEM_MESSAGE_TYPES, type SystemMessage, type SystemMessageType, type MaintenanceSettings } from '@/types';
+import { useTranslation } from '@/contexts/TranslationContext';
 
 const TYPE_ICON: Record<SystemMessageType, React.ComponentType<{ className?: string }>> = {
   info: Info, warning: AlertTriangle, maintenance: Wrench, critical: Siren,
@@ -23,6 +24,7 @@ const TYPE_STYLE: Record<SystemMessageType, string> = {
 };
 
 function LoginForm({ onSuccess }: { onSuccess: () => void }) {
+  const { t } = useTranslation();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -37,7 +39,7 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
       await bannerLogin(username.trim(), password);
       onSuccess();
     } catch (err: any) {
-      setError(err?.message || 'Login failed.');
+      setError(err?.message || t('systemBanner.loginFailed'));
     } finally {
       setLoading(false);
     }
@@ -51,32 +53,32 @@ function LoginForm({ onSuccess }: { onSuccess: () => void }) {
             <div className="w-14 h-14 rounded-xl gradient-primary flex items-center justify-center mb-4 shadow-card">
               <Megaphone className="w-7 h-7 text-white" />
             </div>
-            <h1 className="text-xl font-semibold text-foreground">System Banner Admin</h1>
+            <h1 className="text-xl font-semibold text-foreground">{t('systemBanner.title')}</h1>
             <p className="text-sm text-muted-foreground mt-1 text-center">
-              Separate login, unrelated to any CRM staff account — manages the site-wide announcement banner only.
+              {t('systemBanner.loginSubtitle')}
             </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="username" className="text-sm font-medium">Username</Label>
+              <Label htmlFor="username" className="text-sm font-medium">{t('systemBanner.username')}</Label>
               <Input id="username" value={username} onChange={(e) => setUsername(e.target.value)} required className="h-12" autoComplete="username" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-sm font-medium">Password</Label>
+              <Label htmlFor="password" className="text-sm font-medium">{t('common.password')}</Label>
               <div className="relative">
                 <Input
                   id="password" type={showPassword ? 'text' : 'password'} value={password}
                   onChange={(e) => setPassword(e.target.value)} required className="h-12 pr-12" autoComplete="current-password"
                 />
-                <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full text-muted-foreground" aria-label={showPassword ? 'Hide password' : 'Show password'}>
+                <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-full text-muted-foreground" aria-label={showPassword ? t('login.hidePassword') : t('login.showPassword')}>
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
             {error && <div className="text-sm text-destructive bg-destructive/10 rounded-md px-3 py-2">{error}</div>}
             <Button type="submit" disabled={loading} className="w-full h-12 gradient-primary hover:gradient-primary-hover text-white font-medium">
-              {loading ? 'Signing in…' : 'Sign In'}
+              {loading ? t('login.signingIn') : t('login.signIn')}
             </Button>
           </form>
         </div>
@@ -93,6 +95,7 @@ function MessageForm({
   onSave: (message: string, type: SystemMessageType, isActive: boolean) => void;
   saving: boolean;
 }) {
+  const { t } = useTranslation();
   const [message, setMessage] = useState(initial?.message || '');
   const [type, setType] = useState<SystemMessageType>(initial?.type || 'maintenance');
   const [isActive, setIsActive] = useState(initial?.is_active ?? true);
@@ -100,30 +103,30 @@ function MessageForm({
   return (
     <div className="border border-border rounded-xl p-4 space-y-4 bg-muted/20">
       <div className="space-y-1.5">
-        <Label className="text-xs font-medium text-muted-foreground">Message</Label>
+        <Label className="text-xs font-medium text-muted-foreground">{t('systemBanner.message')}</Label>
         <textarea
           value={message} onChange={(e) => setMessage(e.target.value)} rows={3}
-          placeholder="e.g. System will be under maintenance tonight from 11 PM to 1 AM."
+          placeholder={t('systemBanner.messagePlaceholder')}
           className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
       </div>
       <div className="flex flex-col sm:flex-row gap-4 sm:items-end">
         <div className="space-y-1.5 flex-1">
-          <Label className="text-xs font-medium text-muted-foreground">Type</Label>
+          <Label className="text-xs font-medium text-muted-foreground">{t('systemBanner.type')}</Label>
           <Select value={type} onValueChange={(v) => setType(v as SystemMessageType)}>
             <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
-            <SelectContent>{SYSTEM_MESSAGE_TYPES.map((t) => (<SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>))}</SelectContent>
+            <SelectContent>{SYSTEM_MESSAGE_TYPES.map((s) => (<SelectItem key={s.value} value={s.value}>{t(`systemMessageType.${s.value}`)}</SelectItem>))}</SelectContent>
           </Select>
         </div>
         <div className="flex items-center gap-2">
           <Switch checked={isActive} onCheckedChange={setIsActive} />
-          <span className="text-sm text-foreground">Active (visible to all users)</span>
+          <span className="text-sm text-foreground">{t('systemBanner.activeVisible')}</span>
         </div>
       </div>
       <div className="flex gap-2 justify-end pt-1">
-        <Button type="button" variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
+        <Button type="button" variant="outline" size="sm" onClick={onCancel}>{t('common.cancel')}</Button>
         <Button type="button" size="sm" disabled={saving || !message.trim()} onClick={() => onSave(message, type, isActive)} className="gap-1.5">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} {t('settings.save')}
         </Button>
       </div>
     </div>
@@ -131,6 +134,7 @@ function MessageForm({
 }
 
 function MaintenancePanel({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState<MaintenanceSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -152,14 +156,14 @@ function MaintenancePanel({ onSessionExpired }: { onSessionExpired: () => void }
   useEffect(() => { load(); }, []);
 
   const handleSave = async () => {
-    if (!title.trim() || !message.trim()) { toast.error('Title and message are required.'); return; }
+    if (!title.trim() || !message.trim()) { toast.error(t('systemBanner.titleRequired')); return; }
     setSaving(true);
     try {
       const updated = await saveMaintenanceSettings({ is_enabled: isEnabled, title, message });
       setSettings(updated);
-      toast.success(isEnabled ? 'Maintenance mode is now ON — the site is blocked for everyone.' : 'Maintenance settings saved.');
+      toast.success(isEnabled ? t('systemBanner.maintenanceOnToast') : t('systemBanner.maintenanceSavedToast'));
     } catch (err: any) {
-      toast.error(err?.message || 'Could not save maintenance settings.');
+      toast.error(err?.message || t('systemBanner.maintenanceSaveError'));
       if (err?.message?.includes('log in')) onSessionExpired();
     } finally {
       setSaving(false);
@@ -178,14 +182,14 @@ function MaintenancePanel({ onSessionExpired }: { onSessionExpired: () => void }
             <Wrench className="w-4 h-4" />
           </div>
           <div>
-            <h2 className="text-sm font-semibold text-foreground">Maintenance Mode</h2>
-            <p className="text-xs text-muted-foreground">Blocks the entire site for every visitor — not just a banner</p>
+            <h2 className="text-sm font-semibold text-foreground">{t('systemBanner.maintenanceMode')}</h2>
+            <p className="text-xs text-muted-foreground">{t('systemBanner.maintenanceModeDesc')}</p>
           </div>
         </div>
         {!loading && (
           <div className="flex items-center gap-2 shrink-0">
             <Switch checked={isEnabled} onCheckedChange={setIsEnabled} />
-            <span className={`text-xs font-semibold ${isEnabled ? 'text-destructive' : 'text-muted-foreground'}`}>{isEnabled ? 'ON' : 'OFF'}</span>
+            <span className={`text-xs font-semibold ${isEnabled ? 'text-destructive' : 'text-muted-foreground'}`}>{isEnabled ? t('systemBanner.on') : t('systemBanner.off')}</span>
           </div>
         )}
       </div>
@@ -197,17 +201,17 @@ function MaintenancePanel({ onSessionExpired }: { onSessionExpired: () => void }
           {isEnabled && (
             <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/5 border border-destructive/20 rounded-lg px-3 py-2.5">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>While this is on, nobody can sign in or use the app — only this admin page stays reachable.</span>
+              <span>{t('systemBanner.maintenanceWarning')}</span>
             </div>
           )}
 
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium text-muted-foreground">Title</Label>
+            <Label className="text-xs font-medium text-muted-foreground">{t('systemBanner.titleField')}</Label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="System Under Maintenance" className="h-10" />
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium text-muted-foreground">Message</Label>
+            <Label className="text-xs font-medium text-muted-foreground">{t('systemBanner.message')}</Label>
             <textarea
               value={message} onChange={(e) => setMessage(e.target.value)} rows={4}
               placeholder={'System is being maintained and cannot be accessed at this time.\nPlease come back at 12 PM on Sunday.\nApologies for the delay — PSM Web Developer Team'}
@@ -217,7 +221,7 @@ function MaintenancePanel({ onSessionExpired }: { onSessionExpired: () => void }
 
           <div className="flex justify-end pt-1">
             <Button type="button" size="sm" disabled={saving || !dirty} onClick={handleSave} className="gap-1.5">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} {t('settings.save')}
             </Button>
           </div>
         </>
@@ -227,24 +231,25 @@ function MaintenancePanel({ onSessionExpired }: { onSessionExpired: () => void }
 }
 
 function PushPanel({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const { t } = useTranslation();
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
 
   const handleSend = async () => {
-    if (!title.trim() || !body.trim()) { toast.error('Title and body are required.'); return; }
+    if (!title.trim() || !body.trim()) { toast.error(t('systemBanner.bodyRequired')); return; }
     setSending(true);
     try {
       const result = await sendPushNotification(title.trim(), body.trim());
       if (result.sent === 0) {
-        toast.warning('No devices are subscribed to push notifications yet.');
+        toast.warning(t('systemBanner.noDevicesSubscribed'));
       } else {
-        toast.success(`Push sent to ${result.sent} device${result.sent === 1 ? '' : 's'}${result.failed ? ` (${result.failed} failed)` : ''}.`);
+        toast.success(`${t('systemBanner.pushSentPrefix')} ${result.sent} ${t('systemBanner.pushSentDevicesSuffix')}${result.failed ? ` (${result.failed} ${t('systemBanner.pushFailedSuffix')})` : ''}.`);
       }
       setTitle('');
       setBody('');
     } catch (err: any) {
-      toast.error(err?.message || 'Could not send push notification.');
+      toast.error(err?.message || t('systemBanner.pushSendError'));
       if (err?.message?.includes('log in')) onSessionExpired();
     } finally {
       setSending(false);
@@ -258,18 +263,18 @@ function PushPanel({ onSessionExpired }: { onSessionExpired: () => void }) {
           <BellRing className="w-4 h-4" />
         </div>
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Send Push Notification</h2>
-          <p className="text-xs text-muted-foreground">Real OS-level push — reaches every subscribed device even if the app is closed</p>
+          <h2 className="text-sm font-semibold text-foreground">{t('systemBanner.sendPush')}</h2>
+          <p className="text-xs text-muted-foreground">{t('systemBanner.sendPushDesc')}</p>
         </div>
       </div>
 
       <div className="space-y-1.5">
-        <Label className="text-xs font-medium text-muted-foreground">Title</Label>
+        <Label className="text-xs font-medium text-muted-foreground">{t('systemBanner.titleField')}</Label>
         <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. New leads assigned" className="h-10" />
       </div>
 
       <div className="space-y-1.5">
-        <Label className="text-xs font-medium text-muted-foreground">Body</Label>
+        <Label className="text-xs font-medium text-muted-foreground">{t('systemBanner.bodyField')}</Label>
         <textarea
           value={body} onChange={(e) => setBody(e.target.value)} rows={3}
           placeholder="e.g. 12 new leads were just imported and need follow-up."
@@ -279,7 +284,7 @@ function PushPanel({ onSessionExpired }: { onSessionExpired: () => void }) {
 
       <div className="flex justify-end pt-1">
         <Button type="button" size="sm" disabled={sending || !title.trim() || !body.trim()} onClick={handleSend} className="gap-1.5">
-          {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send
+          {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} {t('systemBanner.send')}
         </Button>
       </div>
     </div>
@@ -287,6 +292,7 @@ function PushPanel({ onSessionExpired }: { onSessionExpired: () => void }) {
 }
 
 function AdminPanel({ onLogout }: { onLogout: () => void }) {
+  const { t } = useTranslation();
   const [messages, setMessages] = useState<SystemMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -297,7 +303,7 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
     try {
       setMessages(await listMessages());
     } catch (err: any) {
-      toast.error(err?.message || 'Could not load messages.');
+      toast.error(err?.message || t('systemBanner.loadMessagesError'));
       if (err?.message?.includes('log in')) onLogout();
     } finally {
       setLoading(false);
@@ -310,11 +316,11 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
     setSaving(true);
     try {
       await createMessage(message, type, isActive);
-      toast.success('Banner message created.');
+      toast.success(t('systemBanner.createdToast'));
       setCreating(false);
       await load();
     } catch (err: any) {
-      toast.error(err?.message || 'Could not create message.');
+      toast.error(err?.message || t('systemBanner.createError'));
     } finally {
       setSaving(false);
     }
@@ -324,11 +330,11 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
     setSaving(true);
     try {
       await updateMessage(id, { message, type, is_active: isActive });
-      toast.success('Banner message updated.');
+      toast.success(t('systemBanner.updatedToast'));
       setEditingId(null);
       await load();
     } catch (err: any) {
-      toast.error(err?.message || 'Could not update message.');
+      toast.error(err?.message || t('systemBanner.updateError'));
     } finally {
       setSaving(false);
     }
@@ -339,17 +345,17 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
       await updateMessage(m.id, { is_active: !m.is_active });
       await load();
     } catch (err: any) {
-      toast.error(err?.message || 'Could not update message.');
+      toast.error(err?.message || t('systemBanner.updateError'));
     }
   };
 
   const handleDelete = async (id: string) => {
     try {
       await deleteMessage(id);
-      toast.success('Banner message deleted.');
+      toast.success(t('systemBanner.deletedToast'));
       await load();
     } catch (err: any) {
-      toast.error(err?.message || 'Could not delete message.');
+      toast.error(err?.message || t('systemBanner.deleteError'));
     }
   };
 
@@ -360,11 +366,11 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-xl gradient-primary flex items-center justify-center shadow-card"><Megaphone className="w-5 h-5 text-white" /></div>
             <div>
-              <h1 className="text-lg font-semibold text-foreground">System Banner</h1>
-              <p className="text-xs text-muted-foreground">Site-wide banner and maintenance mode</p>
+              <h1 className="text-lg font-semibold text-foreground">{t('systemBanner.pageTitle')}</h1>
+              <p className="text-xs text-muted-foreground">{t('systemBanner.pageSubtitle')}</p>
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={onLogout} className="gap-1.5"><LogOut className="w-4 h-4" /> Log Out</Button>
+          <Button variant="outline" size="sm" onClick={onLogout} className="gap-1.5"><LogOut className="w-4 h-4" /> {t('nav.logout')}</Button>
         </div>
 
         <MaintenancePanel onSessionExpired={onLogout} />
@@ -373,9 +379,9 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
 
         <div className="bg-white rounded-lg shadow-card p-5 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-foreground">Messages</h2>
+            <h2 className="text-sm font-semibold text-foreground">{t('systemBanner.messagesHeader')}</h2>
             {!creating && (
-              <Button size="sm" onClick={() => setCreating(true)} className="gap-1.5"><Plus className="w-4 h-4" /> New Message</Button>
+              <Button size="sm" onClick={() => setCreating(true)} className="gap-1.5"><Plus className="w-4 h-4" /> {t('systemBanner.newMessage')}</Button>
             )}
           </div>
 
@@ -388,7 +394,7 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
           ) : messages.length === 0 && !creating ? (
             <div className="text-center py-10 text-muted-foreground">
               <Megaphone className="w-8 h-8 mx-auto mb-2 opacity-40" />
-              <p className="text-sm font-medium">No banner messages yet</p>
+              <p className="text-sm font-medium">{t('systemBanner.noMessagesYet')}</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -405,19 +411,19 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
                     <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${TYPE_STYLE[m.type]}`}><Icon className="w-4 h-4" /></div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border ${TYPE_STYLE[m.type]}`}>{m.type}</span>
+                        <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border ${TYPE_STYLE[m.type]}`}>{t(`systemMessageType.${m.type}`)}</span>
                         <button
                           type="button" onClick={() => handleToggleActive(m)}
                           className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors ${m.is_active ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' : 'bg-muted text-muted-foreground border-border'}`}
                         >
-                          {m.is_active ? 'Active' : 'Inactive'}
+                          {m.is_active ? t('systemBanner.active') : t('systemBanner.inactive')}
                         </button>
                       </div>
                       <p className="text-sm text-foreground mt-1.5 break-words">{m.message}</p>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setEditingId(m.id)} aria-label="Edit"><Edit2 className="w-3.5 h-3.5" /></Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(m.id)} aria-label="Delete"><Trash2 className="w-3.5 h-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setEditingId(m.id)} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(m.id)} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></Button>
                     </div>
                   </div>
                 );

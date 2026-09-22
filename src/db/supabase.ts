@@ -70,6 +70,22 @@ function toProxyUrl(url: string): string {
   return PROXY_BASE + url.slice(supabaseUrl.length);
 }
 
+/** Same *.supabase.co blocking problem as above, but for plain <img> tags
+ * (avatars, lead/check-in photos) — those are fetched by the browser's own
+ * network stack, never through fetchWithTimeout below, so they need their
+ * own proxy rewrite. Used by src/components/StorageImage.tsx. */
+export function toProxyImageUrl(url: string): string {
+  return PROXY_FALLBACK_ENABLED && url.startsWith(supabaseUrl) ? toProxyUrl(url) : url;
+}
+
+export function shouldUseImageProxy(): boolean {
+  return PROXY_FALLBACK_ENABLED && sessionStorage.getItem(USE_PROXY_KEY) === '1';
+}
+
+export function markImageProxyNeeded(): void {
+  if (PROXY_FALLBACK_ENABLED) sessionStorage.setItem(USE_PROXY_KEY, '1');
+}
+
 async function rawFetch(input: RequestInfo | URL, init: RequestInit | undefined): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
