@@ -89,12 +89,38 @@ export default function Enquiries() {
     setLoading(true);
     fetchEnquiries();
 
-    const channel = supabase
-      .channel('enquiries-page')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, () => fetchEnquiries())
-      .subscribe();
+    // Postgres_changes rides the same WebSocket the whole session — on a
+    // phone, backgrounding the tab/PWA for a while lets the OS throttle or
+    // drop that socket, and it doesn't always resubscribe the instant the
+    // tab comes back to the front. Refetching on visibility/focus (the same
+    // "trust nothing, re-check on foreground" pattern Gmail/Slack use) means
+    // stale data self-heals the moment someone actually looks at the page,
+    // instead of depending entirely on the socket having survived.
+    const refetchOnForeground = () => {
+      if (document.visibilityState === 'visible') fetchEnquiries();
+    };
+    document.addEventListener('visibilitychange', refetchOnForeground);
+    window.addEventListener('focus', refetchOnForeground);
 
-    return () => { supabase.removeChannel(channel); };
+    const channel = supabase
+      .channel(`enquiries-page-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, () => fetchEnquiries())
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          // Covers the gap between "socket dropped while backgrounded" and
+          // "resubscribed" — any change missed in that window is picked up
+          // by this one extra fetch instead of silently staying stale.
+          fetchEnquiries();
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error('Enquiries realtime subscription lost:', status);
+        }
+      });
+
+    return () => {
+      document.removeEventListener('visibilitychange', refetchOnForeground);
+      window.removeEventListener('focus', refetchOnForeground);
+      supabase.removeChannel(channel);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, canAssign]);
 

@@ -228,11 +228,30 @@ export default function Dashboard() {
       if (active) setPendingEnquiryCount(count || 0);
     };
     fetchCount();
+
+    // Same "don't fully trust the socket" pattern as Enquiries.tsx — a
+    // backgrounded phone tab can silently drop the realtime connection, so
+    // refetching on foreground self-heals a stale count instead of leaving
+    // it wrong until the next unrelated change happens to fire.
+    const refetchOnForeground = () => {
+      if (document.visibilityState === 'visible') fetchCount();
+    };
+    document.addEventListener('visibilitychange', refetchOnForeground);
+    window.addEventListener('focus', refetchOnForeground);
+
     const channel = supabase
-      .channel('dashboard-enquiries')
+      .channel(`dashboard-enquiries-${user.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, fetchCount)
-      .subscribe();
-    return () => { active = false; supabase.removeChannel(channel); };
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') fetchCount();
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') console.error('Dashboard enquiries realtime subscription lost:', status);
+      });
+    return () => {
+      active = false;
+      document.removeEventListener('visibilitychange', refetchOnForeground);
+      window.removeEventListener('focus', refetchOnForeground);
+      supabase.removeChannel(channel);
+    };
   }, [user?.id, canAssignEnq]);
 
   const filteredLeads = useMemo(() => filterLeadsByDate(rawLeads, dateFilter), [rawLeads, dateFilter]);
