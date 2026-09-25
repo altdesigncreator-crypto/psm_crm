@@ -257,3 +257,44 @@ export const PROPERTY_TYPES = ['ကွန်ဒို', 'လုံးချင�
 export const BUDGET_RANGES = ['သိန်း ၁၀၀၀ အောက်', 'သိန်း ၁၀၀၀ မှ ၃၀၀၀ ကြား', 'သိန်း ၃၀၀၀ မှ ၅၀၀၀ ကြား', 'သိန်း ၅၀၀၀ မှ ၁၀၀၀၀ ကြား', 'သိန်း ၁၀၀၀၀ အထက်'];
 export const PURPOSES = ['ကိုယ်တိုင်နေထိုင်ရန်', 'ရင်းနှီးမြှုပ်နှံရန်', 'စီးပွားရေး'];
 export const LEAD_SOURCES = ['Facebook', 'TikTok', 'YouTube', 'Instagram', 'Boss Content', 'Admin Content', 'Hotline', 'Walk-in', 'Agent', 'Freelance', 'Open House Inquiry'];
+
+export const CONDO_SOURCES = [
+  'Condo Channel Facebook',
+  'Condo Listing Facebook',
+  'PSM Properties Original Facebook',
+  'PSM Properties New Facebook',
+  'DLM Facebook',
+  'BHG Facebook',
+  'Property Seeker Facebook',
+  'Condo Channel Tiktok',
+  'PSM Properties Original Tiktok',
+  'Property Seeker Tiktok',
+  'Boss Phone',
+  'Boss Viber',
+  'DLM WalkIn',
+  'BHG WalkIn',
+  'DLM Hotline',
+  'BHG Hotline',
+  'House Hotline',
+  'Condo Hotline',
+  'PTZ Hotline',
+  'Production Department',
+  'Marketing Department',
+  'AI Department',
+];
+export const HOUSE_LAND_SOURCES = [
+  'House&Land Listing',
+  'House Channel',
+  'PSM Property (BL)',
+  'PSM Property',
+  'Property Seeker',
+  'House Channel Tiktok',
+  'PSM Property Tiktok',
+  'IMyanmarHouse',
+  'Office Ph Call',
+  'Boss Ph Call',
+  'Boss Viber',
+  'Production Department',
+  'Marketing Department',
+  'AI Department',
+];

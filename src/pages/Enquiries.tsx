@@ -8,7 +8,7 @@ import { useProfiles } from '@/hooks/useProfiles';
 import {
   canAssignEnquiry, canActOnEnquiry, canEditEnquiry, canDeleteEnquiry, isExec, getRoleLabel, getDepartmentLabel, type CurrentUser,
 } from '@/lib/permissions';
-import { ENQUIRY_STATUSES, LEAD_SOURCES, type Enquiry, type EnquiryStatus } from '@/types';
+import { ENQUIRY_STATUSES, CONDO_SOURCES, HOUSE_LAND_SOURCES, type Enquiry, type EnquiryStatus } from '@/types';
 import { enumLabel } from '@/lib/translations';
 import { notifyUser } from '@/lib/notifyUser';
 import { Card, CardContent } from '@/components/ui/card';
@@ -163,13 +163,16 @@ export default function Enquiries() {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [budget, setBudget] = useState('');
+  const [sourceCategory, setSourceCategory] = useState<'condo' | 'house_land'>('condo');
   const [source, setSource] = useState('');
   const [message, setMessage] = useState('');
   const [assignTo, setAssignTo] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const sourceOptions = sourceCategory === 'house_land' ? HOUSE_LAND_SOURCES : CONDO_SOURCES;
+
   const resetForm = () => {
-    setName(''); setPhone(''); setBudget(''); setSource(''); setMessage(''); setAssignTo('');
+    setName(''); setPhone(''); setBudget(''); setSourceCategory('condo'); setSource(''); setMessage(''); setAssignTo('');
   };
 
   const openCreateDialog = () => {
@@ -183,6 +186,7 @@ export default function Enquiries() {
     setName(enq.name);
     setPhone(enq.phone);
     setBudget(enq.budget || '');
+    setSourceCategory(HOUSE_LAND_SOURCES.includes(enq.source || '') ? 'house_land' : 'condo');
     setSource(enq.source || '');
     setMessage(enq.message || '');
     setAssignTo(enq.assigned_to);
@@ -436,10 +440,23 @@ export default function Enquiries() {
                 <Input value={budget} onChange={(e) => setBudget(e.target.value)} placeholder={t('enquiries.budgetPlaceholder')} className="h-11" />
               </div>
               <div className="space-y-2">
+                <Label className="text-sm font-medium">{t('enquiries.sourceCategory')}</Label>
+                <Select
+                  value={sourceCategory}
+                  onValueChange={(v) => { setSourceCategory(v as 'condo' | 'house_land'); setSource(''); }}
+                >
+                  <SelectTrigger className="h-11"><SelectValue placeholder={t('enquiries.selectSourceCategory')} /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="condo">{t('enquiries.categoryCondo')}</SelectItem>
+                    <SelectItem value="house_land">{t('enquiries.categoryHouseLand')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
                 <Label className="text-sm font-medium">{t('addLead.leadSource')}</Label>
                 <Select value={source} onValueChange={setSource}>
                   <SelectTrigger className="h-11"><SelectValue placeholder={t('addLead.selectSource')} /></SelectTrigger>
-                  <SelectContent>{LEAD_SOURCES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                  <SelectContent>{sourceOptions.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="space-y-2 sm:col-span-2">
