@@ -6,9 +6,10 @@ export type LeadGrade = 'A' | 'B' | 'C';
 export type FollowUpType = 'phone' | 'messenger' | 'whatsapp' | 'viber' | 'email' | 'meeting' | 'site_visit';
 export type FollowUpStatus = 'interested' | 'not_interested' | 'busy' | 'no_answer' | 'call_later' | 'site_visit' | 'booking' | 'lost';
 export type WarningReason = 'followup_overdue' | 'customer_complaint' | 'no_activity' | 'pipeline_stalled' | 'missed_appointment';
-export type NotificationType = 'new_lead_assigned' | 'followup_reminder' | 'appointment_reminder' | 'site_visit_reminder' | 'booking_confirmation' | 'warning_notification';
+export type NotificationType = 'new_lead_assigned' | 'followup_reminder' | 'appointment_reminder' | 'site_visit_reminder' | 'booking_confirmation' | 'warning_notification' | 'new_enquiry_assigned' | 'enquiry_accepted' | 'enquiry_completed';
 export type ApptStatus = 'scheduled' | 'completed' | 'missed' | 'cancelled';
 export type SystemMessageType = 'info' | 'warning' | 'maintenance' | 'critical';
+export type EnquiryStatus = 'pending' | 'accepted' | 'completed';
 
 export interface SystemMessage {
   id: string;
@@ -91,6 +92,27 @@ export interface Lead {
   owner_name?: string | null;
 }
 
+export interface Enquiry {
+  id: string;
+  enquiry_no: string;
+  name: string;
+  phone: string;
+  budget?: string | null;
+  source?: string | null;
+  message?: string | null;
+  assigned_to: string;
+  assigned_by?: string | null;
+  status: EnquiryStatus;
+  accepted_at?: string | null;
+  completed_at?: string | null;
+  converted_lead_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  // Joined convenience fields (populated by some queries, not columns)
+  assigned_to_name?: string | null;
+  assigned_by_name?: string | null;
+}
+
 export interface LeadAssignment {
   id: string;
   lead_id: string;
@@ -150,6 +172,7 @@ export interface AppNotification {
   title: string;
   body?: string | null;
   related_lead_id?: string | null;
+  related_enquiry_id?: string | null;
   is_read: boolean;
   created_at: string;
 }
@@ -208,6 +231,12 @@ export const WARNING_REASONS: { value: WarningReason; label: string }[] = [
   { value: 'no_activity', label: 'No Activity' },
   { value: 'pipeline_stalled', label: 'Pipeline Stalled' },
   { value: 'missed_appointment', label: 'Missed Appointment' },
+];
+
+export const ENQUIRY_STATUSES: { value: EnquiryStatus; label: string }[] = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'accepted', label: 'Accepted' },
+  { value: 'completed', label: 'Completed' },
 ];
 
 export const SYSTEM_MESSAGE_TYPES: { value: SystemMessageType; label: string }[] = [

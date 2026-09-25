@@ -158,10 +158,55 @@ export function canWarnStaff(
   return false;
 }
 
+interface EnquiryRecord {
+  assignedTo?: string | null;
+  status?: string;
+}
+
+/** Mirrors the `enquiries_insert` RLS policy — only Admin (own department)
+ * or exec (global) can log and assign a new enquiry. */
+export function canAssignEnquiry(user: CurrentUser | null): boolean {
+  return isAdminOrAbove(user?.role);
+}
+
+/** Mirrors the `enquiries_select` RLS policy. */
+export function canViewEnquiry(user: CurrentUser | null, enquiry: EnquiryRecord): boolean {
+  if (!user) return false;
+  if (isExec(user.role)) return true;
+  if (user.role === 'admin') return true; // department match is enforced by the query/RLS, not knowable client-side without the assignee's department
+  return enquiry.assignedTo === user.id;
+}
+
+/** Mirrors the `enquiries_update` RLS policy for the assignee's own accept/
+ * convert actions — Admin/exec corrections go through canViewEnquiry's
+ * broader visibility instead, since they're allowed regardless of status
+ * (pending only, for a plain admin — enforced by RLS). */
+export function canActOnEnquiry(user: CurrentUser | null, enquiry: EnquiryRecord): boolean {
+  if (!user) return false;
+  return enquiry.assignedTo === user.id;
+}
+
+/** Mirrors the `enquiries_update` / `enquiries_delete` RLS policies for the
+ * Admin/exec correction-and-cleanup path (distinct from canActOnEnquiry's
+ * assignee-only accept/convert path). Exec can edit or delete an enquiry
+ * regardless of status; a plain Admin only while it's still `pending` —
+ * once accepted it's part of the assignee's own workflow and, once deleted
+ * would be, part of the audit trail — the database enforces the same cutoff
+ * independently, this just keeps the UI from offering an action RLS would
+ * reject anyway. */
+export function canEditEnquiry(user: CurrentUser | null, enquiry: EnquiryRecord): boolean {
+  if (!user) return false;
+  if (isExec(user.role)) return true;
+  if (user.role === 'admin') return enquiry.status === 'pending';
+  return false;
+}
+
+export const canDeleteEnquiry = canEditEnquiry;
+
 /** Route names as used in src/routes.tsx / nav config. */
 export type RouteKey =
   | 'dashboard' | 'add-lead' | 'leads' | 'lead-detail' | 'pipeline' | 'follow-ups'
-  | 'notifications' | 'settings' | 'psm-map'
+  | 'notifications' | 'settings' | 'psm-map' | 'enquiries'
   | 'user-management' | 'role-management' | 'team-management'
   | 'kpi-board' | 'profile' | 'analytics' | 'team-activity';
 
@@ -179,6 +224,7 @@ export function canAccessRoute(role: RoleTier | null | undefined, routeKey: Rout
     case 'follow-ups':
     case 'notifications':
     case 'psm-map':
+    case 'enquiries':
       return true; // every authenticated tier has some view of these (own/branch/all, enforced by RLS)
     case 'settings':
       return true; // personal profile/preferences page; system-config section within it is exec-gated

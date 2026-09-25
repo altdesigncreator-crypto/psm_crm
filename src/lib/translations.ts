@@ -26,6 +26,10 @@ export const translations: Record<string, Record<Lang, string>> = {
     mm: 'Lead အသစ်ထည့်ရန်',
     en: 'Add Lead',
   },
+  'nav.enquiries': {
+    mm: 'စုံစမ်းမှုများ',
+    en: 'Enquiries',
+  },
   'nav.map': {
     mm: 'မြေပုံ',
     en: 'Map',
@@ -74,6 +78,7 @@ export const translations: Record<string, Record<Lang, string>> = {
     mm: 'ဖျက်ရန်',
     en: 'Delete',
   },
+  'common.saveChanges': { mm: 'အပြောင်းအလဲများ သိမ်းရန်', en: 'Save Changes' },
   'common.edit': {
     mm: 'ပြင်ဆင်ရန်',
     en: 'Edit',
@@ -265,7 +270,7 @@ export const translations: Record<string, Record<Lang, string>> = {
   // Mobile bottom tabs (short labels)
   'tab.dashboard': { mm: 'ပင်မ', en: 'Home' },
   'tab.leads': { mm: 'Lead', en: 'Leads' },
-  'tab.add': { mm: 'ထည့်ရန်', en: 'Add' },
+  'tab.enquiries': { mm: 'စုံစမ်းမှုများ', en: 'Enquiries' },
   'tab.followUps': { mm: 'Follow-up များ', en: 'Follow-ups' },
   'tab.pipeline': { mm: 'Pipeline', en: 'Pipeline' },
   'tab.map': { mm: 'မြေပုံ', en: 'Map' },
@@ -304,6 +309,8 @@ export const translations: Record<string, Record<Lang, string>> = {
   'dashboard.followUp': { mm: 'ဆက်လိုက်ရန်', en: 'Follow Up' },
   'dashboard.gradeA': { mm: 'အဆင့် A', en: 'Grade A' },
   'dashboard.conversionRate': { mm: 'ပြောင်းလဲနှုန်း', en: 'Conversion Rate' },
+  'dashboard.pendingEnquiries': { mm: 'ဆောင်ရွက်ရန်ကျန်သော စုံစမ်းမှုများ', en: 'Pending Enquiries' },
+  'dashboard.pendingEnquiriesCaption': { mm: 'အာရုံစိုက်ရန် လိုအပ်သည်', en: 'Needs attention' },
   'dashboard.vsLastMonth': { mm: 'ပြီးခဲ့သည့်လနှင့် နှိုင်းယှဉ်', en: 'vs last month' },
   'dashboard.leadsByTeam': { mm: 'အသင်းအလိုက် Lead များ', en: 'Leads by Team' },
   'dashboard.noLeadsPeriod': { mm: 'ဤကာလအတွက် Lead မရှိပါ', en: 'No leads for this period.' },
@@ -363,6 +370,10 @@ export const translations: Record<string, Record<Lang, string>> = {
   'grade.B.short': { mm: 'နွေးထွေး', en: 'Warm' },
   'grade.C.label': { mm: 'အဆင့် C (အေးစက်/မေးမြန်းဆဲ)', en: 'Level C (Cold/Inquiring)' },
   'grade.C.short': { mm: 'အေးစက်', en: 'Cold' },
+
+  'enquiryStatus.pending': { mm: 'ဆောင်ရွက်ရန်ကျန်', en: 'Pending' },
+  'enquiryStatus.accepted': { mm: 'လက်ခံပြီး', en: 'Accepted' },
+  'enquiryStatus.completed': { mm: 'ပြီးစီး', en: 'Completed' },
   // Add Lead page
   'addLead.title': { mm: 'Lead အသစ်ထည့်ရန်', en: 'Add New Lead' },
   'addLead.subtitle': { mm: 'Lead အချက်အလက် အပြည့်အစုံ ထည့်သွင်းပါ', en: 'Capture comprehensive lead information' },
@@ -377,6 +388,9 @@ export const translations: Record<string, Record<Lang, string>> = {
   'addLead.preferredProject': { mm: 'နှစ်သက်ရာ ပရောဂျက်', en: 'Preferred Project' },
   'addLead.enterProjectName': { mm: 'ပရောဂျက်အမည် ထည့်ပါ', en: 'Enter project name' },
   'addLead.estimatedBudget': { mm: 'ခန့်မှန်းဘတ်ဂျက်', en: 'Estimated Budget' },
+  'addLead.clientMentionedBudget': { mm: 'ဖောက်သည်ပြောသော ဘတ်ဂျက်', en: 'Client mentioned' },
+  'addLead.convertingFromEnquiry': { mm: 'စုံစမ်းမှုမှ Lead အဖြစ်ပြောင်းနေသည်', en: 'Converting enquiry' },
+  'addLead.enquiryCompletedPushTitle': { mm: 'စုံစမ်းမှု ပြီးစီးပြီ', en: 'Enquiry Completed' },
   'addLead.purpose': { mm: 'ရည်ရွယ်ချက်', en: 'Purpose' },
   'addLead.selectPurpose': { mm: 'ရည်ရွယ်ချက် ရွေးပါ', en: 'Select purpose' },
   'addLead.salesTracking': { mm: 'အရောင်းခြေရာခံမှု', en: 'Sales Tracking' },
@@ -746,6 +760,16 @@ export const translations: Record<string, Record<Lang, string>> = {
     en: 'Departments with staff or leads cannot be deleted — move them first. If old records still reference it, the department is deactivated instead of deleted, which removes it from every picker while history keeps its labels.',
   },
   'settings.notificationsUnsupported': { mm: 'ဤစက်/browser တွင် Push အသိပေးချက် ပံ့ပိုးမှု မရှိပါ', en: 'Push notifications are not supported on this device/browser.' },
+  'settings.testPushButton': { mm: 'စမ်းသပ် အသိပေးချက် ပို့ရန်', en: 'Send test notification' },
+  'settings.testPushSending': { mm: 'ပို့နေသည်…', en: 'Sending…' },
+  'settings.testPushSent': { mm: 'စမ်းသပ် အသိပေးချက် ပို့ပြီးပါပြီ', en: 'Test notification sent.' },
+  'settings.testPushError': { mm: 'စမ်းသပ် အသိပေးချက် ပို့၍ မရပါ', en: 'Could not send test notification.' },
+  'settings.testPushTitle': { mm: 'စမ်းသပ် အသိပေးချက်', en: 'Test Notification' },
+  'settings.testPushBody': { mm: 'အသံနှင့် တုန်ခါမှု အလုပ်လုပ်မလုပ် စစ်ဆေးနေသည်', en: 'Checking if sound and vibration work' },
+  'settings.testPushHint': {
+    mm: 'အသံ/တုန်ခါမှု မကြားရလျှင် - Chrome ဆက်တင် → Site settings → Notifications တွင် ဤ site ကို ရှာပြီး ပိတ်/ဖွင့် ပြန်လုပ်ပါ၊ ထို့နောက် Android ဆက်တင် → Apps → Chrome → Notifications တွင် ဤ site ၏ Sound/Vibration ကို ဖွင့်ထားကြောင်း စစ်ဆေးပါ။',
+    en: "If it arrives silently: in Chrome, go to Settings → Site settings → Notifications, find this site, and turn it off then back on. Then check Android Settings → Apps → Chrome → Notifications to make sure Sound and Vibration are enabled for this site's channel.",
+  },
   'settings.notificationsUpdateError': { mm: 'အသိပေးချက် ဆက်တင် အပ်ဒိတ်လုပ်၍ မရပါ', en: 'Could not update notification settings.' },
   'settings.imageFileRequired': { mm: 'ကျေးဇူးပြု၍ ပုံဖိုင် တစ်ခု ရွေးပါ', en: 'Please choose an image file.' },
   'settings.profileUpdateError': { mm: 'ပရိုဖိုင် အပ်ဒိတ်လုပ်၍ မရပါ', en: 'Could not update profile.' },
@@ -796,12 +820,16 @@ export const translations: Record<string, Record<Lang, string>> = {
   'notifications.yesterday': { mm: 'မနေ့က', en: 'Yesterday' },
   'notifications.earlier': { mm: 'ယခင်က', en: 'Earlier' },
   'notifications.viewLead': { mm: 'Lead ကြည့်ရန်', en: 'View lead' },
+  'notifications.viewEnquiry': { mm: 'စုံစမ်းမှု ကြည့်ရန်', en: 'View enquiry' },
   'notifications.markAsRead': { mm: 'ဖတ်ပြီးဟု မှတ်ရန်', en: 'Mark as read' },
   'notifications.overview': { mm: 'ခြုံငုံသုံးသပ်ချက်', en: 'Overview' },
   'notifications.unread': { mm: 'မဖတ်ရသေး', en: 'Unread' },
   'notifications.total': { mm: 'စုစုပေါင်း', en: 'Total' },
   'notifications.byType': { mm: 'အမျိုးအစားအလိုက်', en: 'By Type' },
   'notifications.type.newLeadAssigned': { mm: 'Lead အသစ် တာဝန်ပေးထားသည်', en: 'New Lead Assigned' },
+  'notifications.type.newEnquiryAssigned': { mm: 'စုံစမ်းမှုအသစ် တာဝန်ပေးထားသည်', en: 'New Enquiry Assigned' },
+  'notifications.type.enquiryAccepted': { mm: 'စုံစမ်းမှု လက်ခံပြီး', en: 'Enquiry Accepted' },
+  'notifications.type.enquiryCompleted': { mm: 'စုံစမ်းမှု ပြီးစီးပြီ', en: 'Enquiry Completed' },
   'notifications.type.followupReminder': { mm: 'ဆက်လက်လိုက်ရန် သတိပေးချက်', en: 'Follow-up Reminder' },
   'notifications.type.appointmentReminder': { mm: 'ချိန်းဆိုမှု သတိပေးချက်', en: 'Appointment Reminder' },
   'notifications.type.siteVisitReminder': { mm: 'နေရာလိုက်ကြည့်ခြင်း သတိပေးချက်', en: 'Site Visit Reminder' },
@@ -1140,6 +1168,46 @@ export const translations: Record<string, Record<Lang, string>> = {
   'followups.assignedToYouSuffix': { mm: 'ကိုယ့်ထံ တာဝန်ပေးထားသည် (အမည်မတွေ့)', en: 'assigned to you (no name match)' },
   'followups.ratingsAdjustedSuffix': { mm: 'အဆင့် A–C နှင့် ကိုက်ညီအောင် ချိန်ညှိထားသည်', en: 'ratings adjusted to fit A–C' },
   'followups.notesSkippedSuffix': { mm: 'ဆက်လက်လိုက်ခြင်း မှတ်ချက် ကျော်သွားသည် (ခွင့်ပြုချက် မရှိ)', en: 'follow-up notes skipped (no permission)' },
+
+  // Enquiries
+  'enquiries.title': { mm: 'စုံစမ်းမှုများ', en: 'Enquiries' },
+  'enquiries.subtitle': { mm: 'အသစ်ရောက်ရှိသော စုံစမ်းမှုများကို ခွဲဝေပြီး Lead အဖြစ်ပြောင်းလဲပါ', en: 'Log incoming enquiries and hand them off to be worked as leads' },
+  'enquiries.searchPlaceholder': { mm: 'အမည်၊ ဖုန်း၊ စုံစမ်းမှုနံပါတ်၊ သို့မဟုတ် တာဝန်ပေးထားသူဖြင့် ရှာရန်…', en: 'Search by name, phone, enquiry number, or assignee…' },
+  'enquiries.allAssignees': { mm: 'တာဝန်ပေးထားသူ အားလုံး', en: 'All Assignees' },
+  'enquiries.allStatuses': { mm: 'အခြေအနေအားလုံး', en: 'All Statuses' },
+  'enquiries.newEnquiry': { mm: 'စုံစမ်းမှုအသစ်', en: 'New Enquiry' },
+  'enquiries.noEnquiries': { mm: 'စုံစမ်းမှု မရှိသေးပါ', en: 'No enquiries yet' },
+  'enquiries.assignedToLabel': { mm: 'တာဝန်ပေးထားသူ', en: 'Assigned to' },
+  'enquiries.assignedByLabel': { mm: 'တာဝန်ပေးသူ', en: 'Assigned by' },
+  'enquiries.accept': { mm: 'လက်ခံမည်', en: 'Accept' },
+  'enquiries.convertToLead': { mm: 'Lead အဖြစ်ပြောင်းမည်', en: 'Convert to Lead' },
+  'enquiries.viewLead': { mm: 'Lead ကြည့်ရန်', en: 'View Lead' },
+  'enquiries.name': { mm: 'အမည်', en: 'Name' },
+  'enquiries.budget': { mm: 'ဘတ်ဂျက်', en: 'Budget' },
+  'enquiries.budgetPlaceholder': { mm: 'ဥပမာ - သိန်း ၅၀၀ မှ ၈၀၀', en: 'e.g. 500-800 lakhs' },
+  'enquiries.assignTo': { mm: 'တာဝန်ပေးမည့်သူ', en: 'Assign to' },
+  'enquiries.selectAssignee': { mm: 'မန်နေဂျာ သို့မဟုတ် အရောင်းဝန်ထမ်း ရွေးပါ', en: 'Select a manager or sales person' },
+  'enquiries.message': { mm: 'မက်ဆေ့ချ်', en: 'Message' },
+  'enquiries.messagePlaceholder': { mm: 'ဖောက်သည်ထံမှ မှတ်ချက် သို့မဟုတ် အကြောင်းအရာ…', en: 'Notes or context from the client…' },
+  'enquiries.createEnquiry': { mm: 'စုံစမ်းမှု ဖန်တီးမည်', en: 'Create Enquiry' },
+  'enquiries.requiredFieldsError': { mm: 'အမည်၊ ဖုန်းနံပါတ်နှင့် တာဝန်ပေးမည့်သူ ဖြည့်ပါ', en: 'Fill in name, phone, and who to assign this to.' },
+  'enquiries.createError': { mm: 'စုံစမ်းမှု ဖန်တီး၍ မရပါ', en: 'Could not create enquiry.' },
+  'enquiries.createdToast': { mm: 'စုံစမ်းမှု ဖန်တီးပြီး တာဝန်ပေးပြီးပါပြီ', en: 'Enquiry created and assigned.' },
+  'enquiries.acceptError': { mm: 'စုံစမ်းမှု လက်ခံ၍ မရပါ', en: 'Could not accept enquiry.' },
+  'enquiries.acceptedToast': { mm: 'စုံစမ်းမှု လက်ခံပြီးပါပြီ', en: 'Enquiry accepted.' },
+  'enquiries.pushTitle': { mm: 'စုံစမ်းမှုအသစ် တာဝန်ပေးထားသည်', en: 'New Enquiry Assigned' },
+  'enquiries.acceptedPushTitle': { mm: 'စုံစမ်းမှု လက်ခံပြီး', en: 'Enquiry Accepted' },
+  'enquiries.editEnquiry': { mm: 'စုံစမ်းမှု ပြင်ဆင်ရန်', en: 'Edit Enquiry' },
+  'enquiries.updateError': { mm: 'စုံစမ်းမှု ပြင်ဆင်၍ မရပါ', en: 'Could not update enquiry.' },
+  'enquiries.updatedToast': { mm: 'စုံစမ်းမှု ပြင်ဆင်ပြီးပါပြီ', en: 'Enquiry updated.' },
+  'enquiries.deleteTitle': { mm: 'စုံစမ်းမှု ဖျက်မည်လား', en: 'Delete this enquiry?' },
+  'enquiries.deleteBody': { mm: 'ဤလုပ်ဆောင်ချက်ကို ပြန်ပြင်၍ မရပါ။ အပြီးအပိုင် ဖျက်မည့် စုံစမ်းမှု', en: 'This cannot be undone. This will permanently delete enquiry' },
+  'enquiries.deleteError': { mm: 'စုံစမ်းမှု ဖျက်၍ မရပါ', en: 'Could not delete enquiry.' },
+  'enquiries.deletedToast': { mm: 'စုံစမ်းမှု ဖျက်ပြီးပါပြီ', en: 'Enquiry deleted.' },
+  'enquiries.shareToViber': { mm: 'Viber သို့ မျှဝေရန်', en: 'Share to Viber' },
+  'enquiries.viberEnquiryId': { mm: 'စုံစမ်းမှု ID', en: 'Enquiry ID' },
+  'enquiries.viberAssignedTo': { mm: 'တာဝန်ပေးထားသူ', en: 'Assigned To' },
+  'enquiries.viberCreated': { mm: 'ဖန်တီးသည့်ရက်', en: 'Created' },
 };
 
 /** Renders a LEAD_STAGES / FOLLOWUP_TYPES / FOLLOWUP_STATUSES `.value` in
@@ -1147,7 +1215,7 @@ export const translations: Record<string, Record<Lang, string>> = {
  * key, falling back to the English `.label` already on the item itself
  * if a key is somehow missing (keeps this non-throwing for exportUtils
  * and any list that gains a new value before translations catch up). */
-export function enumLabel(prefix: 'stage' | 'followupType' | 'followupStatus', value: string, fallback: string, lang: Lang): string {
+export function enumLabel(prefix: 'stage' | 'followupType' | 'followupStatus' | 'enquiryStatus', value: string, fallback: string, lang: Lang): string {
   const key = `${prefix}.${value}`;
   return translations[key]?.[lang] || fallback;
 }

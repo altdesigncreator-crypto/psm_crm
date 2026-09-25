@@ -12,6 +12,9 @@ import {
 
 const TYPE_STYLES: Record<string, { bg: string; text: string; icon: React.ReactNode; labelKey: string }> = {
   new_lead_assigned: { bg: 'bg-primary/10', text: 'text-primary', icon: <UserPlus className="w-4 h-4" />, labelKey: 'notifications.type.newLeadAssigned' },
+  new_enquiry_assigned: { bg: 'bg-primary/10', text: 'text-primary', icon: <Inbox className="w-4 h-4" />, labelKey: 'notifications.type.newEnquiryAssigned' },
+  enquiry_accepted: { bg: 'bg-info/10', text: 'text-info', icon: <CheckCircle2 className="w-4 h-4" />, labelKey: 'notifications.type.enquiryAccepted' },
+  enquiry_completed: { bg: 'bg-success/10', text: 'text-success', icon: <PartyPopper className="w-4 h-4" />, labelKey: 'notifications.type.enquiryCompleted' },
   followup_reminder: { bg: 'bg-warning/10', text: 'text-warning', icon: <Clock className="w-4 h-4" />, labelKey: 'notifications.type.followupReminder' },
   appointment_reminder: { bg: 'bg-info/10', text: 'text-info', icon: <CalendarDays className="w-4 h-4" />, labelKey: 'notifications.type.appointmentReminder' },
   site_visit_reminder: { bg: 'bg-info/10', text: 'text-info', icon: <CalendarDays className="w-4 h-4" />, labelKey: 'notifications.type.siteVisitReminder' },
@@ -106,6 +109,11 @@ export default function Notifications() {
                             <div className="flex flex-col gap-1.5 shrink-0">
                               {n.leadId && (
                                 <button type="button" onClick={() => { markAsRead(n.id); navigate(`/lead/${n.leadId}`); }} className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center active:bg-primary/20 active:scale-95 transition-all" aria-label={t('notifications.viewLead')}>
+                                  <Eye className="w-4 h-4" />
+                                </button>
+                              )}
+                              {n.enquiryId && (
+                                <button type="button" onClick={() => { markAsRead(n.id); navigate('/enquiries'); }} className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center active:bg-primary/20 active:scale-95 transition-all" aria-label={t('notifications.viewEnquiry')}>
                                   <Eye className="w-4 h-4" />
                                 </button>
                               )}

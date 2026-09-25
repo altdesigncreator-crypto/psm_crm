@@ -1,0 +1,16 @@
+# Mirrors netlify.toml's redirects for drag-and-drop deploys, which never
+# read netlify.toml (that file only applies to git-connected/CLI deploys
+# with a build step). Files in public/ get copied into dist/ verbatim by
+# Vite, so this ships in every build regardless of how it's deployed.
+
+# Same-origin passthrough to Supabase — some networks block *.supabase.co
+# outright at the DNS/SNI level, so no client retry to that hostname can
+# work around it. Must stay above the SPA catch-all below (Netlify matches
+# _redirects top-down, and /* would otherwise swallow this first).
+/supabase-proxy/*  https://oabubrdgmhohlaamsrel.supabase.co/:splat  200!
+
+# SPA fallback — without this, refreshing or deep-linking to any route
+# other than / (e.g. /leads, /enquiries) 404s, because there's no real file
+# at that path; Netlify needs to be told to always serve index.html and let
+# react-router handle the route client-side.
+/*  /index.html  200

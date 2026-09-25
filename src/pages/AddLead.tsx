@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { supabase } from '@/db/supabase';
@@ -13,6 +13,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { MapPin, User, FileText, TrendingUp, CheckCircle2, Circle, X, AlertTriangle, Eye, Phone as PhoneIcon, Loader2, Sparkles, Camera, CalendarClock, ListChecks } from 'lucide-react';
 import {
   INTEREST_TYPES, PROPERTY_TYPES, PURPOSES, LEAD_SOURCES, LEAD_GRADES,
+  type Enquiry,
 } from '@/types';
 import { BudgetStepperInput } from '@/components/ui/budget-stepper-input';
 import ProjectNameInput from '@/components/ProjectNameInput';
@@ -22,6 +23,7 @@ import { useTeams } from '@/hooks/useTeams';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { isManagerOrAbove, isAdminOrAbove, getDepartmentLabel } from '@/lib/permissions';
 import { getEdgeFunctionErrorMessage } from '@/lib/edgeFunctionError';
+import { notifyUser } from '@/lib/notifyUser';
 
 function initialsOf(name: string) {
   return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() || '').join('') || '?';
@@ -29,6 +31,7 @@ function initialsOf(name: string) {
 
 export default function AddLead() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, role, department } = useAuth();
   const { t } = useTranslation();
   const { profiles } = useProfiles();
@@ -36,6 +39,12 @@ export default function AddLead() {
   usePageHeader(t('addLead.title'), t('addLead.subtitle'));
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // Converting an accepted Enquiry into a Lead (see src/pages/Enquiries.tsx)
+  // reuses this form instead of a second "convert" flow — RLS already
+  // guarantees this enquiry is assigned_to = me and status = 'accepted'.
+  const enquiryId = searchParams.get('enquiry');
+  const [sourceEnquiry, setSourceEnquiry] = useState<Enquiry | null>(null);
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -70,6 +79,20 @@ export default function AddLead() {
 
   const [aiScoring, setAiScoring] = useState(false);
   const [aiScoreReason, setAiScoreReason] = useState('');
+
+  useEffect(() => {
+    if (!enquiryId) return;
+    supabase.from('enquiries').select('*').eq('id', enquiryId).single().then(({ data }) => {
+      if (!data) return;
+      const enquiry = data as Enquiry;
+      setSourceEnquiry(enquiry);
+      setName(enquiry.name);
+      setPhone(enquiry.phone);
+      if (enquiry.message) setRemarks(enquiry.message);
+      if (enquiry.source && LEAD_SOURCES.includes(enquiry.source)) setLeadSource(enquiry.source);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enquiryId]);
 
   const canAssign = isManagerOrAbove(role);
 
@@ -207,6 +230,29 @@ export default function AddLead() {
     return leadId;
   };
 
+  const markEnquiryConverted = async (leadId: string) => {
+    if (!enquiryId || !sourceEnquiry) return;
+    await supabase.from('enquiries').update({
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+      converted_lead_id: leadId,
+    }).eq('id', enquiryId);
+    // Ping the Admin who assigned it — same pattern as the "accepted" ping
+    // in src/pages/Enquiries.tsx, closing the loop on the enquiry they
+    // handed off.
+    if (sourceEnquiry.assigned_by) {
+      notifyUser({
+        recipientId: sourceEnquiry.assigned_by,
+        type: 'enquiry_completed',
+        title: t('addLead.enquiryCompletedPushTitle'),
+        body: `${user?.name || ''} — ${sourceEnquiry.name} (${sourceEnquiry.enquiry_no})`,
+        relatedEnquiryId: sourceEnquiry.id,
+        relatedLeadId: leadId,
+        url: '/enquiries',
+      });
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -233,6 +279,7 @@ export default function AddLead() {
     setSubmitting(true);
     try {
       const leadId = await insertLead(buildLeadPayload());
+      await markEnquiryConverted(leadId);
       // Replace, not push — otherwise back returns to the just-submitted,
       // now-stale empty form instead of wherever the user came from.
       navigate(`/lead/${leadId}`, { replace: true });
@@ -248,6 +295,7 @@ export default function AddLead() {
     setSubmitting(true);
     try {
       const leadId = await insertLead(buildLeadPayload());
+      await markEnquiryConverted(leadId);
       // Replace, not push — otherwise back returns to the just-submitted,
       // now-stale empty form instead of wherever the user came from.
       navigate(`/lead/${leadId}`, { replace: true });
@@ -277,6 +325,13 @@ export default function AddLead() {
       <div className="mb-5 md:hidden">
         <h1 className="text-xl md:text-2xl font-semibold text-foreground">{t('addLead.title')}</h1>
       </div>
+
+      {sourceEnquiry && (
+        <div className="mb-5 flex items-center gap-2 text-sm text-primary bg-primary/10 rounded-lg px-3.5 py-2.5">
+          <Sparkles className="w-4 h-4 shrink-0" />
+          {t('addLead.convertingFromEnquiry')} {sourceEnquiry.enquiry_no}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit}>
         {/* No items-start here on purpose — with it, the sidebar's grid
@@ -335,6 +390,11 @@ export default function AddLead() {
                 </div>
                 <div className="space-y-3 md:col-span-2">
                   <Label className="text-sm font-medium">{t('addLead.estimatedBudget')}</Label>
+                  {sourceEnquiry?.budget && (
+                    <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-2 py-1.5">
+                      {t('addLead.clientMentionedBudget')}: {sourceEnquiry.budget}
+                    </p>
+                  )}
                   <BudgetStepperInput minValue={budgetMin} maxValue={budgetMax} isUnlimited={budgetUnlimited} step={1000} onMinChange={setBudgetMin} onMaxChange={setBudgetMax} onUnlimitedToggle={setBudgetUnlimited} />
                 </div>
                 <div className="space-y-2 md:col-span-2">

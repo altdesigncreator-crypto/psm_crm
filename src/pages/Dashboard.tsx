@@ -10,7 +10,7 @@ import { Doughnut, Line } from 'react-chartjs-2';
 import {
   Users, PhoneCall, Trophy, Activity, Clock, ArrowUpRight,
   ChevronRight, Download, FileSpreadsheet, FileText as FileTextIcon, File as FilePdf,
-  CheckCircle2, Percent, PieChart, BarChart3, Star, ArrowUp, ArrowDown, CalendarDays, Calendar, Crown,
+  CheckCircle2, Percent, PieChart, BarChart3, Star, ArrowUp, ArrowDown, CalendarDays, Calendar, Crown, Inbox,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -22,6 +22,7 @@ import { useTeams } from '@/hooks/useTeams';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { enumLabel } from '@/lib/translations';
+import { canAssignEnquiry, type CurrentUser } from '@/lib/permissions';
 import StatusColorDialog from '@/components/StatusColorDialog';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
@@ -166,8 +167,10 @@ function RankBadge({ rank }: { rank: number }) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, role, department } = useAuth();
   const { t, lang } = useTranslation();
+  const currentUser: CurrentUser | null = user ? { id: user.id, role, department } : null;
+  const canAssignEnq = canAssignEnquiry(currentUser);
   const cachedLeads = user ? cacheGet<Lead[]>(dashboardCacheKey(user.id), DASHBOARD_CACHE_TTL_MS) : undefined;
   const [rawLeads, setRawLeads] = useState<Lead[]>(cachedLeads ?? []);
   const [loading, setLoading] = useState(cachedLeads === undefined);
@@ -210,6 +213,27 @@ export default function Dashboard() {
       .subscribe();
     return () => { active = false; supabase.removeChannel(channel); };
   }, [user?.id]);
+
+  // Just a count, not the full row set the Enquiries page needs — this tile
+  // only ever shows "how many need action right now," so a head-only count
+  // query is enough and avoids pulling every enquiry's data onto Dashboard.
+  const [pendingEnquiryCount, setPendingEnquiryCount] = useState(0);
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const fetchCount = async () => {
+      let query = supabase.from('enquiries').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+      if (!canAssignEnq) query = query.eq('assigned_to', user.id);
+      const { count } = await query;
+      if (active) setPendingEnquiryCount(count || 0);
+    };
+    fetchCount();
+    const channel = supabase
+      .channel('dashboard-enquiries')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'enquiries' }, fetchCount)
+      .subscribe();
+    return () => { active = false; supabase.removeChannel(channel); };
+  }, [user?.id, canAssignEnq]);
 
   const filteredLeads = useMemo(() => filterLeadsByDate(rawLeads, dateFilter), [rawLeads, dateFilter]);
 
@@ -362,7 +386,22 @@ export default function Dashboard() {
 
       {/* KPI Cards — each links through to the Leads list pre-filtered to
           match, so a count is never a dead end. */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2.5 sm:gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-2.5 sm:gap-3">
+        <Card
+          role="button" tabIndex={0}
+          onClick={() => navigate('/enquiries')}
+          onKeyDown={(e) => { if (e.key === 'Enter') navigate('/enquiries'); }}
+          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 cursor-pointer active:scale-[0.98]"
+        >
+          <CardContent className="p-3 md:p-4">
+            <div className="flex items-center gap-2 mb-2 md:mb-3">
+              <div className="w-7 h-7 md:w-9 md:h-9 rounded-lg bg-gradient-to-br from-sky-500/15 to-sky-500/5 flex items-center justify-center shrink-0"><Inbox className="w-3.5 h-3.5 md:w-4 md:h-4 text-sky-600" /></div>
+              <p className="text-[11px] md:text-xs font-medium text-muted-foreground truncate">{t('dashboard.pendingEnquiries')}</p>
+            </div>
+            <p className="text-lg md:text-2xl font-bold text-foreground tabular-nums truncate">{pendingEnquiryCount.toLocaleString()}</p>
+            <p className="text-[10px] md:text-[11px] text-muted-foreground mt-1.5 md:mt-2 truncate">{t('dashboard.pendingEnquiriesCaption')}</p>
+          </CardContent>
+        </Card>
         <Card
           role="button" tabIndex={0}
           onClick={() => navigate('/leads')}
@@ -439,7 +478,7 @@ export default function Dashboard() {
           role="button" tabIndex={0}
           onClick={() => navigate('/kpi-board')}
           onKeyDown={(e) => { if (e.key === 'Enter') navigate('/kpi-board'); }}
-          className="col-span-2 md:col-span-1 shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 relative overflow-hidden cursor-pointer active:scale-[0.98]"
+          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 relative overflow-hidden cursor-pointer active:scale-[0.98]"
         >
           <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-amber-500/10 to-transparent rounded-bl-full pointer-events-none" />
           <CardContent className="p-3 md:p-4 relative">

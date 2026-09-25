@@ -97,6 +97,23 @@ export default function Settings() {
     }
   };
 
+  const [sendingTestPush, setSendingTestPush] = useState(false);
+  const handleSendTestPush = async () => {
+    if (!user?.id || sendingTestPush) return;
+    setSendingTestPush(true);
+    try {
+      const { error } = await supabase.functions.invoke('send-user-push', {
+        body: { user_id: user.id, title: t('settings.testPushTitle'), body: t('settings.testPushBody'), url: '/settings' },
+      });
+      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, t('settings.testPushError')));
+      toast.success(t('settings.testPushSent'));
+    } catch (err: any) {
+      toast.error(err?.message || t('settings.testPushError'));
+    } finally {
+      setSendingTestPush(false);
+    }
+  };
+
   const [newDeptCode, setNewDeptCode] = useState('');
   const [newDeptName, setNewDeptName] = useState('');
   const [savingDept, setSavingDept] = useState(false);
@@ -560,6 +577,21 @@ export default function Settings() {
                   </div>
                   <div className={`w-12 h-7 rounded-full transition-colors relative ${notificationsEnabled ? 'bg-success' : 'bg-muted'}`}><div className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${notificationsEnabled ? 'left-6' : 'left-1'}`} /></div>
                 </button>
+
+                {notificationsEnabled && (
+                  <div className="pl-1 pr-1 -mt-1 space-y-2">
+                    <button
+                      type="button"
+                      onClick={handleSendTestPush}
+                      disabled={sendingTestPush}
+                      className="text-xs font-medium text-primary hover:text-primary/80 flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {sendingTestPush ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bell className="w-3.5 h-3.5" />}
+                      {sendingTestPush ? t('settings.testPushSending') : t('settings.testPushButton')}
+                    </button>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">{t('settings.testPushHint')}</p>
+                  </div>
+                )}
 
                 {biometricSupported && (
                   <button

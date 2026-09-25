@@ -6,6 +6,7 @@ import type { RouteKey } from '@/lib/permissions';
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const AddLead = lazy(() => import('./pages/AddLead'));
+const Enquiries = lazy(() => import('./pages/Enquiries'));
 const Leads = lazy(() => import('./pages/Leads'));
 const FollowUps = lazy(() => import('./pages/FollowUps'));
 const LeadDetail = lazy(() => import('./pages/LeadDetail'));
@@ -59,6 +60,16 @@ export const routes: RouteConfig[] = [
     element: (
       <ProtectedRoute>
         <AddLead />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    name: 'Enquiries',
+    path: '/enquiries',
+    routeKey: 'enquiries',
+    element: (
+      <ProtectedRoute>
+        <Enquiries />
       </ProtectedRoute>
     ),
   },

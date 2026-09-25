@@ -68,12 +68,26 @@ do $$ begin
   create type notification_type as enum (
     'new_lead_assigned', 'followup_reminder', 'appointment_reminder',
     'site_visit_reminder', 'booking_confirmation', 'warning_notification',
-    'checkin_reminder'
+    'checkin_reminder', 'new_enquiry_assigned', 'enquiry_accepted', 'enquiry_completed'
   );
 exception when duplicate_object then null; end $$;
 
+-- Type already existed on every live install before these values were
+-- added — the create above only fires on a fresh install, so this covers
+-- the rest.
+alter type notification_type add value if not exists 'new_enquiry_assigned';
+alter type notification_type add value if not exists 'enquiry_accepted';
+alter type notification_type add value if not exists 'enquiry_completed';
+
 do $$ begin
   create type appt_status as enum ('scheduled', 'completed', 'missed', 'cancelled');
+exception when duplicate_object then null; end $$;
+
+-- Enquiries sit in front of Leads: Admin logs one and assigns it directly to
+-- a Manager or Sales Person, who works it themselves end to end (accept,
+-- contact, convert) — no decline/reassign step by design.
+do $$ begin
+  create type enquiry_status as enum ('pending', 'accepted', 'completed');
 exception when duplicate_object then null; end $$;
 
 -- =============================================================================
@@ -367,6 +381,67 @@ create table if not exists public.lead_assignments (
 create index if not exists idx_lead_assignments_lead on public.lead_assignments(lead_id);
 
 -- =============================================================================
+-- 3b. ENQUIRIES
+-- =============================================================================
+-- A pre-Lead triage stage: Admin (or above) logs an enquiry and assigns it
+-- directly to a Manager or Sales Person, who works it end to end (accept,
+-- contact, convert to a real Lead) with no decline/reassign step.
+
+-- Backs the ENQ-YYMMDDNNNN id below with an atomic per-day sequence. A
+-- count(*)+1 / max()+1 approach would double-assign a number under
+-- concurrent inserts; the upsert in generate_enquiry_no() below takes a row
+-- lock on this table instead, so it can't.
+create table if not exists public.enquiry_counters (
+  day_key   text primary key,
+  last_seq  integer not null default 0
+);
+
+create table if not exists public.enquiries (
+  id                 uuid primary key default gen_random_uuid(),
+  enquiry_no         text not null unique,
+  name               text not null,
+  phone              text not null,
+  budget             text,
+  source             text,
+  message            text,
+  assigned_to        uuid not null references public.profiles(id),
+  assigned_by        uuid references public.profiles(id),
+  status             enquiry_status not null default 'pending',
+  accepted_at        timestamptz,
+  completed_at       timestamptz,
+  converted_lead_id  uuid references public.leads(id),
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now()
+);
+
+create index if not exists idx_enquiries_assigned_to on public.enquiries(assigned_to);
+create index if not exists idx_enquiries_status on public.enquiries(status);
+create index if not exists idx_enquiries_created_at on public.enquiries(created_at desc);
+
+-- No timezone conversion, matching the rest of this schema (e.g.
+-- check_ins.check_in_date default current_date) — the sequence just resets
+-- whenever the server's own date rolls over.
+create or replace function public.generate_enquiry_no() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_day_key text := to_char(now(), 'YYMMDD');
+  v_seq int;
+begin
+  insert into public.enquiry_counters (day_key, last_seq)
+  values (v_day_key, 1)
+  on conflict (day_key) do update set last_seq = public.enquiry_counters.last_seq + 1
+  returning last_seq into v_seq;
+
+  new.enquiry_no := 'ENQ-' || v_day_key || lpad(v_seq::text, 4, '0');
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_enquiries_generate_no on public.enquiries;
+create trigger trg_enquiries_generate_no before insert on public.enquiries
+  for each row execute function public.generate_enquiry_no();
+
+-- =============================================================================
 -- 4. FOLLOW-UPS, PIPELINE HISTORY, APPOINTMENTS, SITE VISITS, WARNINGS
 -- =============================================================================
 
@@ -474,6 +549,10 @@ create table if not exists public.notifications (
   is_read          boolean not null default false,
   created_at       timestamptz not null default now()
 );
+
+-- Enquiry assignment notifications link here instead of related_lead_id —
+-- an enquiry isn't a lead yet, so it needs its own FK column.
+alter table public.notifications add column if not exists related_enquiry_id uuid references public.enquiries(id) on delete cascade;
 
 create index if not exists idx_notifications_recipient on public.notifications(recipient_id, is_read);
 
@@ -629,6 +708,10 @@ create trigger trg_leads_updated_at before update on public.leads
 
 drop trigger if exists trg_profiles_updated_at on public.profiles;
 create trigger trg_profiles_updated_at before update on public.profiles
+  for each row execute function public.set_updated_at();
+
+drop trigger if exists trg_enquiries_updated_at on public.enquiries;
+create trigger trg_enquiries_updated_at before update on public.enquiries
   for each row execute function public.set_updated_at();
 
 -- When a manager or salesperson's own department changes, every lead they
@@ -945,6 +1028,8 @@ alter table public.team_members enable row level security;
 alter table public.profiles enable row level security;
 alter table public.leads enable row level security;
 alter table public.lead_assignments enable row level security;
+alter table public.enquiries enable row level security;
+alter table public.enquiry_counters enable row level security;
 alter table public.follow_ups enable row level security;
 alter table public.pipeline_history enable row level security;
 alter table public.appointments enable row level security;
@@ -1135,6 +1220,68 @@ begin
   end if;
 end;
 $$;
+
+-- ---- enquiries ----
+-- No department_code column on this table — department scope is derived by
+-- joining the assignee back to profiles, same pattern as warnings_select /
+-- warnings_insert below use for issued_to.
+drop policy if exists enquiries_select on public.enquiries;
+create policy enquiries_select on public.enquiries for select
+  to authenticated using (
+    assigned_to = auth.uid()
+    or public.is_exec()
+    or (public.current_role() = 'admin' and exists (
+      select 1 from public.profiles p where p.id = enquiries.assigned_to and p.department_code = public.current_department()
+    ))
+  );
+
+drop policy if exists enquiries_insert on public.enquiries;
+create policy enquiries_insert on public.enquiries for insert
+  to authenticated with check (
+    public.is_admin_or_above()
+    and assigned_by = auth.uid()
+    and (
+      public.is_exec()
+      or exists (
+        select 1 from public.profiles p where p.id = enquiries.assigned_to and p.department_code = public.current_department()
+      )
+    )
+  );
+
+-- Update covers both directions: the assignee moving their own row through
+-- pending -> accepted -> completed, and Admin/exec correcting a still-
+-- pending row (wrong assignee, typo). Once accepted it's part of the
+-- assignee's own workflow, so a plain admin loses write access to it (exec
+-- stays unrestricted, matching every other table's admin/exec split here).
+drop policy if exists enquiries_update on public.enquiries;
+create policy enquiries_update on public.enquiries for update
+  to authenticated using (
+    assigned_to = auth.uid()
+    or public.is_exec()
+    or (public.current_role() = 'admin' and status = 'pending' and exists (
+      select 1 from public.profiles p where p.id = enquiries.assigned_to and p.department_code = public.current_department()
+    ))
+  )
+  with check (
+    assigned_to = auth.uid()
+    or public.is_exec()
+    or (public.current_role() = 'admin' and exists (
+      select 1 from public.profiles p where p.id = enquiries.assigned_to and p.department_code = public.current_department()
+    ))
+  );
+
+drop policy if exists enquiries_delete on public.enquiries;
+create policy enquiries_delete on public.enquiries for delete
+  to authenticated using (
+    public.is_exec()
+    or (public.current_role() = 'admin' and status = 'pending' and exists (
+      select 1 from public.profiles p where p.id = enquiries.assigned_to and p.department_code = public.current_department()
+    ))
+  );
+
+-- enquiry_counters is internal bookkeeping for generate_enquiry_no()
+-- (security definer, so it bypasses RLS here) — no client, at any role,
+-- ever needs direct access to it. No policies means default-deny.
 
 -- ---- follow_ups ----
 drop policy if exists followups_select on public.follow_ups;
@@ -1373,7 +1520,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['departments', 'teams', 'team_members', 'profiles', 'leads', 'follow_ups', 'check_ins', 'notifications']
+  foreach t in array array['departments', 'teams', 'team_members', 'profiles', 'leads', 'enquiries', 'follow_ups', 'check_ins', 'notifications']
   loop
     if not exists (
       select 1 from pg_publication_tables

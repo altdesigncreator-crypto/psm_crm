@@ -3,6 +3,7 @@ import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import type { NotificationType } from '@/types';
+import { playNotificationAlert } from '@/lib/notificationAlert';
 
 export interface Notification {
   id: string;
@@ -10,6 +11,7 @@ export interface Notification {
   message: string;
   type: NotificationType;
   leadId?: string;
+  enquiryId?: string;
   name?: string;
   phone?: string;
   date?: string;
@@ -40,6 +42,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       if (!active) return;
       const mapped: Notification[] = (data || []).map((n: any) => ({
         id: n.id, title: n.title, message: n.body || '', type: n.type, leadId: n.related_lead_id || undefined,
+        enquiryId: n.related_enquiry_id || undefined,
         timestamp: n.created_at, isRead: n.is_read, source: 'db',
       }));
       setDbNotifications(mapped);
@@ -51,6 +54,7 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${user.id}` }, (payload) => {
         const n = payload.new as any;
         toast.info(n.title, { description: n.body || undefined });
+        playNotificationAlert();
         load();
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notifications', filter: `recipient_id=eq.${user.id}` }, () => load())

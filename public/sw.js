@@ -120,6 +120,13 @@ self.addEventListener('push', (event) => {
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
     data: { url: payload.url || '/' },
+    // silent: false is already the Notification API default, but stated
+    // explicitly so the OS plays its default notification sound instead of
+    // silently relying on that default holding. vibrate only has any
+    // effect on devices with vibration hardware (Android) — desktop/iOS
+    // silently ignore it, no separate branch needed.
+    silent: false,
+    vibrate: [200, 100, 200],
   };
 
   event.waitUntil(self.registration.showNotification(title, options));

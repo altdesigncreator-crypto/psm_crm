@@ -11,13 +11,14 @@ import SystemBanner from '@/components/SystemBanner';
 import StorageImage from '@/components/StorageImage';
 import {
   LayoutDashboard, UserPlus, Users, LogOut, Menu, Bell, Shield,
-  CalendarDays, BarChart3, Plus, Home,
+  CalendarDays, BarChart3, Home,
   Settings as SettingsIcon, BarChart3 as AnalyticsIcon, Kanban, Briefcase, ListChecks,
   Download,
   Activity as ActivityIcon,
   UsersRound,
   Map as MapIcon,
   Sun, Moon, ChevronDown, UserCircle,
+  Inbox,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -48,6 +49,7 @@ const NAV_SECTIONS: { tKey: string; items: NavItem[] }[] = [
   {
     tKey: 'nav.section.core',
     items: [
+      { tKey: 'nav.enquiries', path: '/enquiries', routeKey: 'enquiries', icon: Inbox },
       { tKey: 'nav.addLead', path: '/add-lead', routeKey: 'add-lead', icon: UserPlus },
       { tKey: 'nav.leads', path: '/leads', routeKey: 'leads', icon: Users },
       { tKey: 'nav.followUps', path: '/follow-ups', routeKey: 'follow-ups', icon: ListChecks },
@@ -80,7 +82,7 @@ const NAV_SECTIONS: { tKey: string; items: NavItem[] }[] = [
 const TAB_ITEMS = [
   { tKey: 'tab.dashboard', path: '/dashboard', icon: Home },
   { tKey: 'tab.leads', path: '/leads', icon: Users },
-  { tKey: 'tab.add', path: '/add-lead', icon: Plus, isFab: true },
+  { tKey: 'tab.enquiries', path: '/enquiries', icon: Inbox, isFab: true },
   { tKey: 'tab.followUps', path: '/follow-ups', icon: ListChecks },
   { tKey: 'tab.map', path: '/psm-map', icon: MapIcon },
 ];
@@ -466,12 +468,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     aria-label={t(item.tKey)}
                     className="group relative -mt-7 w-14 h-14 rounded-full flex items-center justify-center bg-[#0A243E] shadow-elevated ring-[5px] ring-background transition-transform duration-200 ease-out active:scale-90"
                   >
-                    {/* Rotating a 4-way-symmetric "+" by 90° is invisible (it
-                        looks identical to unrotated), so the tap feedback here
-                        is a squish instead: the icon visibly shrinks on press
-                        then springs back on release. */}
+                    {/* Inbox icon isn't rotationally symmetric like the old
+                        "+" was, so a quarter-turn on press reads as real tap
+                        feedback instead of nothing — springs back on release. */}
                     <FabIcon
-                      className="w-6 h-6 text-white transition-transform duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] group-active:scale-[0.7]"
+                      className="w-6 h-6 text-white transition-transform duration-300 [transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)] group-active:rotate-90"
                       strokeWidth={2.5}
                     />
                   </Link>
