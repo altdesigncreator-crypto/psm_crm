@@ -21,9 +21,16 @@ const PRECACHE_ASSETS = [
   '/icons/apple-touch-icon.png',
 ];
 
+// No self.skipWaiting() here on purpose. A new version installs in the
+// background and then *waits*; the page sees `registration.waiting`, shows
+// the update dot/banner, and only when the user taps Update does it post
+// {action:'skipWaiting'} (handled below). Activating immediately used to
+// swap the worker out from under an open session and force a surprise
+// reload — mid-form, mid-call — and raced the "update available" prompt so
+// it often never appeared at all. A very first install has no active
+// worker to wait on, so it still activates straight away.
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(STATIC_CACHE).then((cache) => cache.addAll(PRECACHE_ASSETS)));
-  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {

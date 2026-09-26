@@ -20,6 +20,13 @@ import { fileURLToPath } from "url";
 // itself imports "./maplibre-gl-shared.mjs" — the actual tile-parsing code
 // the worker runs. Copied fresh from node_modules on every build (not
 // committed) so this can't drift from whatever version is installed.
+// One id per production build, shared by the service-worker stamp below and
+// the app bundle (__APP_BUILD_ID__), so Settings → About can show exactly
+// which build a phone is running and support can match it to a deploy.
+const BUILD_TIME = new Date();
+const BUILD_ID = BUILD_TIME.getTime().toString(36);
+const APP_VERSION: string = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version;
+
 const MAPLIBRE_RUNTIME_FILES = ["maplibre-gl-worker.mjs", "maplibre-gl-shared.mjs"];
 
 function copyMapLibreWorker(): Plugin {
@@ -62,7 +69,7 @@ function stampServiceWorkerVersion(): Plugin {
         this.warn("dist/sw.js not found — did public/sw.js get removed?");
         return;
       }
-      const buildId = Date.now().toString(36);
+      const buildId = BUILD_ID;
       const source = readFileSync(swPath, "utf8");
       const stamped = source.replace(
         /const CACHE_VERSION = '[^']*';/,
@@ -76,7 +83,13 @@ function stampServiceWorkerVersion(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+    // Dev has no stamped service worker, so there's no build to match against.
+    __APP_BUILD_ID__: JSON.stringify(command === "build" ? BUILD_ID : "dev"),
+    __APP_BUILD_TIME__: JSON.stringify(BUILD_TIME.toISOString()),
+  },
   plugins: [
     react(),
     svgr({
@@ -121,4 +134,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

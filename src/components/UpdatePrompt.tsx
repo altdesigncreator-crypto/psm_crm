@@ -1,57 +1,72 @@
-import { useEffect, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
-import { skipWaitingUpdate } from '@/lib/serviceWorker';
+import { useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { Loader2, Sparkles, X } from 'lucide-react';
+import { useAppUpdate } from '@/lib/appUpdate';
+import { applyUpdate } from '@/lib/serviceWorker';
+import { useTranslation } from '@/contexts/TranslationContext';
 
-/** The service worker (src/lib/serviceWorker.ts) dispatches
- * `sw-update-available` as soon as a new deploy finishes installing in the
- * background — but until now nothing listened for it, so an already-open
- * tab just kept running the old cached bundle forever with no way to know a
- * new one existed. This surfaces that moment and reloads once the new
- * worker actually takes control, instead of leaving people stuck on stale
- * code indefinitely. */
+/** Floating "Update available" banner. State comes from the shared
+ * app-update store (see src/lib/serviceWorker.ts for the lifecycle).
+ *
+ * "Later" hides the banner for the rest of this session only — the red dot
+ * on Settings stays, so the update is never lost, and the banner comes back
+ * on the next launch if the user still hasn't updated. It's also hidden on
+ * /settings itself, where the About section shows the same action inline. */
 export default function UpdatePrompt() {
-  const [visible, setVisible] = useState(false);
-  const [updating, setUpdating] = useState(false);
+  const { status } = useAppUpdate();
+  const { t } = useTranslation();
+  const location = useLocation();
+  const [dismissed, setDismissed] = useState(false);
 
-  useEffect(() => {
-    const onUpdateAvailable = () => setVisible(true);
-    window.addEventListener('sw-update-available', onUpdateAvailable);
-    return () => window.removeEventListener('sw-update-available', onUpdateAvailable);
-  }, []);
-
-  useEffect(() => {
-    if (!('serviceWorker' in navigator)) return;
-    const onControllerChange = () => window.location.reload();
-    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
-    return () => navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
-  }, []);
-
-  const handleRefresh = async () => {
-    setUpdating(true);
-    await skipWaitingUpdate();
-    setTimeout(() => window.location.reload(), 2000);
-  };
-
-  if (!visible) return null;
+  const applying = status === 'applying';
+  const visible = (status === 'available' && !dismissed) || applying;
+  if (!visible || (location.pathname === '/settings' && !applying)) return null;
 
   return (
-    <div className="fixed bottom-16 left-0 right-0 z-[60] px-4 animate-fade-in-up">
-      <div className="max-w-md mx-auto bg-card border border-border rounded-2xl shadow-elevated p-4 flex items-center gap-3">
-        <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-          <RefreshCw className={`w-5 h-5 text-primary ${updating ? 'animate-spin' : ''}`} />
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed inset-x-0 z-[60] px-3 md:inset-x-auto md:right-6 md:bottom-6 md:px-0 md:w-[400px] bottom-[calc(max(env(safe-area-inset-bottom),10px)+88px)] animate-fade-in-up"
+    >
+      <div className="mx-auto max-w-md rounded-2xl border border-border/70 bg-card/95 backdrop-blur-xl shadow-elevated p-3.5 md:p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            {applying ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold leading-snug text-foreground">{t('update.availableTitle')}</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{t('update.availableBody')}</p>
+          </div>
+          {!applying && (
+            <button
+              type="button"
+              onClick={() => setDismissed(true)}
+              className="-mr-1 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label={t('update.later')}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-foreground leading-snug">A new version is available</p>
-          <p className="text-xs text-muted-foreground mt-0.5">Refresh to get the latest updates and fixes.</p>
+        <div className="mt-3 flex items-center justify-end gap-2">
+          {!applying && (
+            <button
+              type="button"
+              onClick={() => setDismissed(true)}
+              className="h-9 rounded-lg px-3.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {t('update.later')}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={applyUpdate}
+            disabled={applying}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition-transform active:scale-95 disabled:opacity-70"
+          >
+            {applying ? t('update.updating') : t('update.updateNow')}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={handleRefresh}
-          disabled={updating}
-          className="h-10 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-medium active:scale-95 transition-transform disabled:opacity-60 shrink-0"
-        >
-          {updating ? 'Updating…' : 'Refresh'}
-        </button>
       </div>
     </div>
   );

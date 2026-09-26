@@ -13,6 +13,9 @@ import { processCapturedImage } from '@/lib/cameraUtils';
 import { isPushSupported, hasActivePushSubscription, subscribeToPush, unsubscribeFromPush } from '@/lib/pushNotifications';
 import AvatarCropDialog from '@/components/AvatarCropDialog';
 import StorageImage from '@/components/StorageImage';
+import AppUpdateCard from '@/components/AppUpdateCard';
+import UpdateDot from '@/components/UpdateDot';
+import { appUpdateStore } from '@/lib/appUpdate';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,7 +51,9 @@ export default function Settings() {
   const [darkMode, setDarkMode] = useState(document.documentElement.classList.contains('dark'));
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [notificationsBusy, setNotificationsBusy] = useState(false);
-  const [activeSection, setActiveSection] = useState<SectionKey>('profile');
+  // The update dot on the nav is what usually brings people here — land them
+  // straight on the section that has the Update button.
+  const [activeSection, setActiveSection] = useState<SectionKey>(() => (appUpdateStore.getSnapshot().status === 'available' ? 'about' : 'profile'));
 
   const [biometricSupported, setBiometricSupported] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(user ? isBiometricEnabledFor(user.id) : false);
@@ -384,6 +389,7 @@ export default function Settings() {
             }`}
           >
             <s.icon className="w-4 h-4" /> {s.label}
+            {s.key === 'about' && <UpdateDot className="relative -ml-0.5" />}
           </button>
         ))}
       </div>
@@ -401,7 +407,10 @@ export default function Settings() {
                     activeSection === s.key ? 'bg-primary/10 text-primary' : 'text-foreground/80 hover:bg-muted'
                   }`}
                 >
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeSection === s.key ? 'bg-primary/15' : 'bg-muted'}`}><s.icon className="w-4 h-4" /></div>
+                  <div className={`relative w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${activeSection === s.key ? 'bg-primary/15' : 'bg-muted'}`}>
+                    <s.icon className="w-4 h-4" />
+                    {s.key === 'about' && <UpdateDot className="absolute -top-0.5 -right-0.5" />}
+                  </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium">{s.label}</p>
                     <p className="text-xs text-muted-foreground leading-snug">{s.description}</p>
@@ -689,6 +698,8 @@ export default function Settings() {
 
           {activeSection === 'about' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+              <AppUpdateCard />
+
               <Card className="shadow-card rounded-xl border-0">
                 <CardContent className="space-y-3 p-4 md:p-6">
                   <p className="text-sm font-semibold text-foreground mb-1">{t('settings.companyInfo')}</p>
@@ -707,12 +718,6 @@ export default function Settings() {
                 </CardContent>
               </Card>
 
-              <Card className="shadow-card rounded-xl border-0">
-                <CardContent className="p-4 md:p-6 min-h-[56px]">
-                  <p className="text-sm font-semibold text-foreground">PSM Properties CRM</p>
-                  <p className="text-xs text-muted-foreground">Supabase + React · v1.0</p>
-                </CardContent>
-              </Card>
             </div>
           )}
         </div>

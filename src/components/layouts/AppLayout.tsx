@@ -9,6 +9,8 @@ import { canAccessRoute, getRoleLabel, getDepartmentLabel, type RouteKey } from 
 import { usePwaInstall } from '@/hooks/usePwaInstall';
 import SystemBanner from '@/components/SystemBanner';
 import StorageImage from '@/components/StorageImage';
+import UpdateDot from '@/components/UpdateDot';
+import { useAppUpdate } from '@/lib/appUpdate';
 import {
   LayoutDashboard, UserPlus, Users, LogOut, Menu, Bell, Shield,
   CalendarDays, BarChart3, Home,
@@ -121,6 +123,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { t, lang } = useTranslation();
   const { notifications, unreadCount, markAllAsRead } = useNotifications();
   const { canInstall, promptInstall } = usePwaInstall();
+  const { updateAvailable } = useAppUpdate();
   const pageHeader = usePageHeaderValue();
   const location = useLocation();
   const navigate = useNavigate();
@@ -165,6 +168,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             className={`w-[18px] h-[18px] transition-colors duration-150 ${isActive ? 'text-primary' : 'text-sidebar-foreground/50 group-hover:text-sidebar-foreground/80'}`}
             strokeWidth={isActive ? 2.25 : 2}
           />
+          {item.path === '/settings' && <UpdateDot className="absolute -top-0.5 -right-0.5" />}
           {item.path === '/notifications' && unreadCount > 0 && (
             <span className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-sidebar-background">
               {unreadCount > 9 ? '9+' : unreadCount}
@@ -320,7 +324,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-3">
             <Sheet>
               <SheetTrigger asChild>
-                <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground h-10 w-10 rounded-lg" onClick={() => setMobileOpen(true)}><Menu className="w-5 h-5" /></Button>
+                <Button
+                  variant="ghost" size="icon"
+                  className="relative text-muted-foreground hover:text-foreground h-10 w-10 rounded-lg"
+                  onClick={() => setMobileOpen(true)}
+                  aria-label={updateAvailable ? `Menu — ${t('update.availableTitle')}` : 'Menu'}
+                >
+                  <Menu className="w-5 h-5" />
+                  {/* Settings lives in this drawer on mobile, so the dot has to surface here. */}
+                  <UpdateDot className="absolute top-1.5 right-1.5" />
+                </Button>
               </SheetTrigger>
             </Sheet>
             {/* Light/dark wordmark swap follows the app's class-based theme */}
@@ -401,13 +414,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button type="button" className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-lg hover:bg-muted/60 transition-colors">
-                {user?.avatar_url ? (
-                  <StorageImage src={user.avatar_url} alt={user.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
-                ) : (
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary/25 to-primary/5 text-foreground text-xs font-semibold flex items-center justify-center shrink-0">
-                    {user ? initialsOf(user.name) : ''}
-                  </div>
-                )}
+                <span className="relative shrink-0">
+                  {user?.avatar_url ? (
+                    <StorageImage src={user.avatar_url} alt={user.name} className="w-8 h-8 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary/25 to-primary/5 text-foreground text-xs font-semibold flex items-center justify-center shrink-0">
+                      {user ? initialsOf(user.name) : ''}
+                    </div>
+                  )}
+                  {/* Reachable path to Settings even with the sidebar collapsed. */}
+                  <UpdateDot className="absolute -top-0.5 -right-0.5" />
+                </span>
                 <div className="hidden xl:block min-w-0 text-left">
                   <p className="text-sm font-semibold text-foreground truncate leading-tight max-w-[10rem]">{user?.name}</p>
                   {role && <p className="text-[11px] text-muted-foreground truncate leading-tight">{getRoleLabel(role, lang)}</p>}
@@ -423,6 +440,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               )}
               <DropdownMenuItem className="gap-2.5 rounded-lg px-3 py-2.5 text-sm cursor-pointer" onClick={() => navigate('/settings')}>
                 <SettingsIcon className="w-4 h-4 shrink-0" /> {t('nav.settings')}
+                {updateAvailable && <span className="ml-auto h-2 w-2 rounded-full bg-destructive" aria-label={t('update.availableTitle')} />}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="gap-2.5 rounded-lg px-3 py-2.5 text-sm cursor-pointer text-destructive focus:text-destructive" onClick={handleLogout}>
