@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
@@ -11,7 +11,9 @@ import PeriodFilterBar from '@/components/PeriodFilterBar';
 import {
   canAssignEnquiry, canActOnEnquiry, canEditEnquiry, canDeleteEnquiry, isExec, getRoleLabel, getDepartmentLabel, type CurrentUser,
 } from '@/lib/permissions';
-import { ENQUIRY_STATUSES, CONDO_SOURCES, HOUSE_LAND_SOURCES, type Enquiry, type EnquiryStatus } from '@/types';
+import {
+  ENQUIRY_STATUSES, CONDO_SOURCES, HOUSE_LAND_SOURCES, type Enquiry, type EnquiryStatus, type EnquiryCategory,
+} from '@/types';
 import { enumLabel } from '@/lib/translations';
 import { notifyUser } from '@/lib/notifyUser';
 import { fetchAllRows } from '@/lib/fetchAllRows';
@@ -32,7 +34,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import {
   Inbox, Plus, Loader2, Phone as PhoneIcon, Search, CheckCircle2, ArrowRight, ExternalLink, Wallet, MessageSquare, Share2,
-  Pencil, Trash2, SlidersHorizontal, Filter, X, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  Pencil, Trash2, SlidersHorizontal, Filter, X, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Timer, Building2, Home,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -44,6 +46,38 @@ const STATUS_STYLES: Record<EnquiryStatus, { bg: string; text: string }> = {
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/** Created → completed, as the two largest non-zero units ("2d 4h", "3h 15m"). */
+function formatDuration(fromIso: string, toIso: string, t: (key: string) => string): string {
+  const totalMinutes = Math.max(0, Math.round((new Date(toIso).getTime() - new Date(fromIso).getTime()) / 60000));
+  const parts = [
+    { value: Math.floor(totalMinutes / 1440), unit: t('enquiries.durationDay') },
+    { value: Math.floor((totalMinutes % 1440) / 60), unit: t('enquiries.durationHour') },
+    { value: totalMinutes % 60, unit: t('enquiries.durationMinute') },
+  ];
+  const firstNonZero = parts.findIndex((p) => p.value > 0);
+  if (firstNonZero === -1) return `0${t('enquiries.durationMinute')}`;
+  return parts.slice(firstNonZero, firstNonZero + 2).filter((p) => p.value > 0).map((p) => `${p.value}${p.unit}`).join(' ');
+}
+
+const categoryOf = (enq: Enquiry): EnquiryCategory => enq.category ?? 'condo';
+
+// Same hues as the Dashboard's Condo / House & Land tiles, so a category reads the same everywhere.
+const CATEGORY_STYLES: Record<EnquiryCategory, { cls: string; labelKey: string; Icon: typeof Building2 }> = {
+  condo: { cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-300', labelKey: 'enquiries.categoryCondo', Icon: Building2 },
+  house_land: { cls: 'bg-amber-500/10 text-amber-700 dark:text-amber-300', labelKey: 'enquiries.categoryHouseLand', Icon: Home },
+};
+
+function CategoryBadge({ category }: { category: EnquiryCategory }) {
+  const { t } = useTranslation();
+  const { cls, labelKey, Icon } = CATEGORY_STYLES[category];
+  return (
+    <span className={`inline-flex items-center gap-1 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${cls}`}>
+      <Icon className="w-3 h-3" />
+      {t(labelKey)}
+    </span>
+  );
 }
 
 /** Exactly the three fields the business asked for — Enquiry ID, Assigned
@@ -79,6 +113,7 @@ const sourceFromKey = (key: string) => key.slice(key.indexOf(SOURCE_KEY_SEP) + S
 interface EnquiriesListUiState {
   search: string;
   statusFilter: 'all' | EnquiryStatus;
+  categoryFilter: 'all' | EnquiryCategory;
   sourceFilter: string;
   teamFilter: string;
   assigneeFilter: string;
@@ -98,6 +133,8 @@ interface EnquiryFilterFieldsProps {
   statusFilter: 'all' | EnquiryStatus;
   setStatusFilter: (v: 'all' | EnquiryStatus) => void;
   showStatus: boolean;
+  categoryFilter: 'all' | EnquiryCategory;
+  setCategoryFilter: (v: 'all' | EnquiryCategory) => void;
   sourceFilter: string;
   setSourceFilter: (v: string) => void;
   sourceGroups: SourceGroup[];
@@ -111,7 +148,7 @@ interface EnquiryFilterFieldsProps {
 }
 
 function EnquiryFilterFields({
-  statusFilter, setStatusFilter, showStatus, sourceFilter, setSourceFilter, sourceGroups,
+  statusFilter, setStatusFilter, showStatus, categoryFilter, setCategoryFilter, sourceFilter, setSourceFilter, sourceGroups,
   showStaffFilters, teamFilter, onTeamChange, teamOptions, assigneeFilter, setAssigneeFilter, assigneeOptions,
 }: EnquiryFilterFieldsProps) {
   const { t, lang } = useTranslation();
@@ -127,6 +164,19 @@ function EnquiryFilterFields({
               {ENQUIRY_STATUSES.map((s) => (
                 <SelectItem key={s.value} value={s.value}>{enumLabel('enquiryStatus', s.value, s.label, lang)}</SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      {showStatus && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-foreground">{t('enquiries.sourceCategory')}</label>
+          <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v as 'all' | EnquiryCategory)}>
+            <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('enquiries.selectSourceCategory')} /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('enquiries.allCategories')}</SelectItem>
+              <SelectItem value="condo">{t('enquiries.categoryCondo')}</SelectItem>
+              <SelectItem value="house_land">{t('enquiries.categoryHouseLand')}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -253,9 +303,19 @@ export default function Enquiries() {
 
   const { teams, membersOf } = useTeams();
   const restoredState = cachedListState;
+  // The Dashboard's Condo / House & Land tiles link here with ?category=…,
+  // which wins over whatever category was cached from the last visit.
+  const [searchParams] = useSearchParams();
+  const urlCategory = searchParams.get('category');
   const [search, setSearch] = useState(() => restoredState?.search ?? '');
   const [statusFilter, setStatusFilter] = useState<'all' | EnquiryStatus>(() => restoredState?.statusFilter ?? 'all');
-  const [sourceFilter, setSourceFilter] = useState(() => restoredState?.sourceFilter ?? 'all');
+  const [categoryFilter, setCategoryFilterState] = useState<'all' | EnquiryCategory>(() =>
+    urlCategory === 'condo' || urlCategory === 'house_land' ? urlCategory : restoredState?.categoryFilter ?? 'all');
+  const [sourceFilter, setSourceFilter] = useState(() => {
+    const cached = restoredState?.sourceFilter ?? 'all';
+    // Drop a cached source from the other category rather than filtering to nothing.
+    return urlCategory && cached !== 'all' && !cached.startsWith(`${urlCategory}${SOURCE_KEY_SEP}`) ? 'all' : cached;
+  });
   const [teamFilter, setTeamFilter] = useState(() => restoredState?.teamFilter ?? 'all');
   const [assigneeFilter, setAssigneeFilter] = useState(() => restoredState?.assigneeFilter ?? 'all');
   // Defaults to Overall rather than Monthly: this is a work queue, and a
@@ -268,15 +328,15 @@ export default function Enquiries() {
   const [pageSize, setPageSize] = useState(() => restoredState?.pageSize ?? 20);
 
   useEffect(() => {
-    cachedListState = { search, statusFilter, sourceFilter, teamFilter, assigneeFilter, period, selectedMonth, selectedYear, page, pageSize };
-  }, [search, statusFilter, sourceFilter, teamFilter, assigneeFilter, period, selectedMonth, selectedYear, page, pageSize]);
+    cachedListState = { search, statusFilter, categoryFilter, sourceFilter, teamFilter, assigneeFilter, period, selectedMonth, selectedYear, page, pageSize };
+  }, [search, statusFilter, categoryFilter, sourceFilter, teamFilter, assigneeFilter, period, selectedMonth, selectedYear, page, pageSize]);
 
   // Skips the first run so a page restored from cachedListState isn't reset on mount.
   const isFirstFilterRunRef = useRef(true);
   useEffect(() => {
     if (isFirstFilterRunRef.current) { isFirstFilterRunRef.current = false; return; }
     setPage(1);
-  }, [search, statusFilter, sourceFilter, teamFilter, assigneeFilter, period, selectedMonth, selectedYear, pageSize]);
+  }, [search, statusFilter, categoryFilter, sourceFilter, teamFilter, assigneeFilter, period, selectedMonth, selectedYear, pageSize]);
 
   // Staff-level filters only make sense for people who see more than their own queue.
   const showStaffFilters = canAssign;
@@ -314,8 +374,17 @@ export default function Enquiries() {
       { key: 'condo', label: t('enquiries.categoryCondo'), sources: CONDO_SOURCES },
       { key: 'house_land', label: t('enquiries.categoryHouseLand'), sources: HOUSE_LAND_SOURCES },
       ...(legacy.length > 0 ? [{ key: 'other', label: t('enquiries.otherSources'), sources: legacy }] : []),
-    ];
-  }, [enquiries, t]);
+    ].filter((g) => categoryFilter === 'all' || g.key === categoryFilter || g.key === 'other');
+  }, [enquiries, t, categoryFilter]);
+
+  // Keeps the source filter inside the chosen category — a Condo-only source
+  // left selected under House & Land would silently match nothing.
+  const setCategoryFilter = (category: 'all' | EnquiryCategory) => {
+    setCategoryFilterState(category);
+    if (category === 'all' || sourceFilter === 'all') return;
+    const sourceGroup = sourceFilter.slice(0, sourceFilter.indexOf(SOURCE_KEY_SEP));
+    if (sourceGroup !== category && sourceGroup !== 'other') setSourceFilter('all');
+  };
 
   const selectedSource = sourceFilter === 'all' ? null : sourceFromKey(sourceFilter);
 
@@ -324,6 +393,7 @@ export default function Enquiries() {
     return enquiries.filter((e) => {
       if (!matchesPeriod(e.created_at)) return false;
       if (statusFilter !== 'all' && e.status !== statusFilter) return false;
+      if (categoryFilter !== 'all' && categoryOf(e) !== categoryFilter) return false;
       if (selectedSource && e.source !== selectedSource) return false;
       if (teamAssigneeIds && !teamAssigneeIds.has(e.assigned_to)) return false;
       if (assigneeFilter !== 'all' && e.assigned_to !== assigneeFilter) return false;
@@ -335,7 +405,7 @@ export default function Enquiries() {
         nameOf(e.assigned_to).toLowerCase().includes(q)
       );
     });
-  }, [enquiries, search, statusFilter, selectedSource, teamAssigneeIds, assigneeFilter, matchesPeriod, nameOf]);
+  }, [enquiries, search, statusFilter, categoryFilter, selectedSource, teamAssigneeIds, assigneeFilter, matchesPeriod, nameOf]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   // Derived rather than stored, so realtime deletes shrinking the list can
@@ -352,20 +422,26 @@ export default function Enquiries() {
 
   const activeChips = [
     { key: 'status', active: statusFilter !== 'all', label: statusFilter !== 'all' ? enumLabel('enquiryStatus', statusFilter, statusFilter, lang) : '', clear: () => setStatusFilter('all') },
+    {
+      key: 'category',
+      active: categoryFilter !== 'all',
+      label: categoryFilter === 'house_land' ? t('enquiries.categoryHouseLand') : t('enquiries.categoryCondo'),
+      clear: () => setCategoryFilter('all'),
+    },
     { key: 'source', active: !!selectedSource, label: selectedSource ?? '', clear: () => setSourceFilter('all') },
     { key: 'team', active: teamFilter !== 'all', label: teamOptions.find((tm) => tm.id === teamFilter)?.name ?? '', clear: () => setTeamFilter('all') },
     { key: 'assignee', active: assigneeFilter !== 'all', label: nameOf(assigneeFilter), clear: () => setAssigneeFilter('all') },
   ].filter((c) => c.active);
-  // Status has its own always-visible control on desktop, so it isn't counted on the desktop Filters badge.
-  const panelFilterCount = activeChips.filter((c) => c.key !== 'status').length;
+  // Status and category have their own always-visible controls on desktop, so they aren't counted on the desktop Filters badge.
+  const panelFilterCount = activeChips.filter((c) => c.key !== 'status' && c.key !== 'category').length;
   const hasActiveFilters = activeChips.length > 0 || !!search.trim() || period !== 'overall';
 
   const clearAllFilters = () => {
-    setSearch(''); setStatusFilter('all'); setSourceFilter('all'); setTeamFilter('all'); setAssigneeFilter('all'); setPeriod('overall');
+    setSearch(''); setStatusFilter('all'); setCategoryFilterState('all'); setSourceFilter('all'); setTeamFilter('all'); setAssigneeFilter('all'); setPeriod('overall');
   };
 
   const filterFieldProps = {
-    statusFilter, setStatusFilter, sourceFilter, setSourceFilter, sourceGroups,
+    statusFilter, setStatusFilter, categoryFilter, setCategoryFilter, sourceFilter, setSourceFilter, sourceGroups,
     showStaffFilters, teamFilter, onTeamChange: handleTeamChange, teamOptions,
     assigneeFilter, setAssigneeFilter, assigneeOptions,
   };
@@ -405,7 +481,7 @@ export default function Enquiries() {
     setName(enq.name);
     setPhone(enq.phone);
     setBudget(enq.budget || '');
-    setSourceCategory(HOUSE_LAND_SOURCES.includes(enq.source || '') ? 'house_land' : 'condo');
+    setSourceCategory(categoryOf(enq));
     setSource(enq.source || '');
     setMessage(enq.message || '');
     setAssignTo(enq.assigned_to);
@@ -418,6 +494,7 @@ export default function Enquiries() {
       phone: phone.trim(),
       budget: budget.trim() || null,
       source: source || null,
+      category: sourceCategory,
       message: message.trim() || null,
       assigned_to: assignTo,
     }).eq('id', enq.id);
@@ -435,6 +512,7 @@ export default function Enquiries() {
       phone: phone.trim(),
       budget: budget.trim() || null,
       source: source || null,
+      category: sourceCategory,
       message: message.trim() || null,
       assigned_to: assignTo,
       assigned_by: user.id,
@@ -546,6 +624,14 @@ export default function Enquiries() {
                   ))}
                 </SelectContent>
               </Select>
+              <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v as 'all' | EnquiryCategory)}>
+                <SelectTrigger className="w-[160px] h-11 rounded-lg bg-muted/40 border-transparent"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('enquiries.allCategories')}</SelectItem>
+                  <SelectItem value="condo">{t('enquiries.categoryCondo')}</SelectItem>
+                  <SelectItem value="house_land">{t('enquiries.categoryHouseLand')}</SelectItem>
+                </SelectContent>
+              </Select>
               <Popover>
                 <PopoverTrigger asChild>
                   <button
@@ -648,7 +734,10 @@ export default function Enquiries() {
                   <CardContent className="p-4 md:p-5 space-y-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="text-[11px] font-mono text-muted-foreground tracking-wide">{enq.enquiry_no}</p>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <p className="text-[11px] font-mono text-muted-foreground tracking-wide truncate">{enq.enquiry_no}</p>
+                          <CategoryBadge category={categoryOf(enq)} />
+                        </div>
                         <p className="text-sm font-semibold text-foreground truncate mt-0.5">{enq.name}</p>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -695,9 +784,22 @@ export default function Enquiries() {
                       {enq.message && <div className="flex items-start gap-1.5 text-muted-foreground"><MessageSquare className="w-3.5 h-3.5 shrink-0 mt-0.5" /> <span className="line-clamp-2">{enq.message}</span></div>}
                     </div>
   
-                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/40 text-xs text-muted-foreground">
-                      <span>{canAssign ? `${t('enquiries.assignedToLabel')}: ${nameOf(enq.assigned_to)}` : `${t('enquiries.assignedByLabel')}: ${nameOf(enq.assigned_by)}`}</span>
-                      <span>{formatDate(enq.created_at)}</span>
+                    <div className="space-y-1 pt-2 border-t border-border/40 text-xs text-muted-foreground">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 space-y-0.5">
+                          {canAssign && (
+                            <p className="truncate">{t('enquiries.assignedToLabel')}: <span className="text-foreground font-medium">{nameOf(enq.assigned_to)}</span></p>
+                          )}
+                          <p className="truncate">{t('enquiries.assignedByLabel')}: <span className="text-foreground font-medium">{enq.assigned_by ? nameOf(enq.assigned_by) : '—'}</span></p>
+                        </div>
+                        <span className="shrink-0">{formatDate(enq.created_at)}</span>
+                      </div>
+                      {enq.status === 'completed' && enq.completed_at && (
+                        <p className="flex items-center gap-1.5 text-success">
+                          <Timer className="w-3.5 h-3.5 shrink-0" />
+                          {t('enquiries.completedIn')}: <span className="font-semibold tabular-nums">{formatDuration(enq.created_at, enq.completed_at, t)}</span>
+                        </p>
+                      )}
                     </div>
   
                     {enq.status === 'pending' && canAct && (

@@ -10,6 +10,7 @@ export type NotificationType = 'new_lead_assigned' | 'followup_reminder' | 'appo
 export type ApptStatus = 'scheduled' | 'completed' | 'missed' | 'cancelled';
 export type SystemMessageType = 'info' | 'warning' | 'maintenance' | 'critical';
 export type EnquiryStatus = 'pending' | 'accepted' | 'completed';
+export type EnquiryCategory = 'condo' | 'house_land';
 
 export interface SystemMessage {
   id: string;
@@ -99,6 +100,7 @@ export interface Enquiry {
   phone: string;
   budget?: string | null;
   source?: string | null;
+  category?: EnquiryCategory | null;
   message?: string | null;
   assigned_to: string;
   assigned_by?: string | null;
@@ -281,6 +283,7 @@ export const CONDO_SOURCES = [
   'Production Department',
   'Marketing Department',
   'AI Department',
+  'Open Verse',
 ];
 export const HOUSE_LAND_SOURCES = [
   'House&Land Listing',
@@ -297,4 +300,5 @@ export const HOUSE_LAND_SOURCES = [
   'Production Department',
   'Marketing Department',
   'AI Department',
+  'Open Verse',
 ];

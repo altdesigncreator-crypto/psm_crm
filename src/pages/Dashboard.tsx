@@ -1,21 +1,19 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useId, type KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { Card, CardContent } from '@/components/ui/card';
-import {
-  Chart as ChartJS, ArcElement, Tooltip as ChartTooltip, Legend as ChartLegend,
-  LineElement, PointElement, Filler, CategoryScale, LinearScale,
-} from 'chart.js';
-import { Doughnut, Line } from 'react-chartjs-2';
+import { Chart as ChartJS, ArcElement, Tooltip as ChartTooltip, Legend as ChartLegend } from 'chart.js';
+import { Doughnut } from 'react-chartjs-2';
 import {
   Users, PhoneCall, Trophy, Activity, Clock, ArrowUpRight,
   ChevronRight, Download, FileSpreadsheet, FileText as FileTextIcon, File as FilePdf,
-  CheckCircle2, Percent, PieChart, BarChart3, Star, ArrowUp, ArrowDown, CalendarDays, Calendar, Crown, Inbox,
+  CheckCircle2, Percent, PieChart, BarChart3, Star, ArrowUp, ArrowDown, CalendarDays, Calendar, Crown, Building2, Home, Minus,
+  type LucideIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { LEAD_STAGES, type Lead } from '@/types';
+import { LEAD_STAGES, type Lead, type EnquiryCategory } from '@/types';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useTeams } from '@/hooks/useTeams';
@@ -34,7 +32,7 @@ import { fetchAllRows } from '@/lib/fetchAllRows';
 const DASHBOARD_CACHE_TTL_MS = 5 * 60 * 1000;
 const dashboardCacheKey = (userId: string) => `dashboard-leads:${userId}`;
 
-ChartJS.register(ArcElement, ChartTooltip, ChartLegend, LineElement, PointElement, Filler, CategoryScale, LinearScale);
+ChartJS.register(ArcElement, ChartTooltip, ChartLegend);
 
 const PIE_COLORS = [
   'hsl(208, 96%, 43%)', 'hsl(173, 58%, 39%)', 'hsl(197, 37%, 24%)', 'hsl(43, 74%, 66%)', 'hsl(280, 60%, 55%)',
@@ -117,31 +115,103 @@ function dailyCounts(leads: Lead[], predicate: (l: Lead) => boolean, days = 7): 
   return buckets;
 }
 
+/** Hand-drawn SVG rather than a Chart.js canvas: a canvas sizes itself from
+ * its parent and overflowed the narrow KPI cards, whereas an SVG with a
+ * viewBox + preserveAspectRatio="none" simply stretches to whatever box it
+ * is given. Segments are cubic curves with horizontal control points, which
+ * smooths the line without ever overshooting below zero. */
 function Sparkline({ data, color }: { data: number[]; color: string }) {
-  const chartData = {
-    labels: data.map((_, i) => i),
-    datasets: [{
-      data, borderColor: color, backgroundColor: `${color}20`, fill: true,
-      borderWidth: 2, tension: 0.4, pointRadius: 0,
-    }],
-  };
-  const options = {
-    responsive: true, maintainAspectRatio: false,
-    scales: { x: { display: false }, y: { display: false } },
-    plugins: { legend: { display: false }, tooltip: { enabled: false } },
-  };
-  return <div className="h-7 w-12 sm:h-8 sm:w-16 shrink-0"><Line data={chartData} options={options} /></div>;
+  const gradientId = `spark-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  if (data.length < 2) return null;
+  const W = 100;
+  const H = 32;
+  const PAD = 3;
+  const max = Math.max(...data);
+  const min = Math.min(...data);
+  const points = data.map((v, i) => ({
+    x: (i / (data.length - 1)) * W,
+    // A flat series sits low in the band instead of hugging the top edge.
+    y: max === min ? H - PAD - 4 : PAD + (1 - (v - min) / (max - min)) * (H - PAD * 2),
+  }));
+  const line = points.reduce((d, p, i) => {
+    if (i === 0) return `M${p.x},${p.y}`;
+    const prev = points[i - 1];
+    const midX = (prev.x + p.x) / 2;
+    return `${d} C${midX},${prev.y} ${midX},${p.y} ${p.x},${p.y}`;
+  }, '');
+  const area = `${line} L${W},${H} L0,${H} Z`;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-10 w-full" aria-hidden="true">
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity={0.2} />
+          <stop offset="100%" stopColor={color} stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      <path d={area} fill={`url(#${gradientId})`} />
+      <path d={line} fill="none" stroke={color} strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
 }
 
-function TrendLine({ delta }: { delta: number }) {
-  const { t } = useTranslation();
-  const positive = delta >= 0;
+function TrendPill({ delta }: { delta: number }) {
+  const tone = delta > 0
+    ? { cls: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400', Icon: ArrowUp }
+    : delta < 0
+      ? { cls: 'bg-destructive/10 text-destructive', Icon: ArrowDown }
+      : { cls: 'bg-muted text-muted-foreground', Icon: Minus };
   return (
-    <p className="text-[10px] md:text-[11px] text-muted-foreground flex items-center gap-0.5 md:gap-1 shrink-0 min-w-0">
-      {positive ? <ArrowUp className="w-3 h-3 text-emerald-500 shrink-0" /> : <ArrowDown className="w-3 h-3 text-destructive shrink-0" />}
-      <span className={`font-semibold ${positive ? 'text-emerald-600' : 'text-destructive'}`}>{Math.abs(delta)}%</span>
-      <span className="truncate hidden md:inline">{t('dashboard.vsLastMonth')}</span>
-    </p>
+    <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums shrink-0 ${tone.cls}`}>
+      <tone.Icon className="w-3 h-3" strokeWidth={2.5} />
+      {Math.abs(delta)}%
+    </span>
+  );
+}
+
+interface KpiCardProps {
+  label: string;
+  value: string;
+  icon: LucideIcon;
+  /** Hex colour driving the icon chip and sparkline, so each metric keeps one consistent hue. */
+  accent: string;
+  onOpen: () => void;
+  delta?: number;
+  trend?: number[];
+  caption?: string;
+  className?: string;
+}
+
+/** One layout for every dashboard stat: label + icon, the number, a trend
+ * row, and an edge-to-edge sparkline pinned to the bottom so cards in the
+ * same row line up regardless of label length or language. */
+function KpiCard({ label, value, icon: Icon, accent, onOpen, delta, trend, caption, className = '' }: KpiCardProps) {
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); }
+  };
+  return (
+    <Card
+      role="button" tabIndex={0} aria-label={`${label}: ${value}`}
+      onClick={onOpen} onKeyDown={onKeyDown}
+      className={`group relative flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 shadow-card cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card-hover hover:border-border active:translate-y-0 active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${className}`}
+    >
+      <div className="flex items-start justify-between gap-2 px-4 pt-4">
+        <p className="min-w-0 text-xs font-medium leading-4 text-muted-foreground line-clamp-2 min-h-8">{label}</p>
+        <span
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-transform duration-200 group-hover:scale-105"
+          style={{ backgroundColor: `${accent}1A`, color: accent }}
+        >
+          <Icon className="h-4 w-4" strokeWidth={2.25} />
+        </span>
+      </div>
+      <p className="mt-2 px-4 text-2xl md:text-[1.75rem] font-semibold leading-none tracking-tight tabular-nums text-foreground truncate">{value}</p>
+      <div className="mt-2.5 flex min-w-0 items-center gap-1.5 px-4 text-[11px] text-muted-foreground">
+        {delta !== undefined && <TrendPill delta={delta} />}
+        {caption && <span className="truncate">{caption}</span>}
+      </div>
+      <div className={`mt-auto ${trend ? 'pt-3' : 'pt-4'}`}>
+        {trend && <Sparkline data={trend} color={accent} />}
+      </div>
+    </Card>
   );
 }
 
@@ -214,18 +284,23 @@ export default function Dashboard() {
     return () => { active = false; supabase.removeChannel(channel); };
   }, [user?.id]);
 
-  // Just a count, not the full row set the Enquiries page needs — this tile
-  // only ever shows "how many need action right now," so a head-only count
-  // query is enough and avoids pulling every enquiry's data onto Dashboard.
-  const [pendingEnquiryCount, setPendingEnquiryCount] = useState(0);
+  // Just counts, not the full row set the Enquiries page needs — head-only
+  // count queries avoid pulling every enquiry's data onto Dashboard.
+  const [enquiryCounts, setEnquiryCounts] = useState<Record<EnquiryCategory, number>>({ condo: 0, house_land: 0 });
   useEffect(() => {
     if (!user) return;
     let active = true;
-    const fetchCount = async () => {
-      let query = supabase.from('enquiries').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+    const countFor = async (category: EnquiryCategory) => {
+      let query = supabase.from('enquiries').select('id', { count: 'exact', head: true }).eq('category', category);
       if (!canAssignEnq) query = query.eq('assigned_to', user.id);
-      const { count } = await query;
-      if (active) setPendingEnquiryCount(count || 0);
+      const { count, error } = await query;
+      // Surfaced rather than swallowed — a failed query otherwise renders as a believable "0".
+      if (error) console.error(`Dashboard ${category} enquiry count failed:`, error.message);
+      return count || 0;
+    };
+    const fetchCount = async () => {
+      const [condo, house_land] = await Promise.all([countFor('condo'), countFor('house_land')]);
+      if (active) setEnquiryCounts({ condo, house_land });
     };
     fetchCount();
 
@@ -403,115 +478,47 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* KPI Cards — each links through to the Leads list pre-filtered to
-          match, so a count is never a dead end. */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-2.5 sm:gap-3">
-        <Card
-          role="button" tabIndex={0}
-          onClick={() => navigate('/enquiries')}
-          onKeyDown={(e) => { if (e.key === 'Enter') navigate('/enquiries'); }}
-          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 cursor-pointer active:scale-[0.98]"
-        >
-          <CardContent className="p-3 md:p-4">
-            <div className="flex items-center gap-2 mb-2 md:mb-3">
-              <div className="w-7 h-7 md:w-9 md:h-9 rounded-lg bg-gradient-to-br from-sky-500/15 to-sky-500/5 flex items-center justify-center shrink-0"><Inbox className="w-3.5 h-3.5 md:w-4 md:h-4 text-sky-600" /></div>
-              <p className="text-[11px] md:text-xs font-medium text-muted-foreground truncate">{t('dashboard.pendingEnquiries')}</p>
-            </div>
-            <p className="text-lg md:text-2xl font-bold text-foreground tabular-nums truncate">{pendingEnquiryCount.toLocaleString()}</p>
-            <p className="text-[10px] md:text-[11px] text-muted-foreground mt-1.5 md:mt-2 truncate">{t('dashboard.pendingEnquiriesCaption')}</p>
-          </CardContent>
-        </Card>
-        <Card
-          role="button" tabIndex={0}
-          onClick={() => navigate('/leads')}
-          onKeyDown={(e) => { if (e.key === 'Enter') navigate('/leads'); }}
-          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 cursor-pointer active:scale-[0.98]"
-        >
-          <CardContent className="p-3 md:p-4">
-            <div className="flex items-center gap-2 mb-2 md:mb-3">
-              <div className="w-7 h-7 md:w-9 md:h-9 rounded-lg bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center shrink-0"><Users className="w-3.5 h-3.5 md:w-4 md:h-4 text-primary" /></div>
-              <p className="text-[11px] md:text-xs font-medium text-muted-foreground truncate">{t('dashboard.totalLeads')}</p>
-            </div>
-            <p className="text-lg md:text-2xl font-bold text-foreground tabular-nums truncate">{totalLeads.toLocaleString()}</p>
-            <div className="flex items-center justify-between gap-2 mt-1.5 md:mt-2">
-              <TrendLine delta={deltas.total} />
-              <Sparkline data={sparklines.total} color="#0463CA" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          role="button" tabIndex={0}
-          onClick={() => navigate('/follow-ups')}
-          onKeyDown={(e) => { if (e.key === 'Enter') navigate('/follow-ups'); }}
-          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 cursor-pointer active:scale-[0.98]"
-        >
-          <CardContent className="p-3 md:p-4">
-            <div className="flex items-center gap-2 mb-2 md:mb-3">
-              <div className="w-7 h-7 md:w-9 md:h-9 rounded-lg bg-gradient-to-br from-teal-500/15 to-teal-500/5 flex items-center justify-center shrink-0"><PhoneCall className="w-3.5 h-3.5 md:w-4 md:h-4 text-teal-600" /></div>
-              <p className="text-[11px] md:text-xs font-medium text-muted-foreground truncate">{t('dashboard.followUp')}</p>
-            </div>
-            <p className="text-lg md:text-2xl font-bold text-foreground tabular-nums truncate">{followUpCount.toLocaleString()}</p>
-            <div className="flex items-center justify-between gap-2 mt-1.5 md:mt-2">
-              <TrendLine delta={deltas.followUp} />
-              <Sparkline data={sparklines.followUp} color="#0D9488" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          role="button" tabIndex={0}
-          onClick={() => navigate('/leads?grade=A')}
-          onKeyDown={(e) => { if (e.key === 'Enter') navigate('/leads?grade=A'); }}
-          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 cursor-pointer active:scale-[0.98]"
-        >
-          <CardContent className="p-3 md:p-4">
-            <div className="flex items-center gap-2 mb-2 md:mb-3">
-              <div className="w-7 h-7 md:w-9 md:h-9 rounded-lg bg-gradient-to-br from-violet-500/15 to-violet-500/5 flex items-center justify-center shrink-0"><Star className="w-3.5 h-3.5 md:w-4 md:h-4 text-violet-500" /></div>
-              <p className="text-[11px] md:text-xs font-medium text-muted-foreground truncate">{t('dashboard.gradeA')}</p>
-            </div>
-            <p className="text-lg md:text-2xl font-bold text-foreground tabular-nums truncate">{levelACount.toLocaleString()}</p>
-            <div className="flex items-center justify-between gap-2 mt-1.5 md:mt-2">
-              <TrendLine delta={deltas.gradeA} />
-              <Sparkline data={sparklines.gradeA} color="#8B5CF6" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          role="button" tabIndex={0}
-          onClick={() => navigate('/leads?status=sold')}
-          onKeyDown={(e) => { if (e.key === 'Enter') navigate('/leads?status=sold'); }}
-          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 cursor-pointer active:scale-[0.98]"
-        >
-          <CardContent className="p-3 md:p-4">
-            <div className="flex items-center gap-2 mb-2 md:mb-3">
-              <div className="w-7 h-7 md:w-9 md:h-9 rounded-lg bg-gradient-to-br from-emerald-500/15 to-emerald-500/5 flex items-center justify-center shrink-0"><CheckCircle2 className="w-3.5 h-3.5 md:w-4 md:h-4 text-emerald-500" /></div>
-              <p className="text-[11px] md:text-xs font-medium text-muted-foreground truncate">{t('stage.sold')}</p>
-            </div>
-            <p className="text-lg md:text-2xl font-bold text-foreground tabular-nums truncate">{soldCount.toLocaleString()}</p>
-            <div className="flex items-center justify-between gap-2 mt-1.5 md:mt-2">
-              <TrendLine delta={deltas.sold} />
-              <Sparkline data={sparklines.sold} color="#059669" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          role="button" tabIndex={0}
-          onClick={() => navigate('/kpi-board')}
-          onKeyDown={(e) => { if (e.key === 'Enter') navigate('/kpi-board'); }}
-          className="shadow-card hover:shadow-card-hover transition-all duration-300 rounded-xl border-0 relative overflow-hidden cursor-pointer active:scale-[0.98]"
-        >
-          <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-amber-500/10 to-transparent rounded-bl-full pointer-events-none" />
-          <CardContent className="p-3 md:p-4 relative">
-            <div className="flex items-center gap-2 mb-2 md:mb-3">
-              <div className="w-7 h-7 md:w-9 md:h-9 rounded-lg bg-gradient-to-br from-amber-500/15 to-amber-500/5 flex items-center justify-center shrink-0"><Percent className="w-3.5 h-3.5 md:w-4 md:h-4 text-amber-500" /></div>
-              <p className="text-[11px] md:text-xs font-medium text-muted-foreground truncate">{t('dashboard.conversionRate')}</p>
-            </div>
-            <p className="text-lg md:text-2xl font-bold text-foreground tabular-nums truncate">{conversionRate}%</p>
-            <div className="flex items-center justify-between gap-2 mt-1.5 md:mt-2">
-              <TrendLine delta={deltas.conversion} />
-              <Sparkline data={sparklines.conversion} color="#F59E0B" />
-            </div>
-          </CardContent>
-        </Card>
+      {/* KPI Cards — each links through to a pre-filtered list, so a count
+          is never a dead end. 7 tiles: 2-up on phones and 4-up on
+          tablets/laptops (the last one spans 2 so neither grid has a hole),
+          one row on wide screens. */}
+      <div className="grid grid-cols-2 md:grid-cols-4 2xl:grid-cols-7 gap-3 md:gap-4">
+        <KpiCard
+          label={t('dashboard.condoEnquiries')} value={enquiryCounts.condo.toLocaleString()}
+          icon={Building2} accent="#0284C7" caption={t('dashboard.totalEnquiriesCaption')}
+          onOpen={() => navigate('/enquiries?category=condo')}
+        />
+        <KpiCard
+          label={t('dashboard.houseLandEnquiries')} value={enquiryCounts.house_land.toLocaleString()}
+          icon={Home} accent="#D97706" caption={t('dashboard.totalEnquiriesCaption')}
+          onOpen={() => navigate('/enquiries?category=house_land')}
+        />
+        <KpiCard
+          label={t('dashboard.totalLeads')} value={totalLeads.toLocaleString()}
+          icon={Users} accent="#0463CA" delta={deltas.total} trend={sparklines.total} caption={t('dashboard.vsLastMonth')}
+          onOpen={() => navigate('/leads')}
+        />
+        <KpiCard
+          label={t('dashboard.followUp')} value={followUpCount.toLocaleString()}
+          icon={PhoneCall} accent="#0D9488" delta={deltas.followUp} trend={sparklines.followUp} caption={t('dashboard.vsLastMonth')}
+          onOpen={() => navigate('/follow-ups')}
+        />
+        <KpiCard
+          label={t('dashboard.gradeA')} value={levelACount.toLocaleString()}
+          icon={Star} accent="#8B5CF6" delta={deltas.gradeA} trend={sparklines.gradeA} caption={t('dashboard.vsLastMonth')}
+          onOpen={() => navigate('/leads?grade=A')}
+        />
+        <KpiCard
+          label={t('stage.sold')} value={soldCount.toLocaleString()}
+          icon={CheckCircle2} accent="#059669" delta={deltas.sold} trend={sparklines.sold} caption={t('dashboard.vsLastMonth')}
+          onOpen={() => navigate('/leads?status=sold')}
+        />
+        <KpiCard
+          label={t('dashboard.conversionRate')} value={`${conversionRate}%`}
+          icon={Percent} accent="#F59E0B" delta={deltas.conversion} trend={sparklines.conversion} caption={t('dashboard.vsLastMonth')}
+          onOpen={() => navigate('/kpi-board')}
+          className="col-span-2 2xl:col-span-1"
+        />
       </div>
 
       {/* Charts */}
