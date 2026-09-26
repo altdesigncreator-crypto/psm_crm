@@ -419,7 +419,7 @@ export default function Dashboard() {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 className="text-lg sm:text-xl md:text-[26px] font-bold text-foreground tracking-tight leading-tight">
-              {t('dashboard.welcomeBack')}, {user?.name || t('dashboard.thereFallback')} <span aria-hidden="true">👋</span>
+              {t('dashboard.welcomeBack')}, {user?.name || t('dashboard.thereFallback')}
             </h1>
             <p className="text-xs sm:text-sm text-muted-foreground mt-1">{t('dashboard.subtitle')}</p>
           </div>
