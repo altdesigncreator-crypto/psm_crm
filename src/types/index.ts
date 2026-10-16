@@ -284,6 +284,7 @@ export const CONDO_SOURCES = [
   'Marketing Department',
   'AI Department',
   'Open Verse',
+  'Own Enquiry',
 ];
 export const HOUSE_LAND_SOURCES = [
   'House&Land Listing',
@@ -301,4 +302,5 @@ export const HOUSE_LAND_SOURCES = [
   'Marketing Department',
   'AI Department',
   'Open Verse',
+  'Own Enquiry',
 ];
