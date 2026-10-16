@@ -17,12 +17,12 @@ import {
 } from '@/types';
 import { BudgetStepperInput } from '@/components/ui/budget-stepper-input';
 import ProjectNameInput from '@/components/ProjectNameInput';
+import { invalidateProjectNames } from '@/hooks/useProjectNames';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useTeams } from '@/hooks/useTeams';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { isManagerOrAbove, isAdminOrAbove, getDepartmentLabel } from '@/lib/permissions';
-import { getEdgeFunctionErrorMessage } from '@/lib/edgeFunctionError';
 import { notifyUser } from '@/lib/notifyUser';
 
 function initialsOf(name: string) {
@@ -77,8 +77,6 @@ export default function AddLead() {
   const [duplicateLeads, setDuplicateLeads] = useState<any[]>([]);
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
 
-  const [aiScoring, setAiScoring] = useState(false);
-  const [aiScoreReason, setAiScoreReason] = useState('');
 
   useEffect(() => {
     if (!enquiryId) return;
@@ -142,7 +140,7 @@ export default function AddLead() {
     current_location: currentLocation.trim() || null,
     interest_type: interestType || null,
     property_type: propertyType || null,
-    preferred_project: preferredProject,
+    preferred_project: preferredProject.trim(),
     budget_range: budgetRangeDisplay,
     purpose: purpose || null,
     lead_source: leadSource || null,
@@ -155,33 +153,6 @@ export default function AddLead() {
     remarks: remarks.trim() || null,
   });
 
-  const handleAutoScore = async () => {
-    setAiScoring(true);
-    setAiScoreReason('');
-    try {
-      const { data, error } = await supabase.functions.invoke('lead-score', {
-        body: {
-          lead: {
-            name: name.trim(), phone: phone.trim(), email: email.trim() || undefined,
-            interestType: interestType || undefined, propertyType: propertyType || undefined,
-            preferredProject: preferredProject || undefined,
-            budgetRange: budgetUnlimited ? 'Unlimited' : `${budgetMin.toLocaleString()} - ${budgetMax.toLocaleString()}`,
-            purpose: purpose || undefined,
-            leadSource: leadSource || undefined, currentLocation: currentLocation.trim() || undefined, remarks: remarks.trim() || undefined,
-          },
-        },
-      });
-      if (error) throw new Error(await getEdgeFunctionErrorMessage(error, t('addLead.aiScoringFailed')));
-      if (!data?.score) throw new Error(t('addLead.aiScoringFailed'));
-      setLeadGrade(data.score);
-      setAiScoreReason(data.reasoning || '');
-      toast.success(`${t('addLead.aiScoreToastPrefix')}: ${data.score} — ${data.reasoning}`);
-    } catch (err: any) {
-      toast.error(err.message || t('addLead.aiScoringFailed'));
-    } finally {
-      setAiScoring(false);
-    }
-  };
 
   const checkDuplicate = async () => {
     if (!phone.trim() && !email.trim()) return [];
@@ -214,6 +185,7 @@ export default function AddLead() {
   const insertLead = async (payload: any) => {
     const { data, error } = await supabase.from('leads').insert(payload).select('id').single();
     if (error) throw error;
+    invalidateProjectNames();
     const leadId = data.id;
 
     if (visitPhotoFile || appointmentPhotoFile) {
@@ -420,19 +392,13 @@ export default function AddLead() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <div className="h-5 flex items-center justify-between gap-2">
+                  <div className="h-5 flex items-center">
                     <Label className="text-sm font-medium shrink-0 whitespace-nowrap">{t('addLead.leadGrade')} <span className="text-destructive">*</span></Label>
-                    <button type="button" onClick={handleAutoScore} disabled={aiScoring} className="text-xs font-medium text-primary hover:text-primary/80 flex items-center gap-1 shrink-0 whitespace-nowrap disabled:opacity-40 transition-colors">
-                      {aiScoring ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                      {aiScoring ? t('addLead.scoring') : t('addLead.aiScore')}
-                    </button>
                   </div>
                   <Select value={leadGrade} onValueChange={setLeadGrade}>
                     <SelectTrigger className="h-12"><SelectValue placeholder={t('addLead.selectGrade')} /></SelectTrigger>
                     <SelectContent>{LEAD_GRADES.map((g) => <SelectItem key={g.value} value={g.value}>{t(`grade.${g.value}.label`)}</SelectItem>)}</SelectContent>
                   </Select>
-                  {aiScoreReason && <p className="text-xs text-muted-foreground bg-muted/50 rounded-md px-2 py-1.5">{aiScoreReason}</p>}
-                  <p className="text-[11px] text-muted-foreground">{t('addLead.gradeHint')}</p>
                 </div>
                 {/* Team first, then who on that team owns the lead — since a
                     manager can run more than one team and a salesperson can

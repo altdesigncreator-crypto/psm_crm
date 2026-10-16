@@ -22,6 +22,7 @@ import { LEAD_STAGES, type Lead } from '@/types';
 import { enumLabel } from '@/lib/translations';
 import { toast } from 'sonner';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { buildProjectIndex, countProjects } from '@/lib/projectNames';
 import { usePeriodFilter } from '@/hooks/usePeriodFilter';
 import PeriodFilterBar from '@/components/PeriodFilterBar';
 
@@ -270,13 +271,19 @@ export default function AdminAnalytics() {
 
   // Most Interested — which projects are actually pulling demand, the
   // number one thing an exec wants from "analytics" in a real-estate CRM.
+  // Spelling variants are folded into one project first, otherwise demand
+  // for e.g. "Ba Htoo Gyi Condo" is split across five bars. A lead naming
+  // two projects counts toward both.
   const projectPerf = useMemo(() => {
+    const index = buildProjectIndex(countProjects(periodLeads));
     const map: Record<string, { total: number; closed: number }> = {};
     periodLeads.forEach((l) => {
-      const key = l.preferred_project?.trim() || t('analytics.unspecified');
-      if (!map[key]) map[key] = { total: 0, closed: 0 };
-      map[key].total += 1;
-      if (l.status === 'sold') map[key].closed += 1;
+      const groups = index.groupsOf(l.preferred_project?.trim() ? l.preferred_project : null);
+      (groups.length > 0 ? groups : [t('analytics.unspecified')]).forEach((key) => {
+        if (!map[key]) map[key] = { total: 0, closed: 0 };
+        map[key].total += 1;
+        if (l.status === 'sold') map[key].closed += 1;
+      });
     });
     return Object.entries(map).sort((a, b) => b[1].total - a[1].total).slice(0, 8);
   }, [periodLeads, t]);

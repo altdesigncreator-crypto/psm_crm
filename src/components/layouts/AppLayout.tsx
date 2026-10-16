@@ -21,6 +21,7 @@ import {
   Map as MapIcon,
   Sun, Moon, ChevronDown, UserCircle,
   Inbox,
+  Building2,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -56,6 +57,7 @@ const NAV_SECTIONS: { tKey: string; items: NavItem[] }[] = [
       { tKey: 'nav.leads', path: '/leads', routeKey: 'leads', icon: Users },
       { tKey: 'nav.followUps', path: '/follow-ups', routeKey: 'follow-ups', icon: ListChecks },
       { tKey: 'nav.pipeline', path: '/pipeline', routeKey: 'pipeline', icon: Kanban },
+      { tKey: 'nav.projectInsights', path: '/project-insights', routeKey: 'project-insights', icon: Building2 },
       { tKey: 'nav.psmMap', path: '/psm-map', routeKey: 'psm-map', icon: MapIcon },
     ],
   },

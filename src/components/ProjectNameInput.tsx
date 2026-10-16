@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
-import { useProjectNames } from '@/hooks/useProjectNames';
+import { useProjectIndex } from '@/hooks/useProjectNames';
+import { groupMatchesQuery, projectKey } from '@/lib/projectNames';
 import { Building2 } from 'lucide-react';
 
 interface ProjectNameInputProps {
@@ -16,19 +17,23 @@ interface ProjectNameInputProps {
  * staff can name a brand-new project), so this nudges toward reusing an
  * existing spelling without forcing it, which is exactly what caused the
  * database to end up with a dozen spellings of "Dagon Landmark Residence"
- * in the first place. */
+ * in the first place. Suggestions are the canonical name of each project
+ * group, matched typo-tolerantly against every known spelling — typing
+ * "bahtoo" or "Bahtogyi" both offer "Ba Htoo Gyi Condo". */
 export default function ProjectNameInput({ value, onChange, placeholder, className, required }: ProjectNameInputProps) {
-  const { projectNames } = useProjectNames();
+  const { index } = useProjectIndex();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const suggestions = useMemo(() => {
-    const query = value.trim().toLowerCase();
-    if (!query) return [];
-    return projectNames
-      .filter((name) => name.toLowerCase().includes(query) && name.toLowerCase() !== query)
-      .slice(0, 6);
-  }, [value, projectNames]);
+    const key = projectKey(value);
+    if (!key) return [];
+    return index.groups
+      .filter((g) => projectKey(g.label) !== key && groupMatchesQuery(g, value))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 6)
+      .map((g) => g.label.trim());
+  }, [value, index]);
 
   useEffect(() => {
     if (!open) return;

@@ -27,6 +27,8 @@ import {
 import { toast } from 'sonner';
 import { cacheGet, cacheSetDebounced } from '@/lib/localCache';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { buildProjectIndex, countProjects } from '@/lib/projectNames';
+import ProjectFilterList from '@/components/ProjectFilterList';
 import { usePeriodFilter } from '@/hooks/usePeriodFilter';
 import PeriodFilterBar from '@/components/PeriodFilterBar';
 
@@ -148,10 +150,10 @@ export default function PipelineBoard() {
 
   const currentUser = user ? { id: user.id, role, department } : null;
 
-  const uniqueProjects = useMemo(
-    () => Array.from(new Set(leads.map((l) => l.preferred_project).filter(Boolean))).sort() as string[],
-    [leads]
-  );
+  // Spelling variants of one project ("Bahtoogyi", "Ba Htoo Gyi Condo")
+  // collapse into one filter option; selecting it matches all of them.
+  const projectIndex = useMemo(() => buildProjectIndex(countProjects(leads)), [leads]);
+  const projectValueSet = useMemo(() => new Set(projectIndex.expand(projectFilters)), [projectIndex, projectFilters]);
   const toggleProjectFilter = (project: string) => {
     setProjectFilters((prev) => (prev.includes(project) ? prev.filter((p) => p !== project) : [...prev, project]));
   };
@@ -168,7 +170,7 @@ export default function PipelineBoard() {
     return leads.filter((lead) => {
       const agent = nameOf(lead.owner_id).toLowerCase();
       const matchesSearch = !searchQuery || lead.name?.toLowerCase().includes(q) || lead.phone?.includes(searchQuery) || agent.includes(q);
-      const matchesProject = projectFilters.length === 0 || (!!lead.preferred_project && projectFilters.includes(lead.preferred_project));
+      const matchesProject = projectFilters.length === 0 || (!!lead.preferred_project && projectValueSet.has(lead.preferred_project));
       const matchesDept = deptFilter === 'all' || lead.department_code === deptFilter;
       const matchesTeam = teamFilter === 'all'
         || lead.team_id === teamFilter
@@ -179,7 +181,7 @@ export default function PipelineBoard() {
       const matchesPeriodFilter = matchesPeriod(lead.created_at);
       return matchesSearch && matchesProject && matchesDept && matchesTeam && matchesAgent && matchesDate && matchesPeriodFilter;
     });
-  }, [leads, searchQuery, projectFilters, deptFilter, teamFilter, teamMemberIds, teamManagerId, agentFilter, dateFilter, matchesPeriod, nameOf]);
+  }, [leads, searchQuery, projectValueSet, deptFilter, teamFilter, teamMemberIds, teamManagerId, agentFilter, dateFilter, matchesPeriod, nameOf]);
 
   const columns: PipelineColumn[] = useMemo(() => {
     return ALL_STAGE_VALUES.map((status) => ({
@@ -356,7 +358,7 @@ export default function PipelineBoard() {
                       teamFilter={teamFilter} setTeamFilter={setTeamFilter}
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
                       dateFilter={dateFilter} setDateFilter={setDateFilter}
-                      uniqueAgents={uniqueAgents} uniqueProjects={uniqueProjects} departments={departments} teamOptions={teamOptions}
+                      uniqueAgents={uniqueAgents} projectGroups={projectIndex.groups} departments={departments} teamOptions={teamOptions}
                       showDept={!isDepartmentScoped(role)} showDate={false}
                     />
                   </PopoverContent>
@@ -392,7 +394,7 @@ export default function PipelineBoard() {
                       teamFilter={teamFilter} setTeamFilter={setTeamFilter}
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
                       dateFilter={dateFilter} setDateFilter={setDateFilter}
-                      uniqueAgents={uniqueAgents} uniqueProjects={uniqueProjects} departments={departments} teamOptions={teamOptions}
+                      uniqueAgents={uniqueAgents} projectGroups={projectIndex.groups} departments={departments} teamOptions={teamOptions}
                       showDept={!isDepartmentScoped(role)}
                     />
                     <SheetClose asChild>
@@ -673,7 +675,7 @@ function PipelineLeadCard({
 function PipelineFilterFields({
   deptFilter, setDeptFilter, projectFilters, toggleProjectFilter, setProjectFilters,
   teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter,
-  uniqueAgents, uniqueProjects, departments, teamOptions, showDept = true, showDate = true,
+  uniqueAgents, projectGroups, departments, teamOptions, showDept = true, showDate = true,
 }: any) {
   const { t } = useTranslation();
   return (
@@ -690,26 +692,7 @@ function PipelineFilterFields({
           </Select>
         </div>
       )}
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">{t('leads.filter.project')}</label>
-        <div className="max-h-48 overflow-y-auto rounded-md border border-input divide-y divide-border">
-          {uniqueProjects.length === 0 ? (
-            <p className="text-xs text-muted-foreground p-3">{t('leads.filter.noProjectsYet')}</p>
-          ) : (
-            uniqueProjects.map((p: string) => (
-              <label key={p} className="flex items-center gap-2.5 px-3 py-2.5 text-sm cursor-pointer">
-                <Checkbox checked={projectFilters.includes(p)} onCheckedChange={() => toggleProjectFilter(p)} />
-                <span className="truncate">{p}</span>
-              </label>
-            ))
-          )}
-        </div>
-        {projectFilters.length > 0 && (
-          <button type="button" onClick={() => setProjectFilters([])} className="text-xs font-medium text-primary">
-            {t('leads.filter.clearProjects')}
-          </button>
-        )}
-      </div>
+      <ProjectFilterList groups={projectGroups} selected={projectFilters} onToggle={toggleProjectFilter} onClear={() => setProjectFilters([])} />
       {teamOptions.length > 0 && (
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">{t('leads.filter.team')}</label>

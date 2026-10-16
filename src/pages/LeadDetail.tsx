@@ -36,6 +36,8 @@ import { canEditLead, canAddFollowUp, canAssignLead, canIssueWarning, canMonitor
 import { supabase } from '@/db/supabase';
 import { toast } from 'sonner';
 import StatusBadge from '@/components/StatusBadge';
+import ProjectNameInput from '@/components/ProjectNameInput';
+import { invalidateProjectNames } from '@/hooks/useProjectNames';
 
 interface DetailRowProps { label: string; value?: string | null; icon?: React.ReactNode; }
 
@@ -182,6 +184,7 @@ export default function LeadDetail() {
     const { error } = await supabase.from('leads').update(patch).eq('id', lead.id);
     setSavingEdit(false);
     if (error) { toast.error(t('leadDetail.saveError')); return; }
+    invalidateProjectNames();
     setLead((prev) => (prev ? { ...prev, ...patch } : prev));
     setEditMode(false);
     toast.success(t('leadDetail.updatedToast'));
@@ -586,7 +589,7 @@ export default function LeadDetail() {
                       </Select>
                     </EditField>
                     <EditField label={t('addLead.preferredProject')} icon={<Building2 className="w-4 h-4" />}>
-                      <Input value={editForm.preferred_project} onChange={(e) => setEditForm((f) => ({ ...f, preferred_project: e.target.value }))} className="h-10" />
+                      <ProjectNameInput value={editForm.preferred_project} onChange={(v) => setEditForm((f) => ({ ...f, preferred_project: v }))} className="h-10" />
                     </EditField>
                     <EditField label={t('addLead.budget')} icon={<DollarSign className="w-4 h-4" />}>
                       <Input value={editForm.budget_range} onChange={(e) => setEditForm((f) => ({ ...f, budget_range: e.target.value }))} className="h-10" />

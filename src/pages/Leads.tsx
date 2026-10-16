@@ -32,6 +32,8 @@ import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useDepartments } from '@/hooks/useDepartments';
 import { useTeams } from '@/hooks/useTeams';
+import { useProjectIndex } from '@/hooks/useProjectNames';
+import ProjectFilterList from '@/components/ProjectFilterList';
 import StatusBadge from '@/components/StatusBadge';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
@@ -90,7 +92,9 @@ function sortSpec(sortBy: SortBy): { column: string; ascending: boolean; nullsFi
 interface LeadFilters {
   statusFilter: string;
   gradeFilter: string;
-  projectFilters: string[];
+  /** Raw stored spellings to match — the selected project *groups*
+   * expanded to their variants (see lib/projectNames). */
+  projectValues: string[];
   deptFilter: string;
   teamFilter: string;
   agentFilter: string;
@@ -123,7 +127,7 @@ function applyLeadFilters<Q extends { eq: any; in: any; or: any; gte: any; lt: a
   if (f.statusFilter === FOLLOWUP_SENTINEL) q = q.in('status', FOLLOWUP_STAGE_VALUES);
   else if (f.statusFilter !== 'all') q = q.eq('status', f.statusFilter);
   if (f.gradeFilter !== 'all') q = q.eq('lead_grade', f.gradeFilter);
-  if (f.projectFilters.length > 0) q = q.in('preferred_project', f.projectFilters);
+  if (f.projectValues.length > 0) q = q.in('preferred_project', f.projectValues);
   if (f.deptFilter !== 'all') q = q.eq('department_code', f.deptFilter);
 
   if (f.teamFilter !== 'all') {
@@ -277,7 +281,14 @@ export default function Leads() {
   // An explicit ?status=/?grade= deep link (e.g. from a Dashboard tile) is a
   // fresh intent and should win over whatever was cached from a previous
   // visit — only fall back to the cache when arriving with no query at all.
-  const restoredState = searchParams.get('status') || searchParams.get('grade') ? null : cachedListState;
+  const restoredState = searchParams.get('status') || searchParams.get('grade') || searchParams.get('project') ? null : cachedListState;
+  // Project Insights links here with ?project=<group>&period=…&month=…&year=…
+  // so the list shows exactly the leads behind the number that was clicked.
+  const urlProject = searchParams.get('project');
+  const urlPeriod = searchParams.get('period');
+  const linkedPeriod = urlPeriod === 'monthly' || urlPeriod === 'yearly' || urlPeriod === 'overall'
+    ? { period: urlPeriod, selectedMonth: Number(searchParams.get('month') ?? new Date().getMonth()), selectedYear: Number(searchParams.get('year') ?? new Date().getFullYear()) } as const
+    : undefined;
   const { t, lang } = useTranslation();
   usePageHeader(t('leads.title'), t('leads.subtitle'));
   const { user, role, department, myTeamIds } = useAuth();
@@ -307,7 +318,7 @@ export default function Leads() {
   const [searchQuery, setSearchQuery] = useState(() => restoredState?.searchQuery ?? '');
   const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || restoredState?.statusFilter || 'all');
   const [gradeFilter, setGradeFilter] = useState(() => searchParams.get('grade') || restoredState?.gradeFilter || 'all');
-  const [projectFilters, setProjectFilters] = useState<string[]>(() => restoredState?.projectFilters ?? []);
+  const [projectFilters, setProjectFilters] = useState<string[]>(() => (urlProject ? [urlProject] : restoredState?.projectFilters ?? []));
   const [deptFilter, setDeptFilter] = useState(() => restoredState?.deptFilter ?? 'all');
   const [teamFilter, setTeamFilter] = useState(() => restoredState?.teamFilter ?? 'all');
   const [agentFilter, setAgentFilter] = useState(() => restoredState?.agentFilter ?? 'all');
@@ -317,7 +328,7 @@ export default function Leads() {
   const [pageSize, setPageSize] = useState(() => restoredState?.pageSize ?? 25);
   const {
     period, setPeriod, selectedMonth, selectedYear, isCurrentPeriod, shiftPeriod, periodLabel, periodRange,
-  } = usePeriodFilter(restoredState ? { period: restoredState.period, selectedMonth: restoredState.selectedMonth, selectedYear: restoredState.selectedYear } : undefined);
+  } = usePeriodFilter(linkedPeriod ?? (restoredState ? { period: restoredState.period, selectedMonth: restoredState.selectedMonth, selectedYear: restoredState.selectedYear } : undefined));
 
   const isSuperAdmin = role === 'super_admin';
   // Individually-checked rows keep the full Lead object (not just its id) —
@@ -343,8 +354,14 @@ export default function Leads() {
   const teamMemberIds = useMemo(() => (teamFilter === 'all' ? [] : membersOf(teamFilter)), [teamFilter, membersOf]);
   const teamManagerId = useMemo(() => (teamFilter === 'all' ? null : teams.find((t) => t.id === teamFilter)?.manager_id ?? null), [teamFilter, teams]);
 
+  // Project filter selects groups ("Ba Htoo Gyi Condo"), queried as every
+  // raw spelling in them. Selections restored from before grouping existed
+  // are raw values, which expand() passes through unchanged.
+  const { index: projectIndex } = useProjectIndex(user?.id);
+  const projectValues = useMemo(() => projectIndex.expand(projectFilters), [projectIndex, projectFilters]);
+
   const currentFilters: LeadFilters = {
-    statusFilter, gradeFilter, projectFilters, deptFilter, teamFilter, agentFilter, dateFilter,
+    statusFilter, gradeFilter, projectValues, deptFilter, teamFilter, agentFilter, dateFilter,
     periodRange: periodRange(), search: debouncedSearch, teamMemberIds, teamManagerId, profiles,
   };
 
@@ -355,20 +372,6 @@ export default function Leads() {
     () => Array.from(new Set(profiles.map((p) => p.name))).sort(),
     [profiles]
   );
-
-  // Project names are free-text, so there's no fixed table to read them
-  // from. This is a bounded, one-time sample (not re-run per filter/page
-  // change) — good enough for a filter dropdown without needing a
-  // dedicated distinct-values query.
-  const [uniqueProjects, setUniqueProjects] = useState<string[]>([]);
-  useEffect(() => {
-    if (!user) return;
-    supabase.from('leads').select('preferred_project').not('preferred_project', 'is', null).limit(1000)
-      .then(({ data }) => {
-        const names = Array.from(new Set((data || []).map((r: any) => r.preferred_project as string).filter(Boolean)));
-        setUniqueProjects(names.sort());
-      });
-  }, [user?.id]);
 
   const toggleProjectFilter = (project: string) => {
     setProjectFilters((prev) => (prev.includes(project) ? prev.filter((p) => p !== project) : [...prev, project]));
@@ -412,7 +415,7 @@ export default function Leads() {
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    user?.id, page, pageSize, sortBy, statusFilter, gradeFilter, projectFilters, deptFilter,
+    user?.id, page, pageSize, sortBy, statusFilter, gradeFilter, projectValues, deptFilter,
     teamFilter, agentFilter, dateFilter, period, selectedMonth, selectedYear, debouncedSearch,
     teamMemberIds, teamManagerId, profiles,
   ]);
@@ -898,7 +901,7 @@ export default function Leads() {
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
                       dateFilter={dateFilter} setDateFilter={setDateFilter}
                       sortBy={sortBy} setSortBy={setSortBy}
-                      uniqueAgents={uniqueAgents} uniqueProjects={uniqueProjects} departments={departments} teamOptions={teamOptions}
+                      uniqueAgents={uniqueAgents} projectGroups={projectIndex.groups} departments={departments} teamOptions={teamOptions}
                       showDept={showDeptFilter} showSortDate={false}
                     />
                   </PopoverContent>
@@ -937,7 +940,7 @@ export default function Leads() {
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
                       dateFilter={dateFilter} setDateFilter={setDateFilter}
                       sortBy={sortBy} setSortBy={setSortBy}
-                      uniqueAgents={uniqueAgents} uniqueProjects={uniqueProjects} departments={departments} teamOptions={teamOptions}
+                      uniqueAgents={uniqueAgents} projectGroups={projectIndex.groups} departments={departments} teamOptions={teamOptions}
                       showDept={showDeptFilter}
                     />
                     <SheetClose asChild>
@@ -1411,7 +1414,7 @@ export default function Leads() {
   );
 }
 
-function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilter, projectFilters, toggleProjectFilter, setProjectFilters, deptFilter, setDeptFilter, teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter, sortBy, setSortBy, uniqueAgents, uniqueProjects, departments, teamOptions, showDept = true, showSortDate = true }: any) {
+function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilter, projectFilters, toggleProjectFilter, setProjectFilters, deptFilter, setDeptFilter, teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter, sortBy, setSortBy, uniqueAgents, projectGroups, departments, teamOptions, showDept = true, showSortDate = true }: any) {
   const { t, lang } = useTranslation();
   return (
     <>
@@ -1438,26 +1441,7 @@ function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilt
           </SelectContent>
         </Select>
       </div>
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">{t('leads.filter.project')}</label>
-        <div className="max-h-48 overflow-y-auto rounded-md border border-input divide-y divide-border">
-          {uniqueProjects.length === 0 ? (
-            <p className="text-xs text-muted-foreground p-3">{t('leads.filter.noProjectsYet')}</p>
-          ) : (
-            uniqueProjects.map((p: string) => (
-              <label key={p} className="flex items-center gap-2.5 px-3 py-2.5 text-sm cursor-pointer">
-                <Checkbox checked={projectFilters.includes(p)} onCheckedChange={() => toggleProjectFilter(p)} />
-                <span className="truncate">{p}</span>
-              </label>
-            ))
-          )}
-        </div>
-        {projectFilters.length > 0 && (
-          <button type="button" onClick={() => setProjectFilters([])} className="text-xs font-medium text-primary">
-            {t('leads.filter.clearProjects')}
-          </button>
-        )}
-      </div>
+      <ProjectFilterList groups={projectGroups} selected={projectFilters} onToggle={toggleProjectFilter} onClear={() => setProjectFilters([])} />
       {showDept && (
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">{t('leads.filter.department')}</label>

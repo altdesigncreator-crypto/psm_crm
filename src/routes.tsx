@@ -17,6 +17,7 @@ const Profile = lazy(() => import('./pages/Profile'));
 const Settings = lazy(() => import('./pages/Settings'));
 const PipelineBoard = lazy(() => import('./pages/PipelineBoard'));
 const AdminAnalytics = lazy(() => import('./pages/AdminAnalytics'));
+const ProjectInsights = lazy(() => import('./pages/ProjectInsights'));
 const RoleManagement = lazy(() => import('./pages/RoleManagement'));
 const SystemBannerAdmin = lazy(() => import('./pages/SystemBannerAdmin'));
 const TeamActivity = lazy(() => import('./pages/TeamActivity'));
@@ -210,6 +211,16 @@ export const routes: RouteConfig[] = [
     element: (
       <ProtectedRoute>
         <AdminAnalytics />
+      </ProtectedRoute>
+    ),
+  },
+  {
+    name: 'Project Insights',
+    path: '/project-insights',
+    routeKey: 'project-insights',
+    element: (
+      <ProtectedRoute>
+        <ProjectInsights />
       </ProtectedRoute>
     ),
   },

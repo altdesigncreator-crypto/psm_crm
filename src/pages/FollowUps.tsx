@@ -18,7 +18,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetClose } from '@/components/ui/sheet';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -34,6 +33,8 @@ import NameLink from '@/components/NameLink';
 import { toast } from 'sonner';
 import { cacheGet, cacheSetDebounced } from '@/lib/localCache';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { buildProjectIndex, countProjects } from '@/lib/projectNames';
+import ProjectFilterList from '@/components/ProjectFilterList';
 import { usePeriodFilter } from '@/hooks/usePeriodFilter';
 import PeriodFilterBar from '@/components/PeriodFilterBar';
 
@@ -273,10 +274,10 @@ export default function FollowUps() {
     };
   }, [allRows]);
 
-  const uniqueProjects = useMemo(
-    () => Array.from(new Set(leads.map((l) => l.preferred_project).filter(Boolean))).sort() as string[],
-    [leads]
-  );
+  // Spelling variants of one project ("Bahtoogyi", "Ba Htoo Gyi Condo")
+  // collapse into one filter option; selecting it matches all of them.
+  const projectIndex = useMemo(() => buildProjectIndex(countProjects(leads)), [leads]);
+  const projectValueSet = useMemo(() => new Set(projectIndex.expand(projectFilters)), [projectIndex, projectFilters]);
   const toggleProjectFilter = (project: string) => {
     setProjectFilters((prev) => (prev.includes(project) ? prev.filter((p) => p !== project) : [...prev, project]));
   };
@@ -298,7 +299,7 @@ export default function FollowUps() {
       const matchesDept = deptFilter === 'all' || r.department_code === deptFilter;
       const latestStatus = r.followUps[0]?.status;
       const matchesStatus = statusFilter === 'all' || latestStatus === statusFilter;
-      const matchesProject = projectFilters.length === 0 || (!!r.preferred_project && projectFilters.includes(r.preferred_project));
+      const matchesProject = projectFilters.length === 0 || (!!r.preferred_project && projectValueSet.has(r.preferred_project));
       const matchesTeam = teamFilter === 'all'
         || r.team_id === teamFilter
         || (!!r.owner_id && teamMemberIds.includes(r.owner_id))
@@ -307,7 +308,7 @@ export default function FollowUps() {
       const matchesDate = !dateFilter || localDateStr(r.created_at) === dateFilter;
       return matchesSearch && matchesDept && matchesStatus && matchesProject && matchesTeam && matchesAgent && matchesDate;
     });
-  }, [rows, searchQuery, deptFilter, statusFilter, projectFilters, teamFilter, teamMemberIds, teamManagerId, agentFilter, dateFilter, nameOf]);
+  }, [rows, searchQuery, deptFilter, statusFilter, projectValueSet, teamFilter, teamMemberIds, teamManagerId, agentFilter, dateFilter, nameOf]);
 
   const sortedRows = useMemo(() => {
     const arr = [...filteredRows];
@@ -750,7 +751,7 @@ export default function FollowUps() {
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
                       dateFilter={dateFilter} setDateFilter={setDateFilter}
                       sortBy={sortBy} setSortBy={setSortBy}
-                      uniqueAgents={uniqueAgents} uniqueProjects={uniqueProjects} departments={departments} teamOptions={teamOptions}
+                      uniqueAgents={uniqueAgents} projectGroups={projectIndex.groups} departments={departments} teamOptions={teamOptions}
                       showDept={!isDepartmentScoped(role)} showSortDate={false}
                     />
                   </PopoverContent>
@@ -788,7 +789,7 @@ export default function FollowUps() {
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
                       dateFilter={dateFilter} setDateFilter={setDateFilter}
                       sortBy={sortBy} setSortBy={setSortBy}
-                      uniqueAgents={uniqueAgents} uniqueProjects={uniqueProjects} departments={departments} teamOptions={teamOptions}
+                      uniqueAgents={uniqueAgents} projectGroups={projectIndex.groups} departments={departments} teamOptions={teamOptions}
                       showDept={!isDepartmentScoped(role)}
                     />
                     <SheetClose asChild>
@@ -1097,7 +1098,7 @@ export default function FollowUps() {
 function FollowUpFilterFields({
   deptFilter, setDeptFilter, statusFilter, setStatusFilter, projectFilters, toggleProjectFilter, setProjectFilters,
   teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter, sortBy, setSortBy,
-  uniqueAgents, uniqueProjects, departments, teamOptions, showDept = true, showSortDate = true,
+  uniqueAgents, projectGroups, departments, teamOptions, showDept = true, showSortDate = true,
 }: any) {
   const { t, lang } = useTranslation();
   return (
@@ -1124,26 +1125,7 @@ function FollowUpFilterFields({
           </SelectContent>
         </Select>
       </div>
-      <div className="space-y-2">
-        <label className="text-sm font-medium text-foreground">{t('leads.filter.project')}</label>
-        <div className="max-h-48 overflow-y-auto rounded-md border border-input divide-y divide-border">
-          {uniqueProjects.length === 0 ? (
-            <p className="text-xs text-muted-foreground p-3">{t('leads.filter.noProjectsYet')}</p>
-          ) : (
-            uniqueProjects.map((p: string) => (
-              <label key={p} className="flex items-center gap-2.5 px-3 py-2.5 text-sm cursor-pointer">
-                <Checkbox checked={projectFilters.includes(p)} onCheckedChange={() => toggleProjectFilter(p)} />
-                <span className="truncate">{p}</span>
-              </label>
-            ))
-          )}
-        </div>
-        {projectFilters.length > 0 && (
-          <button type="button" onClick={() => setProjectFilters([])} className="text-xs font-medium text-primary">
-            {t('leads.filter.clearProjects')}
-          </button>
-        )}
-      </div>
+      <ProjectFilterList groups={projectGroups} selected={projectFilters} onToggle={toggleProjectFilter} onClear={() => setProjectFilters([])} />
       {teamOptions.length > 0 && (
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">{t('leads.filter.team')}</label>

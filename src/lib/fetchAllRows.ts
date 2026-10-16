@@ -14,12 +14,12 @@ import { supabase } from '@/db/supabase';
  * undercounting the total (e.g. dashboard showing 2,400 leads when there
  * are really 2,504). Adding `id` as a secondary sort key makes the order
  * total/deterministic, so every row is guaranteed exactly one page. */
-export async function fetchAllRows<T>(table: string, maxRows = 20_000): Promise<T[]> {
+export async function fetchAllRows<T>(table: string, maxRows = 20_000, columns = '*'): Promise<T[]> {
   const chunkSize = 1000;
   const all: T[] = [];
   let from = 0;
   while (all.length < maxRows) {
-    const { data, error } = await supabase.from(table).select('*').order('created_at', { ascending: false }).order('id', { ascending: true }).range(from, from + chunkSize - 1);
+    const { data, error } = await supabase.from(table).select(columns).order('created_at', { ascending: false }).order('id', { ascending: true }).range(from, from + chunkSize - 1);
     if (error) throw error;
     const rows = (data || []) as T[];
     all.push(...rows);

@@ -208,7 +208,7 @@ export type RouteKey =
   | 'dashboard' | 'add-lead' | 'leads' | 'lead-detail' | 'pipeline' | 'follow-ups'
   | 'notifications' | 'settings' | 'psm-map' | 'enquiries'
   | 'user-management' | 'role-management' | 'team-management'
-  | 'kpi-board' | 'profile' | 'analytics' | 'team-activity';
+  | 'kpi-board' | 'profile' | 'analytics' | 'team-activity' | 'project-insights';
 
 /** Central route-level access map — the piece that was completely missing
  * before (routes.tsx only checked "is logged in", never role). */
@@ -241,6 +241,8 @@ export function canAccessRoute(role: RoleTier | null | undefined, routeKey: Rout
       return true;
     case 'team-activity':
       return isManagerOrAbove(role);
+    case 'project-insights':
+      return isManagerOrAbove(role); // figures cover only the leads/enquiries RLS lets them see
     default:
       return false;
   }
