@@ -601,6 +601,7 @@ export const translations: Record<string, Record<Lang, string>> = {
   'projects.sourcesTitle': { mm: 'အရင်းအမြစ်များ', en: 'Where they come from' },
   'projects.pipelineTitle': { mm: 'Lead အခြေအနေ', en: 'Lead pipeline' },
   'projects.viewLeads': { mm: 'Lead များ ကြည့်ရန်', en: 'View these leads' },
+  'projects.viewEnquiries': { mm: 'စုံစမ်းမှုများ ကြည့်ရန်', en: 'View these enquiries' },
   'projects.insightEmpty': { mm: 'ဤကာလအတွက် ပရောဂျက် ဒေတာ မရှိသေးပါ။', en: 'No project activity in this period yet.' },
   'projects.insightTopLeads': { mm: '{project} သည် Lead {n} ခုဖြင့် ထိပ်ဆုံးတွင်ရှိသည်။', en: '{project} leads with {n} leads.' },
   'projects.insightTopEnquiries': { mm: 'စုံစမ်းမှု အများဆုံးမှာ {project} ({n}) ဖြစ်သည်။', en: '{project} draws the most enquiries ({n}).' },
@@ -1238,7 +1239,8 @@ export const translations: Record<string, Record<Lang, string>> = {
   // Enquiries
   'enquiries.title': { mm: 'စုံစမ်းမှုများ', en: 'Enquiries' },
   'enquiries.subtitle': { mm: 'အသစ်ရောက်ရှိသော စုံစမ်းမှုများကို ခွဲဝေပြီး Lead အဖြစ်ပြောင်းလဲပါ', en: 'Log incoming enquiries and hand them off to be worked as leads' },
-  'enquiries.searchPlaceholder': { mm: 'အမည်၊ ဖုန်း၊ စုံစမ်းမှုနံပါတ်၊ သို့မဟုတ် တာဝန်ပေးထားသူဖြင့် ရှာရန်…', en: 'Search by name, phone, enquiry number, or assignee…' },
+  'enquiries.allProjects': { mm: 'ပရောဂျက်အားလုံး', en: 'All projects' },
+  'enquiries.searchPlaceholder': { mm: 'အမည်၊ ဖုန်း၊ စုံစမ်းမှုနံပါတ်၊ တာဝန်ပေးထားသူ သို့မဟုတ် မက်ဆေ့ချ်ဖြင့် ရှာရန်…', en: 'Search name, phone, enquiry no., assignee or message…' },
   'enquiries.allStatuses': { mm: 'အခြေအနေအားလုံး', en: 'All Statuses' },
   'enquiries.newEnquiry': { mm: 'စုံစမ်းမှုအသစ်', en: 'New Enquiry' },
   'enquiries.noEnquiries': { mm: 'စုံစမ်းမှု မရှိသေးပါ', en: 'No enquiries yet' },

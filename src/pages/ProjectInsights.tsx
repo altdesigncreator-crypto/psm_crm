@@ -454,6 +454,7 @@ export default function ProjectInsights() {
         sourceLabel={sourceLabel}
         stageLabel={(s) => enumLabel('stage', s, LEAD_STAGES.find((x) => x.value === s)?.label ?? s, lang)}
         onViewLeads={(label) => navigate(`/leads?${new URLSearchParams({ project: label, period, month: String(selectedMonth), year: String(selectedYear) })}`)}
+        onViewEnquiries={(label) => navigate(`/enquiries?${new URLSearchParams({ project: label, period, month: String(selectedMonth), year: String(selectedYear) })}`)}
         t={t}
       />
     </div>
@@ -663,9 +664,9 @@ function sum(m: Map<string, number>): number {
 /** Everything about one project: headline numbers, 12-month trend, where
  * its leads and enquiries come from, where its leads sit in the
  * pipeline, and the raw spellings folded into it. */
-function ProjectDetailSheet({ project, open, onOpenChange, palette, hasPrev, periodLabel, labelOf, sourceLabel, stageLabel, onViewLeads, t }: {
+function ProjectDetailSheet({ project, open, onOpenChange, palette, hasPrev, periodLabel, labelOf, sourceLabel, stageLabel, onViewLeads, onViewEnquiries, t }: {
   project: ProjectStats | null; open: boolean; onOpenChange: (o: boolean) => void; palette: Palette; hasPrev: boolean; periodLabel: string;
-  labelOf: (l: string) => string; sourceLabel: (s: string) => string; stageLabel: (s: string) => string; onViewLeads: (label: string) => void; t: T;
+  labelOf: (l: string) => string; sourceLabel: (s: string) => string; stageLabel: (s: string) => string; onViewLeads: (label: string) => void; onViewEnquiries: (label: string) => void; t: T;
 }) {
   const [tab, setTab] = useState<SourceMode>('leads');
   useEffect(() => { setTab('leads'); }, [project?.label]);
@@ -763,11 +764,20 @@ function ProjectDetailSheet({ project, open, onOpenChange, palette, hasPrev, per
             </section>
           )}
 
-          {!isUnspecified && project.leads > 0 && (
-            <Button className="w-full h-11 gap-2" onClick={() => onViewLeads(project.label)}>
-              <ExternalLink className="w-4 h-4" /> {t('projects.viewLeads')}
-            </Button>
-          )}
+          {/* Both lists open pre-filtered with the same rules used here, so
+              the counts on the other side match these exactly. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {project.enquiries > 0 && (
+              <Button variant="outline" className="h-11 gap-2" onClick={() => onViewEnquiries(project.label)}>
+                <Inbox className="w-4 h-4" /> {t('projects.viewEnquiries')}
+              </Button>
+            )}
+            {!isUnspecified && project.leads > 0 && (
+              <Button className="h-11 gap-2" onClick={() => onViewLeads(project.label)}>
+                <ExternalLink className="w-4 h-4" /> {t('projects.viewLeads')}
+              </Button>
+            )}
+          </div>
         </div>
       </SheetContent>
     </Sheet>

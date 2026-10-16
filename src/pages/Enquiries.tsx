@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -17,6 +17,10 @@ import {
 import { enumLabel } from '@/lib/translations';
 import { notifyUser } from '@/lib/notifyUser';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { buildHaystack, highlightPattern, matchesQuery, parseQuery, snippetAround } from '@/lib/textSearch';
+import HighlightedText from '@/components/HighlightedText';
+import { useProjectIndex } from '@/hooks/useProjectNames';
+import { attributeEnquiry, UNSPECIFIED } from '@/lib/projectInsights';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -115,6 +119,7 @@ interface EnquiriesListUiState {
   statusFilter: 'all' | EnquiryStatus;
   categoryFilter: 'all' | EnquiryCategory;
   sourceFilter: string;
+  projectFilter: string;
   teamFilter: string;
   assigneeFilter: string;
   period: Period;
@@ -138,6 +143,9 @@ interface EnquiryFilterFieldsProps {
   sourceFilter: string;
   setSourceFilter: (v: string) => void;
   sourceGroups: SourceGroup[];
+  projectFilter: string;
+  setProjectFilter: (v: string) => void;
+  projectOptions: { value: string; label: string; count: number }[];
   showStaffFilters: boolean;
   teamFilter: string;
   onTeamChange: (v: string) => void;
@@ -149,7 +157,7 @@ interface EnquiryFilterFieldsProps {
 
 function EnquiryFilterFields({
   statusFilter, setStatusFilter, showStatus, categoryFilter, setCategoryFilter, sourceFilter, setSourceFilter, sourceGroups,
-  showStaffFilters, teamFilter, onTeamChange, teamOptions, assigneeFilter, setAssigneeFilter, assigneeOptions,
+  projectFilter, setProjectFilter, projectOptions, showStaffFilters, teamFilter, onTeamChange, teamOptions, assigneeFilter, setAssigneeFilter, assigneeOptions,
 }: EnquiryFilterFieldsProps) {
   const { t, lang } = useTranslation();
   return (
@@ -197,6 +205,23 @@ function EnquiryFilterFields({
                   ))}
                 </SelectGroup>
               </React.Fragment>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-foreground">{t('leads.filter.project')}</label>
+        <Select value={projectFilter} onValueChange={setProjectFilter}>
+          <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('enquiries.allProjects')} /></SelectTrigger>
+          <SelectContent className="max-h-80">
+            <SelectItem value="all">{t('enquiries.allProjects')}</SelectItem>
+            {projectOptions.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                <span className="flex items-center justify-between gap-3 w-full">
+                  <span className={o.value === UNSPECIFIED ? 'italic text-muted-foreground' : ''}>{o.label}</span>
+                  <span className="text-xs text-muted-foreground tabular-nums">{o.count}</span>
+                </span>
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -302,11 +327,18 @@ export default function Enquiries() {
   }, [user?.id, canAssign]);
 
   const { teams, membersOf } = useTeams();
-  const restoredState = cachedListState;
   // The Dashboard's Condo / House & Land tiles link here with ?category=…,
   // which wins over whatever category was cached from the last visit.
+  // Project Insights links with ?project=…&period=…&month=…&year=… — a
+  // fresh intent, so the cached filters are dropped entirely for it.
   const [searchParams] = useSearchParams();
   const urlCategory = searchParams.get('category');
+  const urlProject = searchParams.get('project');
+  const urlPeriod = searchParams.get('period');
+  const restoredState = urlProject ? null : cachedListState;
+  const linkedPeriod = urlPeriod === 'monthly' || urlPeriod === 'yearly' || urlPeriod === 'overall'
+    ? { period: urlPeriod, selectedMonth: Number(searchParams.get('month') ?? new Date().getMonth()), selectedYear: Number(searchParams.get('year') ?? new Date().getFullYear()) } as const
+    : undefined;
   const [search, setSearch] = useState(() => restoredState?.search ?? '');
   const [statusFilter, setStatusFilter] = useState<'all' | EnquiryStatus>(() => restoredState?.statusFilter ?? 'all');
   const [categoryFilter, setCategoryFilterState] = useState<'all' | EnquiryCategory>(() =>
@@ -316,27 +348,28 @@ export default function Enquiries() {
     // Drop a cached source from the other category rather than filtering to nothing.
     return urlCategory && cached !== 'all' && !cached.startsWith(`${urlCategory}${SOURCE_KEY_SEP}`) ? 'all' : cached;
   });
+  const [projectFilter, setProjectFilter] = useState(() => urlProject ?? restoredState?.projectFilter ?? 'all');
   const [teamFilter, setTeamFilter] = useState(() => restoredState?.teamFilter ?? 'all');
   const [assigneeFilter, setAssigneeFilter] = useState(() => restoredState?.assigneeFilter ?? 'all');
   // Defaults to Overall rather than Monthly: this is a work queue, and a
   // month-scoped default would hide still-pending enquiries from last month.
   const {
     period, setPeriod, selectedMonth, selectedYear, isCurrentPeriod, shiftPeriod, periodLabel, matchesPeriod,
-  } = usePeriodFilter(restoredState ?? { period: 'overall' });
+  } = usePeriodFilter(linkedPeriod ?? restoredState ?? { period: 'overall' });
 
   const [page, setPage] = useState(() => restoredState?.page ?? 1);
   const [pageSize, setPageSize] = useState(() => restoredState?.pageSize ?? 20);
 
   useEffect(() => {
-    cachedListState = { search, statusFilter, categoryFilter, sourceFilter, teamFilter, assigneeFilter, period, selectedMonth, selectedYear, page, pageSize };
-  }, [search, statusFilter, categoryFilter, sourceFilter, teamFilter, assigneeFilter, period, selectedMonth, selectedYear, page, pageSize]);
+    cachedListState = { search, statusFilter, categoryFilter, sourceFilter, projectFilter, teamFilter, assigneeFilter, period, selectedMonth, selectedYear, page, pageSize };
+  }, [search, statusFilter, categoryFilter, sourceFilter, projectFilter, teamFilter, assigneeFilter, period, selectedMonth, selectedYear, page, pageSize]);
 
   // Skips the first run so a page restored from cachedListState isn't reset on mount.
   const isFirstFilterRunRef = useRef(true);
   useEffect(() => {
     if (isFirstFilterRunRef.current) { isFirstFilterRunRef.current = false; return; }
     setPage(1);
-  }, [search, statusFilter, categoryFilter, sourceFilter, teamFilter, assigneeFilter, period, selectedMonth, selectedYear, pageSize]);
+  }, [search, statusFilter, categoryFilter, sourceFilter, projectFilter, teamFilter, assigneeFilter, period, selectedMonth, selectedYear, pageSize]);
 
   // Staff-level filters only make sense for people who see more than their own queue.
   const showStaffFilters = canAssign;
@@ -388,8 +421,37 @@ export default function Enquiries() {
 
   const selectedSource = sourceFilter === 'all' ? null : sourceFromKey(sourceFilter);
 
+  // Search covers name, phone, enquiry number, assignee and the message.
+  // Each row's searchable text is normalized once per data change, and the
+  // query is deferred so typing stays smooth on a long list.
+  const deferredSearch = useDeferredValue(search);
+  const searchQuery = useMemo(() => parseQuery(deferredSearch), [deferredSearch]);
+  const highlight = useMemo(() => highlightPattern(searchQuery), [searchQuery]);
+  const haystacks = useMemo(
+    () => new Map(enquiries.map((e) => [e.id, buildHaystack([e.name, e.phone, e.enquiry_no, nameOf(e.assigned_to), e.message])])),
+    [enquiries, nameOf],
+  );
+
+  // Which project each enquiry is about — the exact rule Project Insights
+  // uses (attributeEnquiry), so a filtered count here always equals the
+  // number shown there. Keyed on the converted count so a conversion made
+  // elsewhere reloads the lead → project lookup.
+  const convertedCount = useMemo(() => enquiries.filter((e) => e.converted_lead_id).length, [enquiries]);
+  const { index: projectIndex, projectOfLead, loading: projectsLoading } = useProjectIndex(`${user?.id}:${convertedCount}`);
+  const enquiryProjects = useMemo(
+    () => new Map(enquiries.map((e) => [e.id, attributeEnquiry(e, projectOfLead, projectIndex).labels])),
+    [enquiries, projectOfLead, projectIndex],
+  );
+  const projectOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    enquiryProjects.forEach((labels) => labels.forEach((l) => counts.set(l, (counts.get(l) ?? 0) + 1)));
+    return Array.from(counts, ([value, count]) => ({ value, count, label: value === UNSPECIFIED ? t('projects.unspecified') : value }))
+      .sort((a, b) => (a.value === UNSPECIFIED ? 1 : b.value === UNSPECIFIED ? -1 : b.count - a.count || a.label.localeCompare(b.label)));
+  }, [enquiryProjects, t]);
+  const projectLabel = (value: string) => (value === UNSPECIFIED ? t('projects.unspecified') : value);
+
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const hasQuery = searchQuery.terms.length > 0;
     return enquiries.filter((e) => {
       if (!matchesPeriod(e.created_at)) return false;
       if (statusFilter !== 'all' && e.status !== statusFilter) return false;
@@ -397,15 +459,12 @@ export default function Enquiries() {
       if (selectedSource && e.source !== selectedSource) return false;
       if (teamAssigneeIds && !teamAssigneeIds.has(e.assigned_to)) return false;
       if (assigneeFilter !== 'all' && e.assigned_to !== assigneeFilter) return false;
-      if (!q) return true;
-      return (
-        e.name.toLowerCase().includes(q) ||
-        e.phone.toLowerCase().includes(q) ||
-        e.enquiry_no.toLowerCase().includes(q) ||
-        nameOf(e.assigned_to).toLowerCase().includes(q)
-      );
+      if (projectFilter !== 'all' && !enquiryProjects.get(e.id)?.includes(projectFilter)) return false;
+      if (!hasQuery) return true;
+      const h = haystacks.get(e.id);
+      return !!h && matchesQuery(h, searchQuery);
     });
-  }, [enquiries, search, statusFilter, categoryFilter, selectedSource, teamAssigneeIds, assigneeFilter, matchesPeriod, nameOf]);
+  }, [enquiries, haystacks, searchQuery, statusFilter, categoryFilter, selectedSource, teamAssigneeIds, assigneeFilter, projectFilter, enquiryProjects, matchesPeriod]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   // Derived rather than stored, so realtime deletes shrinking the list can
@@ -429,6 +488,7 @@ export default function Enquiries() {
       clear: () => setCategoryFilter('all'),
     },
     { key: 'source', active: !!selectedSource, label: selectedSource ?? '', clear: () => setSourceFilter('all') },
+    { key: 'project', active: projectFilter !== 'all', label: projectLabel(projectFilter), clear: () => setProjectFilter('all') },
     { key: 'team', active: teamFilter !== 'all', label: teamOptions.find((tm) => tm.id === teamFilter)?.name ?? '', clear: () => setTeamFilter('all') },
     { key: 'assignee', active: assigneeFilter !== 'all', label: nameOf(assigneeFilter), clear: () => setAssigneeFilter('all') },
   ].filter((c) => c.active);
@@ -437,12 +497,12 @@ export default function Enquiries() {
   const hasActiveFilters = activeChips.length > 0 || !!search.trim() || period !== 'overall';
 
   const clearAllFilters = () => {
-    setSearch(''); setStatusFilter('all'); setCategoryFilterState('all'); setSourceFilter('all'); setTeamFilter('all'); setAssigneeFilter('all'); setPeriod('overall');
+    setSearch(''); setStatusFilter('all'); setCategoryFilterState('all'); setSourceFilter('all'); setProjectFilter('all'); setTeamFilter('all'); setAssigneeFilter('all'); setPeriod('overall');
   };
 
   const filterFieldProps = {
     statusFilter, setStatusFilter, categoryFilter, setCategoryFilter, sourceFilter, setSourceFilter, sourceGroups,
-    showStaffFilters, teamFilter, onTeamChange: handleTeamChange, teamOptions,
+    projectFilter, setProjectFilter, projectOptions, showStaffFilters, teamFilter, onTeamChange: handleTeamChange, teamOptions,
     assigneeFilter, setAssigneeFilter, assigneeOptions,
   };
 
@@ -711,7 +771,7 @@ export default function Enquiries() {
         </CardContent>
       </Card>
 
-      {loading ? (
+      {loading || (projectFilter !== 'all' && projectsLoading) ? (
         <div className="flex items-center justify-center h-40"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
       ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-52 text-muted-foreground bg-muted/5 rounded-xl border border-dashed border-border">
@@ -735,10 +795,10 @@ export default function Enquiries() {
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <p className="text-[11px] font-mono text-muted-foreground tracking-wide truncate">{enq.enquiry_no}</p>
+                          <p className="text-[11px] font-mono text-muted-foreground tracking-wide truncate"><HighlightedText text={enq.enquiry_no} pattern={highlight} /></p>
                           <CategoryBadge category={categoryOf(enq)} />
                         </div>
-                        <p className="text-sm font-semibold text-foreground truncate mt-0.5">{enq.name}</p>
+                        <p className="text-sm font-semibold text-foreground truncate mt-0.5"><HighlightedText text={enq.name} pattern={highlight} /></p>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span className={`text-[11px] font-semibold px-2 py-1 rounded-full ${style.bg} ${style.text}`}>
@@ -779,9 +839,23 @@ export default function Enquiries() {
                     </div>
   
                     <div className="space-y-1.5 text-sm">
-                      <div className="flex items-center gap-1.5 text-muted-foreground"><PhoneIcon className="w-3.5 h-3.5 shrink-0" /> {enq.phone}</div>
+                      <div className="flex items-center gap-1.5 text-muted-foreground"><PhoneIcon className="w-3.5 h-3.5 shrink-0" /> <HighlightedText text={enq.phone} pattern={highlight} /></div>
+                      {(() => {
+                        const labels = (enquiryProjects.get(enq.id) ?? []).filter((l) => l !== UNSPECIFIED);
+                        return labels.length > 0 && (
+                          <div className="flex items-center gap-1.5 text-muted-foreground min-w-0">
+                            <Building2 className="w-3.5 h-3.5 shrink-0" /> <span className="truncate">{labels.join(', ')}</span>
+                          </div>
+                        );
+                      })()}
                       {enq.budget && <div className="flex items-center gap-1.5 text-muted-foreground"><Wallet className="w-3.5 h-3.5 shrink-0" /> {enq.budget}</div>}
-                      {enq.message && <div className="flex items-start gap-1.5 text-muted-foreground"><MessageSquare className="w-3.5 h-3.5 shrink-0 mt-0.5" /> <span className="line-clamp-2">{enq.message}</span></div>}
+                      {enq.message && (
+                        <div className="flex items-start gap-1.5 text-muted-foreground">
+                          <MessageSquare className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                          {/* While searching, show the part of the message that matched — a hit past the 2-line clamp would otherwise be invisible. */}
+                          <span className="line-clamp-2 break-words"><HighlightedText text={snippetAround(enq.message, highlight)} pattern={highlight} /></span>
+                        </div>
+                      )}
                     </div>
   
                     <div className="space-y-1 pt-2 border-t border-border/40 text-xs text-muted-foreground">

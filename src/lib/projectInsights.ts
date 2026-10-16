@@ -42,6 +42,27 @@ export const NO_SOURCE = '__no_source__';
 
 export type DateRange = { gte: string; lt: string } | null;
 
+export type EnquiryAttribution = { labels: string[]; via: 'lead' | 'message' | null };
+
+/** Which project(s) an enquiry is about — the single rule shared by the
+ * Project Insights page and the Enquiries page's Project filter, so the
+ * two can never disagree. The converted lead's project wins over the
+ * message (a message mentioning Orchard that became a Shwe Padauk lead is
+ * a Shwe Padauk enquiry); unattributed enquiries get UNSPECIFIED. */
+export function attributeEnquiry(
+  enq: { message?: string | null; converted_lead_id?: string | null },
+  projectOfLead: (leadId: string) => string | null | undefined,
+  index: ProjectIndex,
+): EnquiryAttribution {
+  if (enq.converted_lead_id) {
+    const viaLead = index.groupsOf(projectOfLead(enq.converted_lead_id));
+    if (viaLead.length > 0) return { labels: viaLead, via: 'lead' };
+  }
+  const viaMessage = index.detectIn(enq.message);
+  if (viaMessage.length > 0) return { labels: viaMessage, via: 'message' };
+  return { labels: [UNSPECIFIED], via: null };
+}
+
 export interface MonthPoint { month: string; enquiries: number; leads: number }
 
 export interface ProjectStats {
@@ -121,7 +142,8 @@ export function computeProjectInsights(
   // Grouping is built from *all* leads, not just this period's, so a
   // project keeps the same name and spellings as you page through months.
   const index = buildProjectIndex(countProjects(leads));
-  const leadById = new Map(leads.map((l) => [l.id, l]));
+  const leadProject = new Map(leads.map((l) => [l.id, l.preferred_project]));
+  const projectOfLead = (id: string) => leadProject.get(id);
   const months = trailingMonthKeys(12);
   const monthSet = new Set(months);
 
@@ -186,11 +208,7 @@ export function computeProjectInsights(
   }
 
   for (const enq of enquiries) {
-    const converted = enq.converted_lead_id ? leadById.get(enq.converted_lead_id) : undefined;
-    const viaLead = converted ? index.groupsOf(converted.preferred_project) : [];
-    const viaMessage = viaLead.length > 0 ? [] : index.detectIn(enq.message);
-    const groups = viaLead.length > 0 ? viaLead : viaMessage;
-    const labels = groups.length > 0 ? groups : [UNSPECIFIED];
+    const { labels, via } = attributeEnquiry(enq, projectOfLead, index);
     const current = inRange(enq.created_at, range);
     const previous = !!prevRange && inRange(enq.created_at, prevRange);
     const isConverted = !!enq.converted_lead_id;
@@ -199,8 +217,8 @@ export function computeProjectInsights(
     if (current) {
       totals.enquiries += 1;
       if (isConverted) totals.convertedEnquiries += 1;
-      if (viaLead.length > 0) { totals.attributedEnquiries += 1; totals.attributedByConversion += 1; }
-      else if (viaMessage.length > 0) { totals.attributedEnquiries += 1; totals.attributedByMessage += 1; }
+      if (via === 'lead') { totals.attributedEnquiries += 1; totals.attributedByConversion += 1; }
+      else if (via === 'message') { totals.attributedEnquiries += 1; totals.attributedByMessage += 1; }
       bumpSource(src, 'enquiries');
     }
     if (previous) totals.enquiriesPrev += 1;
