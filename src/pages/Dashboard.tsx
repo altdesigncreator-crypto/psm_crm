@@ -20,7 +20,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { enumLabel } from '@/lib/translations';
 import { canAssignEnquiry, isExec, type CurrentUser } from '@/lib/permissions';
-import { relativePeriodMatcher } from '@/lib/kpi';
+import { relativePeriodMatcher, type RelativePeriod } from '@/lib/kpi';
+import { soldDateOf, soldIn } from '@/lib/soldDate';
 import AgentKpiCard from '@/components/AgentKpiCard';
 import StatusColorDialog from '@/components/StatusColorDialog';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
@@ -61,11 +62,14 @@ function filterLeadsByDate(leads: Lead[], filter: DateFilter): Lead[] {
   return leads.filter((l) => inPeriod(l.created_at));
 }
 
-function metricsFor(leads: Lead[]) {
-  const total = leads.length;
-  const followUp = leads.filter((l) => ['contacted', 'qualified', 'negotiation'].includes(l.status)).length;
-  const sold = leads.filter((l) => l.status === 'sold').length;
-  const gradeA = leads.filter((l) => l.lead_grade === 'A').length;
+/** Leads count in the month they were added; sales in the month they were sold. */
+function metricsFor(all: Lead[], period: RelativePeriod) {
+  const inPeriod = relativePeriodMatcher(period);
+  const added = all.filter((l) => inPeriod(l.created_at));
+  const total = added.length;
+  const followUp = added.filter((l) => ['contacted', 'qualified', 'negotiation'].includes(l.status)).length;
+  const sold = soldIn(all, inPeriod).length;
+  const gradeA = added.filter((l) => l.lead_grade === 'A').length;
   const conversion = total > 0 ? Math.round((sold / total) * 1000) / 10 : 0;
   return { total, followUp, sold, gradeA, conversion };
 }
@@ -78,17 +82,16 @@ function pctDelta(current: number, previous: number): number {
   return Math.round(((current - previous) / previous) * 100);
 }
 
-/** Daily counts for the last N days, bucketed by created_at — used only for
- * the small trend sparklines in each KPI card. Since the app doesn't record
- * historical status-change timestamps, this approximates "trend" from
- * creation date rather than literal day-the-status-changed, which is fine
- * for a decorative trend line. */
-function dailyCounts(leads: Lead[], predicate: (l: Lead) => boolean, days = 7): number[] {
+/** Daily counts for the last N days — used only for the small trend
+ * sparklines in each KPI card. Bucketed by created_at by default; sales
+ * pass their sold date instead. */
+function dailyCounts(leads: Lead[], predicate: (l: Lead) => boolean, days = 7, dateOf: (l: Lead) => string | null = (l) => l.created_at): number[] {
   const buckets = Array.from({ length: days }, () => 0);
   const today = new Date(); today.setHours(0, 0, 0, 0);
   for (const l of leads) {
-    if (!predicate(l)) continue;
-    const d = new Date(l.created_at); d.setHours(0, 0, 0, 0);
+    const iso = predicate(l) ? dateOf(l) : null;
+    if (!iso) continue;
+    const d = new Date(iso); d.setHours(0, 0, 0, 0);
     const diff = Math.round((today.getTime() - d.getTime()) / 86400000);
     if (diff >= 0 && diff < days) buckets[days - 1 - diff] += 1;
   }
@@ -292,16 +295,19 @@ export default function Dashboard() {
 
   const totalLeads = filteredLeads.length;
   const followUpCount = filteredLeads.filter((l) => ['contacted', 'qualified', 'negotiation'].includes(l.status)).length;
-  const soldLeads = filteredLeads.filter((l) => l.status === 'sold');
-  const soldCount = soldLeads.length;
+  // Sales count in the period they were sold in, not when the lead was added
+  // ("Grade A only" is a grade filter, not a period, so it stays as-is).
+  const soldCount = dateFilter === 'levelA'
+    ? filteredLeads.filter((l) => l.status === 'sold').length
+    : soldIn(rawLeads, relativePeriodMatcher(dateFilter)).length;
   const levelACount = filteredLeads.filter((l) => l.lead_grade === 'A').length;
   const conversionRate = totalLeads > 0 ? Math.round((soldCount / totalLeads) * 1000) / 10 : 0;
 
   // Deltas and sparklines are always anchored to the real calendar month —
   // independent of whichever filter pill is currently selected above — so
   // "vs last month" stays meaningful even while viewing e.g. "This Year".
-  const thisMonthMetrics = useMemo(() => metricsFor(filterLeadsByDate(rawLeads, 'thisMonth')), [rawLeads]);
-  const lastMonthMetrics = useMemo(() => metricsFor(filterLeadsByDate(rawLeads, 'lastMonth')), [rawLeads]);
+  const thisMonthMetrics = useMemo(() => metricsFor(rawLeads, 'thisMonth'), [rawLeads]);
+  const lastMonthMetrics = useMemo(() => metricsFor(rawLeads, 'lastMonth'), [rawLeads]);
   const deltas = {
     total: pctDelta(thisMonthMetrics.total, lastMonthMetrics.total),
     followUp: pctDelta(thisMonthMetrics.followUp, lastMonthMetrics.followUp),
@@ -313,8 +319,8 @@ export default function Dashboard() {
     total: dailyCounts(rawLeads, () => true),
     followUp: dailyCounts(rawLeads, (l) => ['contacted', 'qualified', 'negotiation'].includes(l.status)),
     gradeA: dailyCounts(rawLeads, (l) => l.lead_grade === 'A'),
-    sold: dailyCounts(rawLeads, (l) => l.status === 'sold'),
-    conversion: dailyCounts(rawLeads, (l) => l.status === 'sold'),
+    sold: dailyCounts(rawLeads, (l) => l.status === 'sold', 7, soldDateOf),
+    conversion: dailyCounts(rawLeads, (l) => l.status === 'sold', 7, soldDateOf),
   }), [rawLeads]);
 
   const statusCounts = LEAD_STAGES.map((s) => filteredLeads.filter((l) => l.status === s.value).length);

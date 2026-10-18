@@ -1,4 +1,5 @@
 import { buildProjectIndex, countProjects, type ProjectIndex } from '@/lib/projectNames';
+import { soldDateOf } from '@/lib/soldDate';
 
 /** Per-project demand analysis — enquiries, leads, sources, conversion —
  * as pure functions over already-loaded rows, so the page stays a thin
@@ -21,6 +22,8 @@ export interface InsightLead {
   lead_grade: string | null;
   sale_amount: number | null;
   created_at: string;
+  updated_at: string;
+  sold_at: string | null;
 }
 
 export interface InsightEnquiry {
@@ -32,7 +35,7 @@ export interface InsightEnquiry {
   created_at: string;
 }
 
-export const LEAD_COLUMNS = 'id,preferred_project,lead_source,status,lead_grade,sale_amount,created_at';
+export const LEAD_COLUMNS = 'id,preferred_project,lead_source,status,lead_grade,sale_amount,created_at,updated_at,sold_at';
 export const ENQUIRY_COLUMNS = 'id,source,message,status,converted_lead_id,created_at';
 
 /** Sentinel group for leads with no project / unmatched enquiries. */
@@ -184,26 +187,29 @@ export function computeProjectInsights(
     const labels = groups.length > 0 ? groups : [UNSPECIFIED];
     const current = inRange(lead.created_at, range);
     const previous = !!prevRange && inRange(lead.created_at, prevRange);
-    const isSold = lead.status === 'sold';
+    // A sale counts in the period it was sold in, not when its lead was added.
+    const soldDate = soldDateOf(lead);
+    const soldNow = soldDate !== null && inRange(soldDate, range);
+    const revenue = Number(lead.sale_amount) || 0;
     const src = sourceKey(lead.lead_source);
 
     if (current) {
       totals.leads += 1;
-      if (isSold) { totals.sold += 1; totals.revenue += lead.sale_amount ?? 0; }
       bumpSource(src, 'leads');
     }
+    if (soldNow) { totals.sold += 1; totals.revenue += revenue; }
     if (previous) totals.leadsPrev += 1;
 
     for (const label of labels) {
       const s = statsFor(label);
       addTrend(s, lead.created_at, 'leads');
       if (previous) s.leadsPrev += 1;
+      if (soldNow) { s.sold += 1; s.revenue += revenue; }
       if (!current) continue;
       s.leads += 1;
       bump(s.leadSources, src);
       bump(s.statuses, lead.status);
       if (lead.lead_grade) bump(s.grades, lead.lead_grade);
-      if (isSold) { s.sold += 1; s.revenue += lead.sale_amount ?? 0; }
     }
   }
 
@@ -237,7 +243,7 @@ export function computeProjectInsights(
   // Only projects with activity in the selected or previous period — a
   // project last enquired about two years ago isn't noise worth a row.
   const projects = Array.from(byLabel.values())
-    .filter((s) => s.leads + s.enquiries + s.leadsPrev + s.enquiriesPrev > 0)
+    .filter((s) => s.leads + s.enquiries + s.leadsPrev + s.enquiriesPrev + s.sold > 0)
     .sort((a, b) => (b.leads + b.enquiries) - (a.leads + a.enquiries) || a.label.localeCompare(b.label));
 
   const sources = Array.from(sourceTotals, ([source, v]) => ({ source, ...v }))

@@ -22,6 +22,7 @@ import { LEAD_STAGES, type Lead } from '@/types';
 import { enumLabel } from '@/lib/translations';
 import { toast } from 'sonner';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { soldDateOf, soldIn } from '@/lib/soldDate';
 import { buildProjectIndex, countProjects } from '@/lib/projectNames';
 import { usePeriodFilter } from '@/hooks/usePeriodFilter';
 import PeriodFilterBar from '@/components/PeriodFilterBar';
@@ -145,16 +146,19 @@ export default function AdminAnalytics() {
     );
   }
 
+  // Leads count in the period they were added; sales in the period they
+  // were sold — never by when their lead was added.
   const periodLeads = useMemo(() => leads.filter((l) => matchesPeriod(l.created_at)), [leads, matchesPeriod]);
+  const periodSold = useMemo(() => soldIn(leads, matchesPeriod), [leads, matchesPeriod]);
 
   const totalLeads = periodLeads.length;
-  const soldCount = periodLeads.filter((l) => l.status === 'sold').length;
+  const soldCount = periodSold.length;
   const conversionRate = totalLeads > 0 ? Math.round((soldCount / totalLeads) * 100) : 0;
   const avgDealSize = useMemo(() => {
-    const deals = periodLeads.filter((l) => l.status === 'sold' && l.sale_amount);
+    const deals = periodSold.filter((l) => l.sale_amount);
     if (deals.length === 0) return 0;
-    return Math.round(deals.reduce((acc, l) => acc + (l.sale_amount || 0), 0) / deals.length);
-  }, [periodLeads]);
+    return Math.round(deals.reduce((acc, l) => acc + (Number(l.sale_amount) || 0), 0) / deals.length);
+  }, [periodSold]);
 
   const statusCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -170,14 +174,15 @@ export default function AdminAnalytics() {
 
   const agentPerf = useMemo(() => {
     const map: Record<string, { total: number; closed: number }> = {};
-    periodLeads.forEach((l) => {
+    const row = (l: Lead) => {
       const a = l.owner_id ? nameOf(l.owner_id) : t('analytics.unassigned');
       if (!map[a]) map[a] = { total: 0, closed: 0 };
-      map[a].total += 1;
-      if (l.status === 'sold') map[a].closed += 1;
-    });
+      return map[a];
+    };
+    periodLeads.forEach((l) => { row(l).total += 1; });
+    periodSold.forEach((l) => { row(l).closed += 1; });
     return Object.entries(map).sort((a, b) => b[1].closed - a[1].closed).slice(0, 8);
-  }, [periodLeads, nameOf, t]);
+  }, [periodLeads, periodSold, nameOf, t]);
 
   const agentBarData = {
     labels: agentPerf.map(([name]) => name),
@@ -199,11 +204,12 @@ export default function AdminAnalytics() {
     leads.forEach((l) => {
       const createdKey = monthKey(new Date(l.created_at));
       if (map[createdKey]) map[createdKey].new += 1;
-      if (l.status === 'sold') {
-        const closedKey = monthKey(new Date(l.updated_at));
+      const soldDate = soldDateOf(l);
+      if (soldDate) {
+        const closedKey = monthKey(new Date(soldDate));
         if (map[closedKey]) {
           map[closedKey].closed += 1;
-          map[closedKey].revenue += l.sale_amount || 0;
+          map[closedKey].revenue += Number(l.sale_amount) || 0;
         }
       }
     });
@@ -260,12 +266,12 @@ export default function AdminAnalytics() {
 
   const sourceRevenue = useMemo(() => {
     const map: Record<string, number> = {};
-    periodLeads.filter((l) => l.status === 'sold' && l.sale_amount).forEach((l) => {
+    periodSold.filter((l) => l.sale_amount).forEach((l) => {
       const src = l.lead_source || t('analytics.unknown');
-      map[src] = (map[src] || 0) + (l.sale_amount || 0);
+      map[src] = (map[src] || 0) + (Number(l.sale_amount) || 0);
     });
     return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 6);
-  }, [periodLeads, t]);
+  }, [periodSold, t]);
 
   const revenueBarData = { labels: sourceRevenue.map(([s]) => s), datasets: [{ label: t('analytics.chartRevenue'), data: sourceRevenue.map(([, v]) => v), backgroundColor: 'rgba(234,179,8,0.7)', borderRadius: 6 }] };
 
@@ -275,18 +281,19 @@ export default function AdminAnalytics() {
   // for e.g. "Ba Htoo Gyi Condo" is split across five bars. A lead naming
   // two projects counts toward both.
   const projectPerf = useMemo(() => {
-    const index = buildProjectIndex(countProjects(periodLeads));
+    const index = buildProjectIndex(countProjects([...periodLeads, ...periodSold]));
     const map: Record<string, { total: number; closed: number }> = {};
-    periodLeads.forEach((l) => {
+    const tally = (l: Lead, field: 'total' | 'closed') => {
       const groups = index.groupsOf(l.preferred_project?.trim() ? l.preferred_project : null);
       (groups.length > 0 ? groups : [t('analytics.unspecified')]).forEach((key) => {
         if (!map[key]) map[key] = { total: 0, closed: 0 };
-        map[key].total += 1;
-        if (l.status === 'sold') map[key].closed += 1;
+        map[key][field] += 1;
       });
-    });
+    };
+    periodLeads.forEach((l) => tally(l, 'total'));
+    periodSold.forEach((l) => tally(l, 'closed'));
     return Object.entries(map).sort((a, b) => b[1].total - a[1].total).slice(0, 8);
-  }, [periodLeads, t]);
+  }, [periodLeads, periodSold, t]);
   const topProjectMax = projectPerf[0]?.[1].total || 1;
 
   const interestBreakdown = useMemo(() => {

@@ -1,5 +1,6 @@
 import type { Lead, Team, TeamMember } from '@/types';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { soldDateOf } from '@/lib/soldDate';
 
 /** Only what the KPI Board needs — the board loads every lead, so this
  * keeps the payload a fraction of select('*'). */
@@ -103,9 +104,6 @@ const emptyAcc = (): Accumulator => ({ leads: 0, sold: 0, salesValue: 0, company
 
 const finalize = (a: Accumulator): KpiTotals => ({ ...a, conversionRate: a.leads > 0 ? a.sold / a.leads : null });
 
-/** When the deal closed. sold_at is backfilled for legacy rows by the
- * migration; updated_at is only a defensive fallback. */
-const closedAt = (l: KpiLead) => l.sold_at ?? l.updated_at;
 
 /** Supabase returns numeric columns as numbers, but coerce defensively so
  * a stray string never turns a sum into concatenation. */
@@ -141,7 +139,8 @@ export function buildKpis(
 
   for (const l of leads) {
     const isNew = inPeriod(l.created_at);
-    const isClosed = l.status === 'sold' && inPeriod(closedAt(l));
+    const soldDate = soldDateOf(l);
+    const isClosed = soldDate !== null && inPeriod(soldDate);
     if (!isNew && !isClosed) continue;
 
     const targets = [group(byDept, l.department_code, l.owner_id)];
