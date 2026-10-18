@@ -5,14 +5,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Chart as ChartJS, ArcElement, Tooltip as ChartTooltip, Legend as ChartLegend } from 'chart.js';
 import { Doughnut } from 'react-chartjs-2';
 import {
-  Users, PhoneCall, Trophy, Activity, Clock, ArrowUpRight,
+  Users, PhoneCall, Activity, Clock,
   ChevronRight, Download, FileSpreadsheet, FileText as FileTextIcon, File as FilePdf,
-  CheckCircle2, Percent, PieChart, BarChart3, Star, ArrowUp, ArrowDown, CalendarDays, Calendar, Crown, Building2, Home, Minus,
+  CheckCircle2, Percent, PieChart, BarChart3, Star, ArrowUp, ArrowDown, CalendarDays, Calendar, Building2, Home, Minus,
   type LucideIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LEAD_STAGES, type Lead, type EnquiryCategory } from '@/types';
 import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
@@ -20,7 +19,9 @@ import { useTeams } from '@/hooks/useTeams';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { enumLabel } from '@/lib/translations';
-import { canAssignEnquiry, type CurrentUser } from '@/lib/permissions';
+import { canAssignEnquiry, isExec, type CurrentUser } from '@/lib/permissions';
+import { relativePeriodMatcher } from '@/lib/kpi';
+import AgentKpiCard from '@/components/AgentKpiCard';
 import StatusColorDialog from '@/components/StatusColorDialog';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
@@ -53,32 +54,11 @@ const FILTER_LABEL_KEYS: Record<DateFilter, string> = {
 
 const TEAM_PERIOD_OPTIONS: DateFilter[] = ['thisMonth', 'lastMonth', 'thisYear'];
 
-type AgentPeriod = 'all' | 'thisMonth' | 'lastMonth' | 'thisYear';
-
-const AGENT_PERIOD_LABEL_KEYS: Record<AgentPeriod, string> = {
-  all: 'filter.allTime', thisMonth: 'filter.thisMonth', lastMonth: 'filter.lastMonth', thisYear: 'filter.thisYear',
-};
-
-function filterLeadsByDate(leads: Lead[], filter: DateFilter | AgentPeriod): Lead[] {
+function filterLeadsByDate(leads: Lead[], filter: DateFilter): Lead[] {
   if (filter === 'levelA') return leads.filter((l) => l.lead_grade === 'A');
   if (filter === 'all') return leads;
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth();
-
-  return leads.filter((l) => {
-    const d = new Date(l.created_at);
-    const y = d.getFullYear();
-    const m = d.getMonth();
-    if (filter === 'thisYear') return y === currentYear;
-    if (filter === 'thisMonth') return y === currentYear && m === currentMonth;
-    if (filter === 'lastMonth') {
-      const targetYear = currentMonth === 0 ? currentYear - 1 : currentYear;
-      const targetMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-      return y === targetYear && m === targetMonth;
-    }
-    return true;
-  });
+  const inPeriod = relativePeriodMatcher(filter);
+  return leads.filter((l) => inPeriod(l.created_at));
 }
 
 function metricsFor(leads: Lead[]) {
@@ -215,26 +195,6 @@ function KpiCard({ label, value, icon: Icon, accent, onOpen, delta, trend, capti
   );
 }
 
-const RANK_CROWN_STYLES: Record<number, string> = {
-  1: 'bg-gradient-to-br from-yellow-300 to-yellow-500 text-white',
-  2: 'bg-gradient-to-br from-slate-300 to-slate-400 text-white',
-  3: 'bg-gradient-to-br from-amber-600 to-amber-700 text-white',
-};
-
-function RankBadge({ rank }: { rank: number }) {
-  const crownClass = RANK_CROWN_STYLES[rank];
-  if (crownClass) {
-    return (
-      <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 shadow-sm ${crownClass}`}>
-        <Crown className="w-3.5 h-3.5" fill="currentColor" strokeWidth={1.5} />
-      </div>
-    );
-  }
-  return (
-    <div className="w-7 h-7 rounded-full bg-primary/10 text-primary text-[11px] font-bold flex items-center justify-center shrink-0">{rank}</div>
-  );
-}
-
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user, role, department } = useAuth();
@@ -245,10 +205,9 @@ export default function Dashboard() {
   const [rawLeads, setRawLeads] = useState<Lead[]>(cachedLeads ?? []);
   const [loading, setLoading] = useState(cachedLeads === undefined);
   const [dateFilter, setDateFilter] = useState<DateFilter>('all');
-  const [agentPeriod, setAgentPeriod] = useState<AgentPeriod>('thisMonth');
   const { colors: statusColors, saveColors } = useStatusColors();
   const { teams } = useTeams();
-  const { nameOf, byId } = useProfiles();
+  const { nameOf } = useProfiles();
   const today = useMemo(() => new Date().toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }), []);
 
   useEffect(() => {
@@ -387,19 +346,6 @@ export default function Dashboard() {
     },
     interaction: { mode: 'nearest' as const, intersect: true },
   };
-
-  const agentPeriodLeads = useMemo(() => filterLeadsByDate(rawLeads, agentPeriod), [rawLeads, agentPeriod]);
-  const agentPerformance = useMemo(() => {
-    const agents: Record<string, { name: string; count: number }> = {};
-    for (const l of agentPeriodLeads) {
-      if (l.status !== 'sold' || !l.owner_id) continue;
-      if (!agents[l.owner_id]) agents[l.owner_id] = { name: nameOf(l.owner_id), count: 0 };
-      agents[l.owner_id].count += 1;
-    }
-    const sorted = Object.entries(agents).sort((a, b) => b[1].count - a[1].count).slice(0, 5);
-    const max = sorted[0]?.[1].count || 1;
-    return sorted.map(([id, { name, count }]) => ({ id, name, count, pct: Math.round((count / max) * 100), avatarUrl: byId[id]?.avatar_url || null }));
-  }, [agentPeriodLeads, nameOf, byId]);
 
   const activityFeed = useMemo(() => [...filteredLeads].slice(0, 5), [filteredLeads]);
 
@@ -603,50 +549,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-        <Card className="shadow-card rounded-xl border-0">
-          <CardContent className="p-5 md:p-6">
-            <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
-              <div className="flex items-center gap-2 shrink-0">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Trophy className="w-4 h-4 text-primary" /></div>
-                <h3 className="text-base font-semibold whitespace-nowrap">{t('analytics.agentPerformance')}</h3>
-              </div>
-              <Select value={agentPeriod} onValueChange={(v) => setAgentPeriod(v as AgentPeriod)}>
-                <SelectTrigger className="h-8 w-[124px] text-xs rounded-lg"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(AGENT_PERIOD_LABEL_KEYS) as AgentPeriod[]).map((k) => (
-                    <SelectItem key={k} value={k} className="text-xs">{t(AGENT_PERIOD_LABEL_KEYS[k])}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {agentPerformance.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                <Trophy className="w-8 h-8 mb-2 opacity-40" />
-                <p className="text-sm">{t('dashboard.noSalesPeriod')}</p>
-              </div>
-            ) : (
-              <div className="space-y-5">
-                {agentPerformance.map((agent, idx) => (
-                  <div key={agent.id} className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <RankBadge rank={idx + 1} />
-                        <NameLink id={agent.id} name={agent.name} avatarUrl={agent.avatarUrl} />
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-xs font-semibold text-primary tabular-nums">{agent.count} {t('dashboard.soldSuffix')}</span>
-                        <ArrowUpRight className="w-3.5 h-3.5 text-emerald-500" />
-                      </div>
-                    </div>
-                    <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-700 ease-out" style={{ width: `${agent.pct}%`, background: 'linear-gradient(90deg, #0463CA 0%, #0487E2 100%)' }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <AgentKpiCard leads={rawLeads} showKpiBoardLink={isExec(role)} />
 
         <Card className="shadow-card rounded-xl border-0">
           <CardContent className="p-5 md:p-6">

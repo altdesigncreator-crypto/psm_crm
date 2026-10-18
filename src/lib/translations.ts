@@ -993,8 +993,29 @@ export const translations: Record<string, Record<Lang, string>> = {
   'kpiBoard.backToDashboard': { mm: 'Dashboard သို့ ပြန်သွားရန်', en: 'Back to Dashboard' },
   'kpiBoard.loadError': { mm: 'KPI ဒေတာ ဖွင့်၍ မရပါ', en: 'Could not load KPI data.' },
   'kpiBoard.topPerformer': { mm: 'ထိပ်ဆုံး ဆောင်ရွက်သူ', en: 'Top performer' },
-  'kpiBoard.gradeALabel': { mm: 'အဆင့် A', en: 'Grade A' },
-  'kpiBoard.gradeALeads': { mm: 'အဆင့် A Lead', en: 'Grade A Leads' },
+  'kpiBoard.newLeads': { mm: 'Lead အသစ်', en: 'New Leads' },
+  'kpiBoard.sold': { mm: 'ရောင်းပြီး', en: 'Sold' },
+  'kpiBoard.conversion': { mm: 'အရောင်းဖြစ်နှုန်း', en: 'Conversion' },
+  'kpiBoard.conversionHint': { mm: 'ရောင်းပြီး ÷ Lead အသစ်', en: 'Sold ÷ new leads' },
+  'kpiBoard.salesValue': { mm: 'ရောင်းချမှု တန်ဖိုး', en: 'Sales Value' },
+  'kpiBoard.companyIncome': { mm: 'ကုမ္ပဏီ ဝင်ငွေ', en: 'Company Income' },
+  'kpiBoard.avgCommission': { mm: 'ပျမ်းမျှ ကော်မရှင်', en: 'Avg. commission' },
+  'kpiBoard.rankBy': { mm: 'အဆင့်စီရန်', en: 'Rank by' },
+  'kpiBoard.rankIncome': { mm: 'ဝင်ငွေ', en: 'Income' },
+  'kpiBoard.rankConversion': { mm: 'ရောင်းနှုန်း', en: 'Conversion' },
+  'kpiBoard.rankSold': { mm: 'ရောင်းပြီး', en: 'Sold' },
+  'kpiBoard.missingCommissionPrefix': { mm: 'ရောင်းပြီး Lead', en: '' },
+  'kpiBoard.missingCommissionSuffix': { mm: 'ခုတွင် ကော်မရှင် မှတ်တမ်းမရှိသဖြင့် ကုမ္ပဏီဝင်ငွေ လျော့ပြနေပါသည်။', en: 'sold leads have no commission recorded, so company income is understated.' },
+  'kpiBoard.reviewSales': { mm: 'စစ်ဆေးရန်', en: 'Review' },
+  'kpiBoard.retry': { mm: 'ထပ်ကြိုးစားရန်', en: 'Try again' },
+  'kpiBoard.teamPerformance': { mm: 'အသင်း စွမ်းဆောင်ရည်', en: 'Team Performance' },
+  'kpiBoard.noTeam': { mm: 'အသင်း မသတ်မှတ်ရသေး', en: 'No team' },
+  'kpiBoard.unknownTeam': { mm: 'အမည်မသိ အသင်း', en: 'Unknown team' },
+  'kpiBoard.teamAttributionHint': { mm: 'အသင်းမသတ်မှတ်ထားသော Lead များကို ပိုင်ရှင်သည် အသင်းတစ်ခုတည်းတွင်သာ ရှိပါက ထိုအသင်းတွင် ထည့်တွက်ပါသည်။', en: 'Leads without a team count toward their owner’s team when the owner is in only one.' },
+  'dashboard.viewKpiBoard': { mm: 'KPI ဘုတ် အပြည့်အစုံ ကြည့်ရန်', en: 'View full KPI Board' },
+  'dashboard.noAgentActivity': { mm: 'ဤကာလအတွက် Lead သို့မဟုတ် ရောင်းချမှု မရှိသေးပါ', en: 'No leads or sales yet for this period.' },
+  'dashboard.salesMissingCommissionSuffix': { mm: 'ခုတွင် ကော်မရှင် မှတ်တမ်းမရှိ (ဝင်ငွေတွင် မပါဝင်)', en: 'sales have no commission recorded (not in income)' },
+  'kpiBoard.commissionTrackingOff': { mm: 'ကော်မရှင် မှတ်တမ်းစနစ်ကို ဒေတာဘေ့စ်တွင် မဖွင့်ရသေးပါ — ကုမ္ပဏီဝင်ငွေ မပြနိုင်သေးပါ။ Lead နှင့် ရောင်းပြီး အရေအတွက်များမှာ မှန်ကန်ပါသည်။', en: 'Commission tracking is not enabled in the database yet, so company income can’t be shown. Lead and deal counts are accurate.' },
   'kpiBoard.departmentPerformance': { mm: 'ဌာန စွမ်းဆောင်ရည်', en: 'Department Performance' },
   'kpiBoard.filtered': { mm: 'စစ်ထုတ်ထားသည်', en: 'Filtered' },
   'kpiBoard.leads': { mm: 'Lead', en: 'Leads' },
@@ -1005,8 +1026,31 @@ export const translations: Record<string, Record<Lang, string>> = {
   'kpiBoard.leadsWord': { mm: 'Lead', en: 'leads' },
   'kpiBoard.soldWord': { mm: 'ခု ရောင်းပြီး', en: 'sold' },
   'kpiBoard.viewProfile': { mm: 'ပရိုဖိုင် ကြည့်ရန်', en: 'View profile' },
-  'kpiBoard.gradeBreakdown': { mm: 'အဆင့် ခွဲခြမ်းစိတ်ဖြာချက်', en: 'Grade Breakdown' },
-  'kpiBoard.active': { mm: 'တက်ကြွသည်', en: 'Active' },
+
+  // Sale details — captured when a lead is marked Sold
+  'sale.recordTitle': { mm: 'ရောင်းချမှု မှတ်တမ်းတင်ရန်', en: 'Record Sale' },
+  'sale.editTitle': { mm: 'ရောင်းချမှု အချက်အလက် ပြင်ရန်', en: 'Edit Sale Details' },
+  'sale.recordDescription': { mm: 'ဤ Lead ကို ရောင်းပြီးအဖြစ် သတ်မှတ်ရန် ရောင်းဈေးနှင့် ကုမ္ပဏီ ကော်မရှင်ကို ထည့်ပါ။', en: 'Enter the sale amount and the company commission to mark this lead as Sold.' },
+  'sale.editDescription': { mm: 'ပြင်ဆင်ချက်များကို မှတ်တမ်း (audit log) တွင် သိမ်းဆည်းထားပါမည်။', en: 'Changes are recorded in the audit log.' },
+  'sale.amountLabel': { mm: 'ရောင်းဈေး (သိန်း)', en: 'Sale amount (Lakh)' },
+  'sale.rateLabel': { mm: 'ကုမ္ပဏီ ကော်မရှင် (%)', en: 'Company commission (%)' },
+  'sale.lakhUnit': { mm: 'သိန်း', en: 'Lakh' },
+  'sale.companyIncome': { mm: 'ကုမ္ပဏီ ဝင်ငွေ', en: 'Company income' },
+  'sale.confirmSold': { mm: 'ရောင်းပြီးအဖြစ် သတ်မှတ်ရန်', en: 'Mark as Sold' },
+  'sale.error.amountRequired': { mm: 'ရောင်းဈေးကို 0 ထက် ကြီးအောင် ထည့်ပါ။', en: 'Enter a sale amount greater than 0.' },
+  'sale.error.amountTooLarge': { mm: 'ရောင်းဈေး အလွန်များနေပါသည်။', en: 'Sale amount is too large.' },
+  'sale.error.rateRequired': { mm: 'ကော်မရှင် ရာခိုင်နှုန်းကို ထည့်ပါ။', en: 'Enter the commission percentage.' },
+  'sale.error.rateOutOfRange': { mm: 'ကော်မရှင်သည် 0 မှ 100% အတွင်း ဖြစ်ရပါမည်။', en: 'Commission must be between 0 and 100%.' },
+  'sale.saveError': { mm: 'ရောင်းချမှုကို သိမ်း၍ မရပါ', en: 'Could not save the sale.' },
+  'sale.markedSoldToast': { mm: 'Lead ကို ရောင်းပြီးအဖြစ် သတ်မှတ်ပြီးပါပြီ', en: 'Lead marked as Sold.' },
+  'sale.updatedToast': { mm: 'ရောင်းချမှု အချက်အလက် ပြင်ပြီးပါပြီ', en: 'Sale details updated.' },
+  'sale.cardTitle': { mm: 'ရောင်းချမှု အချက်အလက်', en: 'Sale Details' },
+  'sale.saleAmount': { mm: 'ရောင်းဈေး', en: 'Sale amount' },
+  'sale.commission': { mm: 'ကော်မရှင်', en: 'Commission' },
+  'sale.soldOn': { mm: 'ရောင်းသည့်ရက်', en: 'Sold on' },
+  'sale.notRecorded': { mm: 'မှတ်တမ်းမရှိ', en: 'Not recorded' },
+  'sale.missingDetailsHint': { mm: 'ဤရောင်းချမှုအတွက် ကော်မရှင် မှတ်တမ်းမရှိသဖြင့် ကုမ္ပဏီဝင်ငွေတွင် မပါဝင်ပါ။', en: 'No commission recorded for this sale, so it is missing from company income.' },
+  'sale.addDetails': { mm: 'အချက်အလက် ထည့်ရန်', en: 'Add details' },
   // Admin Analytics page
   'analytics.pageTitle': { mm: 'Analytics', en: 'Analytics' },
   'analytics.subtitle': { mm: 'ကုမ္ပဏီတစ်ခုလုံး Lead နှင့် ဝင်ငွေ ခွဲခြမ်းစိတ်ဖြာချက်', en: 'Company-wide lead and revenue analytics' },
@@ -1303,5 +1347,8 @@ export function enumLabel(prefix: 'stage' | 'followupType' | 'followupStatus' | 
 }
 
 export function t(key: string, lang: Lang): string {
-  return translations[key]?.[lang] || key;
+  // `??`, not `||`: some keys are intentionally '' in one language (word
+  // order differs — e.g. an English prefix with no Myanmar equivalent), and
+  // those must render as nothing, not as the raw key.
+  return translations[key]?.[lang] ?? key;
 }

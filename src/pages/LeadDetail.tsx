@@ -37,7 +37,9 @@ import { supabase } from '@/db/supabase';
 import { toast } from 'sonner';
 import StatusBadge from '@/components/StatusBadge';
 import ProjectNameInput from '@/components/ProjectNameInput';
+import SaleDetailsDialog from '@/components/SaleDetailsDialog';
 import { invalidateProjectNames } from '@/hooks/useProjectNames';
+import { formatKyat, formatLakh } from '@/lib/sales';
 
 interface DetailRowProps { label: string; value?: string | null; icon?: React.ReactNode; }
 
@@ -51,6 +53,55 @@ function DetailRow({ label, value, icon }: DetailRowProps) {
         <p className="text-sm font-medium text-foreground mt-0.5 break-words">{value}</p>
       </div>
     </div>
+  );
+}
+
+function SaleDetailsCard({ lead, editable, onEdit }: { lead: Lead; editable: boolean; onEdit: () => void }) {
+  const { t } = useTranslation();
+  const hasDetails = lead.commission_amount != null;
+  const money = (kyat: number) => (
+    <>
+      <span className="text-sm font-semibold text-foreground tabular-nums">{formatLakh(kyat)} {t('sale.lakhUnit')}</span>
+      <span className="block text-xs text-muted-foreground tabular-nums">{formatKyat(kyat)}</span>
+    </>
+  );
+  return (
+    <Card className="shadow-card rounded-xl border-0">
+      <CardHeader className="pb-3 flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-success/10 flex items-center justify-center"><DollarSign className="w-4 h-4 text-success" /></div>
+          {t('sale.cardTitle')}
+        </CardTitle>
+        {editable && (
+          <Button variant="outline" size="sm" className="h-9" onClick={onEdit}>
+            {hasDetails ? <><Edit2 className="w-3.5 h-3.5 mr-1.5" />{t('common.edit')}</> : <><Plus className="w-3.5 h-3.5 mr-1.5" />{t('sale.addDetails')}</>}
+          </Button>
+        )}
+      </CardHeader>
+      <CardContent className="pt-0">
+        <dl className="divide-y divide-border">
+          <div className="flex items-start justify-between gap-3 py-2.5">
+            <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{t('sale.saleAmount')}</dt>
+            <dd className="text-right">{lead.sale_amount != null ? money(Number(lead.sale_amount)) : <span className="text-sm text-muted-foreground">{t('sale.notRecorded')}</span>}</dd>
+          </div>
+          <div className="flex items-start justify-between gap-3 py-2.5">
+            <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{t('sale.commission')}</dt>
+            <dd className="text-sm font-semibold text-foreground tabular-nums">{lead.commission_rate != null ? `${Number(lead.commission_rate)}%` : <span className="font-normal text-muted-foreground">{t('sale.notRecorded')}</span>}</dd>
+          </div>
+          <div className="flex items-start justify-between gap-3 py-2.5">
+            <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{t('sale.companyIncome')}</dt>
+            <dd className="text-right">{hasDetails ? money(Number(lead.commission_amount)) : <span className="text-sm text-muted-foreground">—</span>}</dd>
+          </div>
+          {lead.sold_at && (
+            <div className="flex items-start justify-between gap-3 py-2.5">
+              <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{t('sale.soldOn')}</dt>
+              <dd className="text-sm font-medium text-foreground tabular-nums">{new Date(lead.sold_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</dd>
+            </div>
+          )}
+        </dl>
+        {!hasDetails && <p className="mt-2 text-xs text-warning bg-warning/10 rounded-md px-2 py-1.5">{t('sale.missingDetailsHint')}</p>}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -88,6 +139,7 @@ export default function LeadDetail() {
   const [reassignTo, setReassignTo] = useState('');
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [saleDialogOpen, setSaleDialogOpen] = useState(false);
 
   const [editMode, setEditMode] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -240,6 +292,8 @@ export default function LeadDetail() {
   };
 
   const handleStageChange = async (newStage: string) => {
+    // Sold needs the sale amount + commission, saved together with the stage.
+    if (newStage === 'sold') { setSaleDialogOpen(true); return; }
     const { error } = await supabase.from('leads').update({ status: newStage }).eq('id', lead.id);
     if (error) { toast.error(t('leadDetail.stageUpdateError')); return; }
     setLead((prev) => (prev ? { ...prev, status: newStage as Lead['status'] } : prev));
@@ -361,6 +415,14 @@ export default function LeadDetail() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <SaleDetailsDialog
+        lead={saleDialogOpen ? lead : null}
+        onOpenChange={setSaleDialogOpen}
+        // Merge for an instant update, then refetch: the grade is re-derived
+        // by an AFTER trigger, which the UPDATE's returned row doesn't reflect.
+        onSaved={(saved) => { setLead((prev) => (prev ? { ...prev, ...saved } : saved)); loadAll(); }}
+      />
+
       {/* Mobile quick actions */}
       <div className="md:hidden flex items-center gap-2 -mx-4 px-4 py-3 bg-card border-y border-border sticky top-0 z-30">
         {lead.phone && (
@@ -378,6 +440,8 @@ export default function LeadDetail() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
         {/* Left column */}
         <div className="lg:col-span-1 space-y-4 md:space-y-6">
+          {lead.status === 'sold' && <SaleDetailsCard lead={lead} editable={editable} onEdit={() => setSaleDialogOpen(true)} />}
+
           <Card className="shadow-card rounded-xl border-0">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">

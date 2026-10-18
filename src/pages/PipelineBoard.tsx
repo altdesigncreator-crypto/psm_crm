@@ -29,6 +29,7 @@ import { cacheGet, cacheSetDebounced } from '@/lib/localCache';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { buildProjectIndex, countProjects } from '@/lib/projectNames';
 import ProjectFilterList from '@/components/ProjectFilterList';
+import SaleDetailsDialog from '@/components/SaleDetailsDialog';
 import { usePeriodFilter } from '@/hooks/usePeriodFilter';
 import PeriodFilterBar from '@/components/PeriodFilterBar';
 
@@ -85,6 +86,7 @@ export default function PipelineBoard() {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [saleLead, setSaleLead] = useState<Lead | null>(null);
 
   const [hiddenStages, setHiddenStages] = useState<Set<LeadStage>>(new Set());
   const [columnsMenuOpen, setColumnsMenuOpen] = useState(false);
@@ -212,6 +214,12 @@ export default function PipelineBoard() {
   }, [hiddenStages, visibleColumns, mobileStage]);
 
   const handleMoveLead = async (leadId: string, newStatus: string) => {
+    // Sold needs the sale amount + commission, saved together with the stage.
+    if (newStatus === 'sold') {
+      const lead = leads.find((l) => l.id === leadId);
+      if (lead) { setMoveDialogOpen(false); setSaleLead(lead); }
+      return;
+    }
     setMoving(true);
     const { error } = await supabase.from('leads').update({ status: newStatus }).eq('id', leadId);
     setMoving(false);
@@ -597,6 +605,12 @@ export default function PipelineBoard() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <SaleDetailsDialog
+        lead={saleLead}
+        onOpenChange={(open) => { if (!open) { setSaleLead(null); setSelectedLead(null); } }}
+        onSaved={(saved) => setLeads((prev) => prev.map((l) => (l.id === saved.id ? { ...l, ...saved } : l)))}
+      />
     </div>
   );
 }

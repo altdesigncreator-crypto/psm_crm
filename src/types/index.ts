@@ -79,7 +79,14 @@ export interface Lead {
   lead_grade_reason?: string | null;
   owner_id?: string | null;
   created_by?: string | null;
+  /** Sale value in MMK — required (with commission_rate) to enter Sold. */
   sale_amount?: number | null;
+  /** Company commission, percent 0–100. */
+  commission_rate?: number | null;
+  /** Company income from the sale — DB-generated from the two above; read-only. */
+  commission_amount?: number | null;
+  /** When the lead entered Sold — server-stamped; read-only. */
+  sold_at?: string | null;
   latitude?: number | null;
   longitude?: number | null;
   next_follow_up_at?: string | null;

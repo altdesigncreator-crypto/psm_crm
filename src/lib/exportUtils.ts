@@ -181,94 +181,102 @@ tbody tr:last-child td { border-bottom: none; }
 
 // ── KPI Export ─────────────────────────────────────────────────────────
 
-interface AgentStat {
+/** One leaderboard row (agent, team or department), money in MMK. */
+export interface KpiExportRow {
   name: string;
-  totalLeads: number;
-  soldCount: number;
-  totalRevenue: number;
+  leads: number;
+  sold: number;
+  conversionRate: number | null;
+  salesValue: number;
+  companyIncome: number;
+  agentCount?: number;
 }
 
-interface DepartmentStat {
-  displayName: string;
-  totalLeads: number;
-  soldCount: number;
-  agentCount: number;
+export interface KpiExportReport {
+  /** Period + active filters, e.g. "October 2026 · Condo". */
+  title: string;
+  departments: KpiExportRow[];
+  teams: KpiExportRow[];
+  agents: KpiExportRow[];
 }
 
-export async function exportKPIAsExcel(agentStats: AgentStat[], departmentStats?: DepartmentStat[]) {
-  if (agentStats.length === 0) return;
+const conversionCell = (r: KpiExportRow) => (r.conversionRate == null ? '—' : `${(r.conversionRate * 100).toFixed(1)}%`);
+const mmk = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+
+function kpiFileName(periodTitle: string, ext: string) {
+  const slug = periodTitle.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return `PSM_KPI_Report_${slug ? `${slug}_` : ''}${new Date().toISOString().split('T')[0]}.${ext}`;
+}
+
+interface KpiSection { title: string; nameHeader: string; rows: KpiExportRow[]; ranked: boolean; withAgents: boolean }
+
+/** The report's tables, in display order — shared by the Excel and PDF
+ * writers so both formats always carry the same sections and columns. */
+function kpiSections(r: KpiExportReport): KpiSection[] {
+  return [
+    { title: 'Department Performance', nameHeader: 'Department', rows: r.departments, ranked: false, withAgents: true },
+    { title: 'Team Performance', nameHeader: 'Team', rows: r.teams, ranked: true, withAgents: true },
+    { title: 'Agent Performance', nameHeader: 'Agent', rows: r.agents, ranked: true, withAgents: false },
+  ].filter((s) => s.rows.length > 0);
+}
+
+export async function exportKPIAsExcel(report: KpiExportReport) {
+  if (report.agents.length === 0) return;
   const XLSX = await import('xlsx');
   const wb = XLSX.utils.book_new();
 
-  const agentData = agentStats.map((a, idx) => ({
-    Rank: idx + 1,
-    Agent: a.name,
-    'Total Leads': a.totalLeads,
-    Sold: a.soldCount,
-    Revenue: a.totalRevenue,
-    'Conversion Rate': a.totalLeads > 0 ? `${((a.soldCount / a.totalLeads) * 100).toFixed(1)}%` : '0%',
-  }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(agentData), 'Agent Performance');
-
-  if (departmentStats && departmentStats.length > 0) {
-    const deptData = departmentStats.map((d) => ({
-      Department: d.displayName,
-      'Total Leads': d.totalLeads,
-      Sold: d.soldCount,
-      Agents: d.agentCount,
+  // Money stays numeric (MMK) so the sheet can be summed / pivoted.
+  for (const s of kpiSections(report)) {
+    const data = s.rows.map((row, idx) => ({
+      ...(s.ranked ? { Rank: idx + 1 } : {}),
+      [s.nameHeader]: row.name,
+      'New Leads': row.leads,
+      Sold: row.sold,
+      'Conversion Rate': conversionCell(row),
+      'Sales Value (MMK)': row.salesValue,
+      'Company Income (MMK)': row.companyIncome,
+      ...(s.withAgents ? { Agents: row.agentCount ?? 0 } : {}),
     }));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(deptData), 'Department Performance');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), s.title);
   }
 
   const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  triggerDownload(blob, `PSM_KPI_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+  triggerDownload(blob, kpiFileName(report.title, 'xlsx'));
 }
 
-export async function exportKPIAsPDF(agentStats: AgentStat[], departmentStats?: DepartmentStat[]) {
-  if (agentStats.length === 0) return;
+export async function exportKPIAsPDF(report: KpiExportReport) {
+  if (report.agents.length === 0) return;
   const [{ jsPDF }, { default: autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
   doc.setFontSize(16);
-  doc.text('PSM Sale CRM - KPI Report', 14, 18);
+  doc.text(`PSM Sale CRM - KPI Report${report.title ? ` (${report.title})` : ''}`, 14, 18);
   doc.setFontSize(10);
   doc.setTextColor(100);
-  doc.text(`Generated on ${new Date().toLocaleDateString()}`, 14, 25);
+  doc.text(`Generated on ${new Date().toLocaleDateString()} · Amounts in MMK`, 14, 25);
 
   let startY = 32;
-  if (departmentStats && departmentStats.length > 0) {
+  for (const s of kpiSections(report)) {
     doc.setFontSize(12);
     doc.setTextColor(0);
-    doc.text('Department Summary', 14, startY);
-    startY += 4;
+    doc.text(s.title, 14, startY);
     autoTable(doc, {
-      startY,
-      head: [['Department', 'Leads', 'Sold', 'Agents']],
-      body: departmentStats.map((d) => [d.displayName, String(d.totalLeads), String(d.soldCount), String(d.agentCount)]),
+      startY: startY + 4,
+      head: [[...(s.ranked ? ['#'] : []), s.nameHeader, 'New Leads', 'Sold', 'Conversion', 'Sales Value', 'Company Income', ...(s.withAgents ? ['Agents'] : [])]],
+      body: s.rows.map((row, idx) => [
+        ...(s.ranked ? [String(idx + 1)] : []),
+        row.name, String(row.leads), String(row.sold), conversionCell(row), mmk(row.salesValue), mmk(row.companyIncome),
+        ...(s.withAgents ? [String(row.agentCount ?? 0)] : []),
+      ]),
       theme: 'striped',
       styles: { fontSize: 9, cellPadding: 2 },
       headStyles: { fillColor: [4, 99, 202], textColor: [255, 255, 255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
     });
-    startY = (doc as any).lastAutoTable?.finalY + 10 || startY + 30;
+    startY = ((doc as any).lastAutoTable?.finalY ?? startY + 30) + 10;
   }
 
-  doc.setFontSize(12);
-  doc.setTextColor(0);
-  doc.text('Agent Performance', 14, startY);
-  autoTable(doc, {
-    startY: startY + 4,
-    head: [['#', 'Agent', 'Leads', 'Sold', 'Revenue', 'Conversion']],
-    body: agentStats.map((a, idx) => [
-      String(idx + 1), a.name, String(a.totalLeads), String(a.soldCount),
-      a.totalRevenue.toLocaleString(), a.totalLeads > 0 ? `${((a.soldCount / a.totalLeads) * 100).toFixed(1)}%` : '0%',
-    ]),
-    theme: 'striped',
-    styles: { fontSize: 9, cellPadding: 2 },
-    headStyles: { fillColor: [4, 99, 202], textColor: [255, 255, 255], fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
-  });
-
   const blob = doc.output('blob');
-  triggerDownload(blob, `PSM_KPI_Report_${new Date().toISOString().split('T')[0]}.pdf`);
+  triggerDownload(blob, kpiFileName(report.title, 'pdf'));
 }

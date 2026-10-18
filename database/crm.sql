@@ -309,7 +309,12 @@ create table if not exists public.leads (
   lead_grade_reason  text,
   owner_id           uuid references public.profiles(id),
   created_by         uuid references public.profiles(id),
-  sale_amount        numeric(14, 2),
+  -- Sale details, required on entering Sold (enforce_sale_details, §9).
+  -- commission_amount is the company's income from the sale.
+  sale_amount        numeric(14, 2) constraint leads_sale_amount_check check (sale_amount is null or sale_amount >= 0),
+  commission_rate    numeric(5, 2) constraint leads_commission_rate_check check (commission_rate is null or commission_rate between 0 and 100),
+  commission_amount  numeric(14, 2) generated always as (round(sale_amount * commission_rate / 100, 2)) stored,
+  sold_at            timestamptz,
   latitude           double precision,
   longitude          double precision,
   next_follow_up_at  timestamptz,
@@ -330,6 +335,8 @@ create index if not exists idx_leads_team on public.leads(team_id);
 -- Backs both the default "Newest first" sort and the Date Added filter on
 -- the Leads list, plus Dashboard/TeamActivity date-range queries.
 create index if not exists idx_leads_created_at on public.leads(created_at desc);
+-- KPI Board attributes deals and company income to the period they closed in.
+create index if not exists idx_leads_sold_at on public.leads(sold_at desc) where status = 'sold';
 
 -- A lead's team (if any — team_id is nullable, chosen at creation time when
 -- the owner belongs to more than one team) must belong to the same
@@ -788,7 +795,12 @@ begin
 
     insert into public.audit_logs (action, target_table, target_id, performed_by, old_value, new_value)
     values ('pipeline_stage_changed', 'leads', new.id, auth.uid(),
-            jsonb_build_object('status', old.status), jsonb_build_object('status', new.status));
+            jsonb_build_object('status', old.status),
+            jsonb_build_object('status', new.status) || case when new.status = 'sold' then jsonb_build_object(
+              'sale_amount', new.sale_amount,
+              'commission_rate', new.commission_rate,
+              'commission_amount', new.commission_amount
+            ) else '{}'::jsonb end);
   end if;
   return new;
 end;
@@ -797,6 +809,74 @@ $$;
 drop trigger if exists trg_leads_pipeline on public.leads;
 create trigger trg_leads_pipeline after update of status on public.leads
   for each row execute function public.log_pipeline_change();
+
+-- A lead cannot enter Sold without a positive sale amount and a 0–100
+-- commission rate — enforced here so every write path (Lead Detail,
+-- Pipeline Board, imports) is held to the same rule. Edits to an already
+-- sold lead's sale details are re-validated; sold leads recorded before
+-- this rule existed keep working until someone edits their sale details.
+-- sold_at is server-owned: stamped on entering Sold, cleared on leaving it.
+create or replace function public.enforce_sale_details() returns trigger
+language plpgsql set search_path = public as $$
+declare
+  v_entering_sold boolean := false;
+  v_editing_sale  boolean := false;
+begin
+  if tg_op = 'INSERT' then
+    v_entering_sold := new.status = 'sold';
+  else
+    v_entering_sold := new.status = 'sold' and old.status is distinct from 'sold';
+    v_editing_sale  := new.status = 'sold' and old.status = 'sold'
+      and (new.sale_amount is distinct from old.sale_amount
+           or new.commission_rate is distinct from old.commission_rate);
+  end if;
+
+  if v_entering_sold or v_editing_sale then
+    if new.sale_amount is null or new.sale_amount <= 0 then
+      raise exception 'A sold lead requires a sale amount greater than 0.'
+        using errcode = 'check_violation', hint = 'sale_amount';
+    end if;
+    if new.commission_rate is null or new.commission_rate < 0 or new.commission_rate > 100 then
+      raise exception 'A sold lead requires a commission rate between 0 and 100.'
+        using errcode = 'check_violation', hint = 'commission_rate';
+    end if;
+  end if;
+
+  if v_entering_sold then
+    new.sold_at := now();
+  elsif new.status is distinct from 'sold' then
+    new.sold_at := null;
+  elsif tg_op = 'UPDATE' then
+    new.sold_at := old.sold_at;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_leads_sale_details on public.leads;
+create trigger trg_leads_sale_details
+  before insert or update of status, sale_amount, commission_rate, sold_at on public.leads
+  for each row execute function public.enforce_sale_details();
+
+create or replace function public.log_sale_details_change() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.status = 'sold' and old.status = 'sold'
+     and (new.sale_amount is distinct from old.sale_amount
+          or new.commission_rate is distinct from old.commission_rate) then
+    insert into public.audit_logs (action, target_table, target_id, performed_by, old_value, new_value)
+    values ('sale_details_updated', 'leads', new.id, auth.uid(),
+            jsonb_build_object('sale_amount', old.sale_amount, 'commission_rate', old.commission_rate, 'commission_amount', old.commission_amount),
+            jsonb_build_object('sale_amount', new.sale_amount, 'commission_rate', new.commission_rate, 'commission_amount', new.commission_amount));
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_leads_sale_audit on public.leads;
+create trigger trg_leads_sale_audit after update of sale_amount, commission_rate on public.leads
+  for each row execute function public.log_sale_details_change();
 
 -- Pipeline stage and lead grade are linked exactly like follow-up status and
 -- lead grade (see 9b below) — moving a card on the Pipeline Board also
@@ -1548,7 +1628,8 @@ create or replace view public.v_agent_performance
     department_code,
     count(*) as total_leads,
     count(*) filter (where status = 'sold') as sold_count,
-    coalesce(sum(sale_amount) filter (where status = 'sold'), 0) as total_revenue
+    coalesce(sum(sale_amount) filter (where status = 'sold'), 0) as total_revenue,
+    coalesce(sum(commission_amount) filter (where status = 'sold'), 0) as company_income
   from public.leads
   where owner_id is not null
   group by owner_id, department_code;
@@ -1656,14 +1737,12 @@ begin
   select id into v_condo_sale from public.profiles where email = 'condo.sale@psmcrm.test';
 
   if v_house_sale is not null and not exists (select 1 from public.leads where phone = '09-111-0001') then
-    insert into public.leads (name, phone, department_code, status, owner_id, created_by, lead_source)
+    insert into public.leads (name, phone, department_code, status, owner_id, created_by, lead_source, sale_amount, commission_rate)
     values
-      ('Aye Aye Win', '09-111-0001', 'house', 'contacted', v_house_sale, v_house_sale, 'Facebook'),
-      ('Zaw Zaw', '09-111-0002', 'house', 'site_visit', v_house_sale, v_house_sale, 'TikTok'),
-      ('Su Su Hlaing', '09-111-0003', 'condo', 'new', v_condo_sale, v_condo_sale, 'Instagram'),
-      ('Kyaw Kyaw', '09-111-0004', 'condo', 'sold', v_condo_sale, v_condo_sale, 'Boss Content');
-
-    update public.leads set sale_amount = 1500000000 where phone = '09-111-0004';
+      ('Aye Aye Win', '09-111-0001', 'house', 'contacted', v_house_sale, v_house_sale, 'Facebook', null, null),
+      ('Zaw Zaw', '09-111-0002', 'house', 'site_visit', v_house_sale, v_house_sale, 'TikTok', null, null),
+      ('Su Su Hlaing', '09-111-0003', 'condo', 'new', v_condo_sale, v_condo_sale, 'Instagram', null, null),
+      ('Kyaw Kyaw', '09-111-0004', 'condo', 'sold', v_condo_sale, v_condo_sale, 'Boss Content', 1500000000, 2);
   end if;
 end $$;
 
