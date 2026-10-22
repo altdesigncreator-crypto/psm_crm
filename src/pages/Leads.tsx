@@ -891,7 +891,17 @@ export default function Leads() {
                       )}
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent align="end" className="w-[380px] p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+                  {/* Height is capped to the space Radix measures between the
+                      trigger and the viewport edge — a fixed 70vh overflowed
+                      off-screen when the trigger sat low, so the panel's own
+                      scroll never engaged until the page was scrolled first.
+                      overscroll-contain stops wheel/touch from chaining to
+                      the page once the panel hits its end. */}
+                  <PopoverContent
+                    align="end"
+                    collisionPadding={16}
+                    className="w-[380px] p-4 space-y-4 max-h-[min(70vh,var(--radix-popover-content-available-height))] overflow-y-auto overscroll-contain"
+                  >
                     <FilterFields
                       statusFilter={statusFilter} setStatusFilter={setStatusFilter}
                       gradeFilter={gradeFilter} setGradeFilter={setGradeFilter}
@@ -924,7 +934,7 @@ export default function Leads() {
                     )}
                   </button>
                 </SheetTrigger>
-                <SheetContent side="bottom" className="rounded-t-2xl border-t border-border px-6 pt-6 pb-8 max-h-[85dvh] overflow-y-auto">
+                <SheetContent side="bottom" className="rounded-t-2xl border-t border-border px-6 pt-6 pb-8 max-h-[85dvh] overflow-y-auto overscroll-contain">
                   <SheetHeader className="pb-4">
                     <SheetTitle className="flex items-center gap-2 text-base font-semibold">
                       <Filter className="w-4 h-4 text-primary" /> {t('leads.searchFilterSheetTitle')}

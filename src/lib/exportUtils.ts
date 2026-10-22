@@ -1,8 +1,10 @@
 import { type Lead, LEAD_STAGES, LEAD_GRADES } from '@/types';
 import { getDepartmentLabel } from '@/lib/permissions';
+import type { Font, Workbook } from 'exceljs';
 
+// Phone / email are deliberately left out of every lead export.
 const EXPORT_HEADERS = [
-  'Name', 'Phone', 'Email', 'Location', 'Project', 'Budget', 'Status', 'Grade',
+  'Name', 'Location', 'Project', 'Budget', 'Status', 'Grade',
   'Interest', 'Property Type', 'Purpose', 'Source', 'Owner', 'Next Follow-up', 'Department', 'Remarks',
 ];
 
@@ -17,8 +19,6 @@ function gradeLabel(grade?: string | null) {
 function getLeadRow(l: Lead): string[] {
   return [
     l.name,
-    l.phone,
-    l.email || '',
     l.current_location || '',
     l.preferred_project || '',
     l.budget_range || '',
@@ -54,17 +54,160 @@ function getExportFileName(base: string, count: number, ext: string): string {
   return `PSM_${base}_${count}records_${date}.${ext}`;
 }
 
+// ── Excel export ───────────────────────────────────────────────────────
+// Built with exceljs (the community `xlsx` build can't write styles).
+// A single data table with headers on row 1 — nothing above it — so the
+// sheet sorts, filters, pivots and re-imports without any cleanup.
+
+/** Neutral, Google-Workspace-like palette; colour is reserved for meaning. */
+const XL = {
+  accent: 'FF0463CA',
+  ink: 'FF202124',
+  inkSoft: 'FF5F6368',
+  inkFaint: 'FF9AA0A6',
+  line: 'FFE8EAED',
+  headerBg: 'FFF1F3F4',
+  danger: 'FFD93025',
+};
+
+/** [soft fill, strong text] — the "chip" look used for badges in the app. */
+type Tone = [fill: string, text: string];
+const NEUTRAL_TONE: Tone = ['FFF1F3F4', 'FF5F6368'];
+
+const STAGE_TONES: Record<string, Tone> = {
+  new: ['FFE8F0FE', 'FF1967D2'],
+  contacted: ['FFE8EAF6', 'FF3949AB'],
+  qualified: ['FFE0F7FA', 'FF00838F'],
+  appointment: ['FFF3E8FD', 'FF8430CE'],
+  site_visit: ['FFFCE8F3', 'FFC2185B'],
+  negotiation: ['FFFEF7E0', 'FFB06000'],
+  booking: ['FFFEEFE3', 'FFC5501E'],
+  sold: ['FFE6F4EA', 'FF137333'],
+  lost: NEUTRAL_TONE,
+};
+
+const GRADE_TONES: Record<string, Tone> = {
+  A: ['FFFCE8E6', 'FFC5221F'],
+  B: ['FFFEF7E0', 'FFB06000'],
+  C: ['FFE8F0FE', 'FF1967D2'],
+};
+const GRADE_SHORT: Record<string, string> = { A: 'A · Hot', B: 'B · Warm', C: 'C · Cold' };
+
+type XlValue = string | number | Date | null;
+interface XlColumn {
+  header: string;
+  width: number;
+  center?: boolean;
+  value: (l: Lead, index: number) => XlValue;
+}
+
+/** Excel gets its own column order so a row reads left to right as
+ * who → where they are in the pipeline → what they want → notes. */
+const LEAD_XL_COLUMNS: XlColumn[] = [
+  { header: '#', width: 6, center: true, value: (_, i) => i + 1 },
+  { header: 'Name', width: 26, value: (l) => l.name },
+  { header: 'Project', width: 24, value: (l) => l.preferred_project || null },
+  { header: 'Location', width: 18, value: (l) => l.current_location || null },
+  { header: 'Status', width: 15, center: true, value: (l) => stageLabel(l.status) },
+  { header: 'Grade', width: 12, center: true, value: (l) => (l.lead_grade ? GRADE_SHORT[l.lead_grade] ?? l.lead_grade : null) },
+  { header: 'Next Follow-up', width: 16, center: true, value: (l) => (l.next_follow_up_at ? new Date(l.next_follow_up_at) : null) },
+  { header: 'Owner', width: 18, value: (l) => l.owner_name || null },
+  { header: 'Source', width: 20, value: (l) => l.lead_source || null },
+  { header: 'Department', width: 16, value: (l) => getDepartmentLabel(l.department_code) },
+  { header: 'Interest', width: 12, value: (l) => l.interest_type || null },
+  { header: 'Property Type', width: 15, value: (l) => l.property_type || null },
+  { header: 'Budget', width: 26, value: (l) => l.budget_range || null },
+  { header: 'Purpose', width: 22, value: (l) => l.purpose || null },
+  { header: 'Remarks', width: 60, value: (l) => l.remarks || null },
+];
+
+const solid = (argb: string) => ({ type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb } });
+const hairline = { style: 'thin' as const, color: { argb: XL.line } };
+const xlFont = (o: Omit<Partial<Font>, 'color'> & { color?: string } = {}): Partial<Font> => ({
+  size: 10,
+  ...o,
+  color: { argb: o.color ?? XL.ink },
+});
+
+/** exceljs serialises Dates as UTC; pin to the local calendar day so Excel
+ * shows the same date the user sees in the app (Myanmar is UTC+6:30). */
+const excelDay = (d: Date) => new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+
+function isOverdue(l: Lead, now: Date) {
+  return !!l.next_follow_up_at && new Date(l.next_follow_up_at) < now && l.status !== 'sold' && l.status !== 'lost';
+}
+
+function buildLeadsSheet(wb: Workbook, leads: Lead[], now: Date) {
+  const cols = LEAD_XL_COLUMNS;
+  const ws = wb.addWorksheet('Leads', {
+    views: [{ state: 'frozen', xSplit: 2, ySplit: 1, showGridLines: false }],
+    pageSetup: {
+      paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      printTitlesRow: '1:1',
+      margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 },
+    },
+    headerFooter: { oddFooter: '&L&8PSM Sale CRM · Leads&R&8Page &P of &N' },
+  });
+  ws.columns = cols.map((c) => ({ width: c.width }));
+
+  const at = (header: string) => cols.findIndex((c) => c.header === header) + 1;
+  const align = (c: XlColumn) => ({ vertical: 'middle' as const, horizontal: c.center ? ('center' as const) : ('left' as const), indent: c.center ? 0 : 1 });
+
+  const header = ws.getRow(1);
+  header.height = 28;
+  cols.forEach((c, j) => {
+    const h = header.getCell(j + 1);
+    h.value = c.header;
+    h.font = xlFont({ bold: true });
+    h.fill = solid(XL.headerBg);
+    h.alignment = align(c);
+    h.border = { bottom: { style: 'medium', color: { argb: XL.accent } } };
+  });
+
+  leads.forEach((l, i) => {
+    const row = ws.getRow(2 + i);
+    row.height = 22;
+    cols.forEach((c, j) => {
+      const cell = row.getCell(j + 1);
+      const v = c.value(l, i);
+      cell.value = v instanceof Date ? excelDay(v) : v;
+      cell.font = xlFont();
+      cell.alignment = align(c);
+      cell.border = { bottom: hairline };
+    });
+
+    row.getCell(at('#')).font = xlFont({ color: XL.inkFaint });
+    row.getCell(at('Name')).font = xlFont({ bold: true });
+    row.getCell(at('Remarks')).font = xlFont({ color: XL.inkSoft });
+
+    const chip = (header: string, [fill, text]: Tone) => {
+      const cell = row.getCell(at(header));
+      cell.fill = solid(fill);
+      cell.font = xlFont({ bold: true, color: text });
+    };
+    chip('Status', STAGE_TONES[l.status] ?? NEUTRAL_TONE);
+    if (l.lead_grade && GRADE_TONES[l.lead_grade]) chip('Grade', GRADE_TONES[l.lead_grade]);
+
+    const follow = row.getCell(at('Next Follow-up'));
+    follow.numFmt = 'd mmm yyyy';
+    if (isOverdue(l, now)) follow.font = xlFont({ bold: true, color: XL.danger });
+  });
+
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1 + leads.length, column: cols.length } };
+}
+
 export async function exportAsExcel(leads: Lead[]) {
   if (leads.length === 0) return;
-  const XLSX = await import('xlsx');
-  const data = leads.map((l) => {
-    const row = getLeadRow(l);
-    return Object.fromEntries(EXPORT_HEADERS.map((h, i) => [h, row[i]]));
-  });
-  const ws = XLSX.utils.json_to_sheet(data);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Leads');
-  const buffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const { default: ExcelJS } = await import('exceljs');
+  const wb = new ExcelJS.Workbook();
+  const now = new Date();
+  wb.creator = 'PSM Sale CRM';
+  wb.title = 'Leads Export';
+  wb.created = now;
+
+  buildLeadsSheet(wb, leads, now);
+
+  const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   triggerDownload(blob, getExportFileName('Leads', leads.length, 'xlsx'));
 }
