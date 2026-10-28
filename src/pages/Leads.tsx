@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { supabase } from '@/db/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { MapPin, FileText, Search, Filter, Eye, Phone, Calendar, User as UserIcon, X, SlidersHorizontal, MoreVertical, PhoneCall, Navigation, Upload, Loader2, Download, FileSpreadsheet, FileCode, Trash2, CheckCircle2, XCircle, ListPlus, ArrowUpDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckSquare, Square, Snowflake } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { LEAD_STAGES, type Lead, type Profile } from '@/types';
+import { NO_SOURCE } from '@/lib/projectInsights';
+import { useEnquirySources } from '@/hooks/useEnquirySources';
+import { buildSourceGroups, categoryOfDepartment, groupOfKey, keyForSource, sourceOfKey, SOURCE_KEY_SEP } from '@/lib/sources';
+import { SourceFilterSelect } from '@/components/ManagedListSelect';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
@@ -95,6 +99,9 @@ interface LeadFilters {
   /** Raw stored spellings to match — the selected project *groups*
    * expanded to their variants (see lib/projectNames). */
   projectValues: string[];
+  /** A source filter key ("<group>::<source>", or a bare source name from a
+   * deep link), NO_SOURCE for leads with none, or 'all'. */
+  sourceFilter: string;
   deptFilter: string;
   teamFilter: string;
   agentFilter: string;
@@ -121,13 +128,16 @@ const FOLLOWUP_STAGE_VALUES = ['contacted', 'qualified', 'negotiation'];
  * three always agree on exactly what "matches the current filter" means.
  * Works on both select() and delete() builders since both support
  * eq/in/or/gte/lt. */
-function applyLeadFilters<Q extends { eq: any; in: any; or: any; gte: any; lt: any }>(query: Q, f: LeadFilters): Q {
+function applyLeadFilters<Q extends { eq: any; in: any; or: any; gte: any; lt: any; is: any }>(query: Q, f: LeadFilters): Q {
   let q = query;
 
   if (f.statusFilter === FOLLOWUP_SENTINEL) q = q.in('status', FOLLOWUP_STAGE_VALUES);
   else if (f.statusFilter !== 'all') q = q.eq('status', f.statusFilter);
   if (f.gradeFilter !== 'all') q = q.eq('lead_grade', f.gradeFilter);
   if (f.projectValues.length > 0) q = q.in('preferred_project', f.projectValues);
+  // Sources are saved from the managed list or as null, never as blank text.
+  if (f.sourceFilter === NO_SOURCE) q = q.is('lead_source', null);
+  else if (f.sourceFilter !== 'all') q = q.eq('lead_source', sourceOfKey(f.sourceFilter));
   if (f.deptFilter !== 'all') q = q.eq('department_code', f.deptFilter);
 
   if (f.teamFilter !== 'all') {
@@ -256,6 +266,7 @@ interface LeadsListUiState {
   statusFilter: string;
   gradeFilter: string;
   projectFilters: string[];
+  sourceFilter: string;
   deptFilter: string;
   teamFilter: string;
   agentFilter: string;
@@ -281,8 +292,8 @@ export default function Leads() {
   // An explicit ?status=/?grade= deep link (e.g. from a Dashboard tile) is a
   // fresh intent and should win over whatever was cached from a previous
   // visit — only fall back to the cache when arriving with no query at all.
-  const restoredState = searchParams.get('status') || searchParams.get('grade') || searchParams.get('project') ? null : cachedListState;
-  // Project Insights links here with ?project=<group>&period=…&month=…&year=…
+  const restoredState = searchParams.get('status') || searchParams.get('grade') || searchParams.get('project') || searchParams.get('source') ? null : cachedListState;
+  // Project Insights links here with ?project=<group>[&source=…]&period=…&month=…&year=…
   // so the list shows exactly the leads behind the number that was clicked.
   const urlProject = searchParams.get('project');
   const urlPeriod = searchParams.get('period');
@@ -319,6 +330,7 @@ export default function Leads() {
   const [statusFilter, setStatusFilter] = useState(() => searchParams.get('status') || restoredState?.statusFilter || 'all');
   const [gradeFilter, setGradeFilter] = useState(() => searchParams.get('grade') || restoredState?.gradeFilter || 'all');
   const [projectFilters, setProjectFilters] = useState<string[]>(() => (urlProject ? [urlProject] : restoredState?.projectFilters ?? []));
+  const [sourceFilter, setSourceFilter] = useState(() => searchParams.get('source') || restoredState?.sourceFilter || 'all');
   const [deptFilter, setDeptFilter] = useState(() => restoredState?.deptFilter ?? 'all');
   const [teamFilter, setTeamFilter] = useState(() => restoredState?.teamFilter ?? 'all');
   const [agentFilter, setAgentFilter] = useState(() => restoredState?.agentFilter ?? 'all');
@@ -361,9 +373,43 @@ export default function Leads() {
   const projectValues = useMemo(() => projectIndex.expand(projectFilters), [projectIndex, projectFilters]);
 
   const currentFilters: LeadFilters = {
-    statusFilter, gradeFilter, projectValues, deptFilter, teamFilter, agentFilter, dateFilter,
+    statusFilter, gradeFilter, projectValues, sourceFilter, deptFilter, teamFilter, agentFilter, dateFilter,
     periodRange: periodRange(), search: debouncedSearch, teamMemberIds, teamManagerId, profiles,
   };
+
+  // Same list, groups and filter control as the Enquiries page (Settings →
+  // Lead sources). Groups follow the department in view; "Other" holds
+  // values on older leads that aren't in the managed list. Counts come from
+  // the server (lead_source_counts, RLS-scoped) and refresh with the list.
+  const { byCategory: managedSources } = useEnquirySources();
+  const [sourceCounts, setSourceCounts] = useState<Map<string, number>>(new Map());
+  const loadSourceCounts = useCallback(async () => {
+    const { data, error } = await supabase.rpc('lead_source_counts');
+    if (error || !data) return;
+    setSourceCounts(new Map((data as { source: string | null; leads: number }[]).map((r) => [r.source ?? NO_SOURCE, Number(r.leads)])));
+  }, []);
+  useEffect(() => { if (user) loadSourceCounts(); }, [user?.id, loadSourceCounts]);
+  const sourceCategory = categoryOfDepartment(deptFilter !== 'all' ? deptFilter : isDepartmentScoped(role) ? department : null);
+  const sourceGroups = useMemo(() => buildSourceGroups(
+    managedSources,
+    Array.from(sourceCounts.keys()).filter((s) => s !== NO_SOURCE),
+    { condo: t('enquiries.categoryCondo'), house_land: t('enquiries.categoryHouseLand'), other: t('enquiries.otherSources') },
+    sourceCategory,
+  ), [managedSources, sourceCounts, t, sourceCategory]);
+  // Switching department can drop the selected source's group from view:
+  // move the selection to the same source in a visible group ("Boss Viber"
+  // is in both), or clear it rather than leave a filter nobody can see.
+  useEffect(() => {
+    const group = groupOfKey(sourceFilter);
+    if ((group !== 'condo' && group !== 'house_land') || sourceGroups.some((g) => g.key === group)) return;
+    const name = sourceOfKey(sourceFilter);
+    setSourceFilter(sourceGroups.some((g) => g.sources.includes(name)) ? keyForSource(name, sourceGroups) : 'all');
+  }, [sourceGroups, sourceFilter]);
+  // A bare name (deep link from Project Insights) shown as its option.
+  const sourceSelectValue = sourceFilter === 'all' || sourceFilter === NO_SOURCE || sourceFilter.includes(SOURCE_KEY_SEP)
+    ? sourceFilter
+    : keyForSource(sourceFilter, sourceGroups);
+  const sourceLabel = (s: string) => (s === NO_SOURCE ? t('leads.filter.noSource') : sourceOfKey(s));
 
   // Every staff member can be a filter option, whether or not they
   // currently own any leads — a small, always-accurate list sourced from
@@ -415,7 +461,7 @@ export default function Leads() {
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    user?.id, page, pageSize, sortBy, statusFilter, gradeFilter, projectValues, deptFilter,
+    user?.id, page, pageSize, sortBy, statusFilter, gradeFilter, projectValues, sourceFilter, deptFilter,
     teamFilter, agentFilter, dateFilter, period, selectedMonth, selectedYear, debouncedSearch,
     teamMemberIds, teamManagerId, profiles,
   ]);
@@ -430,7 +476,7 @@ export default function Leads() {
     let debounceTimer: ReturnType<typeof setTimeout>;
     const debouncedRefetch = () => {
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => fetchLeadsRef.current(), 400);
+      debounceTimer = setTimeout(() => { fetchLeadsRef.current(); loadSourceCounts(); }, 400);
     };
     const channel = supabase
       .channel('leads-list')
@@ -471,16 +517,16 @@ export default function Leads() {
     setPage(1);
     setSelectedLeads(new Map());
     setSelectAllMatchingActive(false);
-  }, [debouncedSearch, statusFilter, gradeFilter, projectFilters, deptFilter, teamFilter, agentFilter, dateFilter, period, selectedMonth, selectedYear, sortBy, pageSize]);
+  }, [debouncedSearch, statusFilter, gradeFilter, projectFilters, sourceFilter, deptFilter, teamFilter, agentFilter, dateFilter, period, selectedMonth, selectedYear, sortBy, pageSize]);
 
   // Persist the current filter/sort/pagination state so it can be restored
   // if the user navigates to a lead's detail page and back.
   useEffect(() => {
     cachedListState = {
-      searchQuery, statusFilter, gradeFilter, projectFilters, deptFilter, teamFilter,
+      searchQuery, statusFilter, gradeFilter, projectFilters, sourceFilter, deptFilter, teamFilter,
       agentFilter, dateFilter, sortBy, page, pageSize, period, selectedMonth, selectedYear,
     };
-  }, [searchQuery, statusFilter, gradeFilter, projectFilters, deptFilter, teamFilter, agentFilter, dateFilter, sortBy, page, pageSize, period, selectedMonth, selectedYear]);
+  }, [searchQuery, statusFilter, gradeFilter, projectFilters, sourceFilter, deptFilter, teamFilter, agentFilter, dateFilter, sortBy, page, pageSize, period, selectedMonth, selectedYear]);
 
   // Skips its first run too — on mount totalCount hasn't loaded yet
   // (it starts at 0, so totalPages is briefly 1), which would otherwise
@@ -884,9 +930,9 @@ export default function Leads() {
                     >
                       <SlidersHorizontal className="w-4 h-4" />
                       {t('leads.filters')}
-                      {(statusFilter !== 'all' || gradeFilter !== 'all' || projectFilters.length > 0 || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all') && (
+                      {(statusFilter !== 'all' || gradeFilter !== 'all' || projectFilters.length > 0 || sourceFilter !== 'all' || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all') && (
                         <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
-                          {[statusFilter, gradeFilter, deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0)}
+                          {[statusFilter, gradeFilter, sourceFilter, deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0)}
                         </span>
                       )}
                     </button>
@@ -906,6 +952,7 @@ export default function Leads() {
                       statusFilter={statusFilter} setStatusFilter={setStatusFilter}
                       gradeFilter={gradeFilter} setGradeFilter={setGradeFilter}
                       projectFilters={projectFilters} setProjectFilters={setProjectFilters} toggleProjectFilter={toggleProjectFilter}
+                      sourceFilter={sourceSelectValue} setSourceFilter={setSourceFilter} sourceGroups={sourceGroups} sourceCounts={sourceCounts}
                       deptFilter={deptFilter} setDeptFilter={setDeptFilter}
                       teamFilter={teamFilter} setTeamFilter={setTeamFilter}
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
@@ -927,9 +974,9 @@ export default function Leads() {
                   >
                     <SlidersHorizontal className="w-4 h-4" />
                     <span className="hidden sm:inline">{t('leads.filters')}</span>
-                    {(statusFilter !== 'all' || gradeFilter !== 'all' || projectFilters.length > 0 || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all' || dateFilter) && (
+                    {(statusFilter !== 'all' || gradeFilter !== 'all' || projectFilters.length > 0 || sourceFilter !== 'all' || deptFilter !== 'all' || teamFilter !== 'all' || agentFilter !== 'all' || dateFilter) && (
                       <span className="w-4 h-4 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
-                        {[statusFilter, gradeFilter, deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0) + (dateFilter ? 1 : 0)}
+                        {[statusFilter, gradeFilter, sourceFilter, deptFilter, teamFilter, agentFilter].filter((f) => f !== 'all').length + (projectFilters.length > 0 ? 1 : 0) + (dateFilter ? 1 : 0)}
                       </span>
                     )}
                   </button>
@@ -945,6 +992,7 @@ export default function Leads() {
                       statusFilter={statusFilter} setStatusFilter={setStatusFilter}
                       gradeFilter={gradeFilter} setGradeFilter={setGradeFilter}
                       projectFilters={projectFilters} setProjectFilters={setProjectFilters} toggleProjectFilter={toggleProjectFilter}
+                      sourceFilter={sourceSelectValue} setSourceFilter={setSourceFilter} sourceGroups={sourceGroups} sourceCounts={sourceCounts}
                       deptFilter={deptFilter} setDeptFilter={setDeptFilter}
                       teamFilter={teamFilter} setTeamFilter={setTeamFilter}
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
@@ -970,6 +1018,7 @@ export default function Leads() {
               {[
                 ['status', statusFilter, setStatusFilter, statusFilter !== 'all' ? stageLabel(statusFilter, t, lang) : ''],
                 ['grade', gradeFilter, setGradeFilter, gradeFilter !== 'all' ? `${t('leads.filter.gradePrefix')} ${gradeFilter}` : ''],
+                ['source', sourceFilter, setSourceFilter, sourceFilter !== 'all' ? sourceLabel(sourceFilter) : ''],
                 ['dept', deptFilter, setDeptFilter, deptFilter !== 'all' ? getDepartmentLabel(deptFilter) : ''],
                 ['team', teamFilter, setTeamFilter, teamFilter !== 'all' ? (teamOptions.find((tm) => tm.id === teamFilter)?.name || '') : ''],
                 ['agent', agentFilter, setAgentFilter, agentFilter],
@@ -1424,7 +1473,7 @@ export default function Leads() {
   );
 }
 
-function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilter, projectFilters, toggleProjectFilter, setProjectFilters, deptFilter, setDeptFilter, teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter, sortBy, setSortBy, uniqueAgents, projectGroups, departments, teamOptions, showDept = true, showSortDate = true }: any) {
+function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilter, projectFilters, toggleProjectFilter, setProjectFilters, sourceFilter, setSourceFilter, sourceGroups, sourceCounts, deptFilter, setDeptFilter, teamFilter, setTeamFilter, agentFilter, setAgentFilter, dateFilter, setDateFilter, sortBy, setSortBy, uniqueAgents, projectGroups, departments, teamOptions, showDept = true, showSortDate = true }: any) {
   const { t, lang } = useTranslation();
   return (
     <>
@@ -1452,6 +1501,10 @@ function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilt
         </Select>
       </div>
       <ProjectFilterList groups={projectGroups} selected={projectFilters} onToggle={toggleProjectFilter} onClear={() => setProjectFilters([])} />
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-foreground">{t('leads.filter.source')}</label>
+        <SourceFilterSelect value={sourceFilter} onChange={setSourceFilter} groups={sourceGroups} counts={sourceCounts} allLabel={t('leads.filter.allSources')} includeNone className="w-full h-12" />
+      </div>
       {showDept && (
         <div className="space-y-2">
           <label className="text-sm font-medium text-foreground">{t('leads.filter.department')}</label>

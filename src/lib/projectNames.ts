@@ -316,3 +316,43 @@ export function groupMatchesQuery(group: ProjectGroup, query: string): boolean {
     return key.includes(q) || (q.length >= 5 && approxSubstringDistance(q, key, maxEdits(q.length)) <= maxEdits(q.length));
   });
 }
+
+/* ───────────────────────── preferred-project field ───────────────────────── */
+
+/** Suggestions for a typed preferred project, best first: `curated` names
+ * (Settings → Projects), then the canonical name of each lead project group
+ * by popularity — typo-tolerant, one per project, never the value itself.
+ * An empty value offers the curated list as quick picks. Shared by every
+ * preferred-project field (ProjectNameInput). */
+export function suggestProjects(value: string, curated: string[], groups: ProjectGroup[], limit = 8): { name: string; curated: boolean }[] {
+  const key = projectKey(value);
+  const seen = new Set<string>();
+  const out: { name: string; curated: boolean }[] = [];
+  const push = (name: string, isCurated: boolean) => {
+    const clean = name.trim();
+    const k = projectKey(clean);
+    if (!k || seen.has(k) || k === key) return;
+    seen.add(k);
+    out.push({ name: clean, curated: isCurated });
+  };
+  if (!key) {
+    curated.slice(0, limit).forEach((n) => push(n, true));
+    return out;
+  }
+  for (const n of curated) if (groupMatchesQuery({ label: n, variants: [n], count: 0 }, value)) push(n, true);
+  for (const g of [...groups].sort((a, b) => b.count - a.count)) if (groupMatchesQuery(g, value)) push(g.label, false);
+  return out.slice(0, limit);
+}
+
+/** The spelling to save for a typed preferred project: single-spaced and
+ * trimmed, and — if it's a known project ignoring case and spacing — that
+ * project's own spelling (curated first), so "dagon landmark residence "
+ * saves as "Dagon Landmark Residence". */
+export function canonicalProjectName(value: string, curated: string[], groups: ProjectGroup[]): string {
+  const clean = value.trim().replace(/\s+/g, ' ');
+  const key = projectKey(clean);
+  if (!key) return clean;
+  return curated.find((n) => projectKey(n) === key)
+    ?? groups.find((g) => projectKey(g.label) === key)?.label.trim()
+    ?? clean;
+}

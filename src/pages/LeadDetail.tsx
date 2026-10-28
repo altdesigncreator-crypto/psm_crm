@@ -19,9 +19,11 @@ import {
 } from '@/components/ui/alert-dialog';
 import {
   FOLLOWUP_TYPES, FOLLOWUP_STATUSES, LEAD_STAGES, WARNING_REASONS, getGradeForFollowUpStatus,
-  INTEREST_TYPES, PROPERTY_TYPES, PURPOSES, LEAD_SOURCES,
+  INTEREST_TYPES, PROPERTY_TYPES, PURPOSES,
   type Lead, type FollowUp, type Warning as WarningRecord,
 } from '@/types';
+import { SourcePicker } from '@/components/ManagedListSelect';
+import { categoryOfDepartment } from '@/lib/sources';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
 import StorageImage from '@/components/StorageImage';
@@ -36,7 +38,7 @@ import { canEditLead, canAddFollowUp, canAssignLead, canIssueWarning, canMonitor
 import { supabase } from '@/db/supabase';
 import { toast } from 'sonner';
 import StatusBadge from '@/components/StatusBadge';
-import ProjectNameInput from '@/components/ProjectNameInput';
+import ProjectNameInput, { normalizeProjectName } from '@/components/ProjectNameInput';
 import SaleDetailsDialog from '@/components/SaleDetailsDialog';
 import { invalidateProjectNames } from '@/hooks/useProjectNames';
 import { formatKyat, formatLakh } from '@/lib/sales';
@@ -206,6 +208,10 @@ export default function LeadDetail() {
   const canDelete = canDeleteLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
   const canManagePhotos = canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id }) || lead.created_by === user?.id;
 
+  // Converted from an enquiry: the database keeps lead_source equal to the
+  // enquiry's source (guard_lead_source), so the field is read-only here.
+  const sourceLocked = !!lead.source_enquiry_id;
+
   const startEdit = () => {
     setEditForm({
       name: lead.name || '', phone: lead.phone || '', email: lead.email || '', current_location: lead.current_location || '',
@@ -227,10 +233,11 @@ export default function LeadDetail() {
       current_location: editForm.current_location.trim() || null,
       interest_type: editForm.interest_type || null,
       property_type: editForm.property_type || null,
-      preferred_project: editForm.preferred_project.trim() || null,
+      preferred_project: normalizeProjectName(editForm.preferred_project) || null,
       budget_range: editForm.budget_range.trim() || null,
       purpose: editForm.purpose || null,
-      lead_source: editForm.lead_source || null,
+      // A linked lead's source belongs to its enquiry — don't send it.
+      ...(sourceLocked ? {} : { lead_source: editForm.lead_source || null }),
       remarks: editForm.remarks.trim() || null,
     };
     const { error } = await supabase.from('leads').update(patch).eq('id', lead.id);
@@ -653,7 +660,7 @@ export default function LeadDetail() {
                       </Select>
                     </EditField>
                     <EditField label={t('addLead.preferredProject')} icon={<Building2 className="w-4 h-4" />}>
-                      <ProjectNameInput value={editForm.preferred_project} onChange={(v) => setEditForm((f) => ({ ...f, preferred_project: v }))} className="h-10" />
+                      <ProjectNameInput value={editForm.preferred_project} onChange={(v) => setEditForm((f) => ({ ...f, preferred_project: v }))} category={categoryOfDepartment(lead.department_code)} placeholder={t('addLead.enterProjectName')} className="h-10" />
                     </EditField>
                     <EditField label={t('addLead.budget')} icon={<DollarSign className="w-4 h-4" />}>
                       <Input value={editForm.budget_range} onChange={(e) => setEditForm((f) => ({ ...f, budget_range: e.target.value }))} className="h-10" />
@@ -665,10 +672,11 @@ export default function LeadDetail() {
                       </Select>
                     </EditField>
                     <EditField label={t('leadDetail.source')} icon={<TrendingUp className="w-4 h-4" />}>
-                      <Select value={editForm.lead_source} onValueChange={(v) => setEditForm((f) => ({ ...f, lead_source: v }))}>
-                        <SelectTrigger className="h-10"><SelectValue placeholder={t('addLead.selectSource')} /></SelectTrigger>
-                        <SelectContent>{LEAD_SOURCES.map((s) => (<SelectItem key={s} value={s}>{s}</SelectItem>))}</SelectContent>
-                      </Select>
+                      <SourcePicker
+                        value={editForm.lead_source} onChange={(v) => setEditForm((f) => ({ ...f, lead_source: v }))}
+                        category={categoryOfDepartment(lead.department_code)} disabled={sourceLocked} className="h-10"
+                      />
+                      {sourceLocked && <p className="text-[11px] text-muted-foreground mt-1">{t('leadDetail.sourceLocked')}</p>}
                     </EditField>
                   </div>
                   <Separator className="my-3" />

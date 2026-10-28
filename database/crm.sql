@@ -2063,5 +2063,459 @@ create policy push_subscriptions_delete on public.push_subscriptions for delete
   to authenticated using (auth.uid() = user_id);
 
 -- =============================================================================
+-- 19. ENQUIRY SOURCES — managed in Settings → Enquiry sources (Manager+).
+-- Mirrors supabase/migrations/20261024120000_enquiry_sources.sql; see that
+-- file's header for the design notes. enquiries.source stays free text.
+-- =============================================================================
+
+-- 1. Table -------------------------------------------------------------------
+
+create table if not exists public.enquiry_sources (
+  id          uuid primary key default gen_random_uuid(),
+  category    text not null check (category in ('condo', 'house_land')),
+  name        text not null check (name = btrim(name) and length(name) between 1 and 80),
+  sort_order  integer not null default 0,
+  is_active   boolean not null default true,
+  created_by  uuid references public.profiles(id) on delete set null default auth.uid(),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+-- "ACTY Facebook" and "acty facebook" are the same source.
+create unique index if not exists enquiry_sources_category_name_key
+  on public.enquiry_sources (category, lower(name));
+create index if not exists enquiry_sources_category_order_idx
+  on public.enquiry_sources (category, sort_order);
+
+drop trigger if exists trg_enquiry_sources_updated_at on public.enquiry_sources;
+create trigger trg_enquiry_sources_updated_at before update on public.enquiry_sources
+  for each row execute function public.set_updated_at();
+
+-- 2. RLS ---------------------------------------------------------------------
+
+alter table public.enquiry_sources enable row level security;
+
+drop policy if exists enquiry_sources_select on public.enquiry_sources;
+create policy enquiry_sources_select on public.enquiry_sources for select
+  to authenticated using (true);
+
+drop policy if exists enquiry_sources_insert on public.enquiry_sources;
+create policy enquiry_sources_insert on public.enquiry_sources for insert
+  to authenticated with check (public.is_manager_or_above());
+
+drop policy if exists enquiry_sources_update on public.enquiry_sources;
+create policy enquiry_sources_update on public.enquiry_sources for update
+  to authenticated using (public.is_manager_or_above()) with check (public.is_manager_or_above());
+
+drop policy if exists enquiry_sources_delete on public.enquiry_sources;
+create policy enquiry_sources_delete on public.enquiry_sources for delete
+  to authenticated using (public.is_manager_or_above());
+
+-- 3. Reorder in one atomic statement -----------------------------------------
+-- Takes a category's ids in their new order. Security invoker, so the update
+-- policy above still decides who may call it to any effect.
+
+create or replace function public.reorder_enquiry_sources(p_category text, p_ids uuid[])
+returns void
+language sql security invoker set search_path = public as $$
+  update public.enquiry_sources s
+  set sort_order = x.ord * 10
+  from unnest(p_ids) with ordinality as x(id, ord)
+  where s.id = x.id and s.category = p_category;
+$$;
+
+grant execute on function public.reorder_enquiry_sources(text, uuid[]) to authenticated;
+
+-- 4. Audit trail -------------------------------------------------------------
+-- Logged in the database so every write path is covered, not just the UI.
+-- Reorders only touch sort_order and aren't worth a row each.
+
+create or replace function public.audit_enquiry_sources() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'UPDATE'
+     and new.name = old.name and new.category = old.category and new.is_active = old.is_active then
+    return new;
+  end if;
+
+  insert into public.audit_logs (action, target_table, target_id, performed_by, old_value, new_value)
+  values (
+    'enquiry_source_' || lower(tg_op),
+    'enquiry_sources',
+    coalesce(new.id, old.id),
+    auth.uid(),
+    case when tg_op <> 'INSERT' then jsonb_build_object('name', old.name, 'category', old.category, 'is_active', old.is_active) end,
+    case when tg_op <> 'DELETE' then jsonb_build_object('name', new.name, 'category', new.category, 'is_active', new.is_active) end
+  );
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists trg_enquiry_sources_audit on public.enquiry_sources;
+create trigger trg_enquiry_sources_audit after insert or update or delete on public.enquiry_sources
+  for each row execute function public.audit_enquiry_sources();
+
+-- 5. Realtime: open pickers update as soon as a source is added or hidden ----
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'enquiry_sources'
+  ) then
+    execute 'alter publication supabase_realtime add table public.enquiry_sources';
+  end if;
+end $$;
+
+-- 6. Seed: today's lists, in their current order, plus the new sources -------
+-- created_by is null for seeded rows (no auth.uid() in a migration), and the
+-- audit trigger is paused so seeding doesn't log dozens of anonymous rows.
+
+alter table public.enquiry_sources disable trigger trg_enquiry_sources_audit;
+
+insert into public.enquiry_sources (category, name, sort_order, created_by)
+select 'condo', name, ord * 10, null
+from unnest(array[
+  'Condo Channel Facebook',
+  'Condo Listing Facebook',
+  'PSM Properties Original Facebook',
+  'PSM Properties New Facebook',
+  'DLM Facebook',
+  'BHG Facebook',
+  'Property Seeker Facebook',
+  'ACTY Facebook',
+  'Condo Channel Tiktok',
+  'PSM Properties Original Tiktok',
+  'Property Seeker Tiktok',
+  'ACTY TikTok',
+  'Boss Phone',
+  'Boss Viber',
+  'DLM WalkIn',
+  'BHG WalkIn',
+  'DLM Hotline',
+  'BHG Hotline',
+  'House Hotline',
+  'Condo Hotline',
+  'PTZ Hotline',
+  'ACTY Hotline',
+  'Production Department',
+  'Marketing Department',
+  'AI Department',
+  'Open Verse',
+  'Own Enquiry',
+  'From Latt Latt Aung',
+  'From Min Pyae'
+]) with ordinality as s(name, ord)
+on conflict do nothing;
+
+insert into public.enquiry_sources (category, name, sort_order, created_by)
+select 'house_land', name, ord * 10, null
+from unnest(array[
+  'House&Land Listing',
+  'House Channel',
+  'PSM Property (BL)',
+  'PSM Property',
+  'Property Seeker',
+  'House Channel Tiktok',
+  'PSM Property Tiktok',
+  'IMyanmarHouse',
+  'Office Ph Call',
+  'Boss Ph Call',
+  'Boss Viber',
+  'Production Department',
+  'Marketing Department',
+  'AI Department',
+  'Open Verse',
+  'Own Enquiry',
+  'From Latt Latt Aung',
+  'From Min Pyae'
+]) with ordinality as s(name, ord)
+on conflict do nothing;
+
+alter table public.enquiry_sources enable trigger trg_enquiry_sources_audit;
+
+-- =============================================================================
+-- 20. ONE SOURCE LIST FOR ENQUIRIES AND LEADS — a converted lead's source is
+-- its enquiry's, kept in sync by triggers. Mirrors
+-- supabase/migrations/20261024130000_unified_lead_sources.sql (see its header).
+-- =============================================================================
+
+-- 1. The link ------------------------------------------------------------------
+
+alter table public.leads
+  add column if not exists source_enquiry_id uuid references public.enquiries(id) on delete set null;
+
+create index if not exists idx_leads_source_enquiry on public.leads(source_enquiry_id) where source_enquiry_id is not null;
+
+-- 2. Lead guard: a linked lead's source is its enquiry's ---------------------
+-- source_enquiry_id is server-owned: only sync_lead_source_from_enquiry()
+-- (which raises the app.syncing_lead_source flag) may set or change it, so a
+-- client can neither forge a link nor break one.
+
+create or replace function public.guard_lead_source() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_source text;
+begin
+  if coalesce(current_setting('app.syncing_lead_source', true), '') <> 'on' then
+    new.source_enquiry_id := case when tg_op = 'UPDATE' then old.source_enquiry_id end;
+  end if;
+
+  if new.source_enquiry_id is not null then
+    select source into v_source from public.enquiries where id = new.source_enquiry_id;
+    -- An enquiry saved without a source doesn't erase what the lead has.
+    if v_source is not null then
+      new.lead_source := v_source;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_leads_guard_source on public.leads;
+create trigger trg_leads_guard_source before insert or update of lead_source, source_enquiry_id on public.leads
+  for each row execute function public.guard_lead_source();
+
+-- 3. Enquiry → lead sync -------------------------------------------------------
+-- Fires when an enquiry is converted (converted_lead_id set) and whenever its
+-- source is edited afterwards. If a second enquiry is ever converted into
+-- the same lead, the most recent conversion wins.
+
+create or replace function public.sync_lead_source_from_enquiry() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform set_config('app.syncing_lead_source', 'on', true);
+
+  if tg_op = 'UPDATE' and old.converted_lead_id is not null
+     and old.converted_lead_id is distinct from new.converted_lead_id then
+    update public.leads set source_enquiry_id = null
+    where id = old.converted_lead_id and source_enquiry_id = new.id;
+  end if;
+
+  if new.converted_lead_id is not null then
+    update public.leads
+    set source_enquiry_id = new.id, lead_source = coalesce(new.source, lead_source)
+    where id = new.converted_lead_id
+      and (source_enquiry_id is distinct from new.id or lead_source is distinct from coalesce(new.source, lead_source));
+  end if;
+
+  perform set_config('app.syncing_lead_source', 'off', true);
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_enquiries_sync_lead_source on public.enquiries;
+create trigger trg_enquiries_sync_lead_source after insert or update of source, converted_lead_id on public.enquiries
+  for each row execute function public.sync_lead_source_from_enquiry();
+
+-- 4. Source counts for the Leads filter ---------------------------------------
+-- Security invoker: counts only the leads the caller can see.
+
+create or replace function public.lead_source_counts()
+returns table (source text, leads bigint)
+language sql stable security invoker set search_path = public as $$
+  select lead_source, count(*) from public.leads group by lead_source;
+$$;
+
+grant execute on function public.lead_source_counts() to authenticated;
+
+-- 5. One-time backfill ---------------------------------------------------------
+-- Link every converted lead to its (earliest) enquiry and take that
+-- enquiry's source. Each overwritten value is kept in audit_logs first, so
+-- the change is fully reviewable and reversible. updated_at is left alone:
+-- this is a data correction, not an edit, and Sold attribution falls back
+-- to updated_at for older sales. One block, so the sync flag and the paused
+-- trigger can't leak past it however the file is executed.
+
+do $backfill$
+begin
+  alter table public.leads disable trigger trg_leads_updated_at;
+
+  create temp table _first_enquiry on commit drop as
+  select distinct on (converted_lead_id) id, converted_lead_id, source, enquiry_no
+  from public.enquiries
+  where converted_lead_id is not null
+  order by converted_lead_id, created_at, id;
+
+  insert into public.audit_logs (action, target_table, target_id, performed_by, old_value, new_value, notes)
+  select 'lead_source_synced', 'leads', l.id, null,
+         jsonb_build_object('lead_source', l.lead_source),
+         jsonb_build_object('lead_source', e.source, 'enquiry_no', e.enquiry_no),
+         'One-time alignment of lead source with its enquiry (20261024130000_unified_lead_sources)'
+  from public.leads l
+  join _first_enquiry e on e.converted_lead_id = l.id
+  where e.source is not null and l.lead_source is distinct from e.source
+    and l.source_enquiry_id is null;
+
+  -- Setting the link fires guard_lead_source(), which copies the source.
+  perform set_config('app.syncing_lead_source', 'on', true);
+  update public.leads l
+  set source_enquiry_id = e.id
+  from _first_enquiry e
+  where e.converted_lead_id = l.id and l.source_enquiry_id is null;
+  perform set_config('app.syncing_lead_source', 'off', true);
+
+  drop table _first_enquiry;
+  alter table public.leads enable trigger trg_leads_updated_at;
+end
+$backfill$;
+
+-- =============================================================================
+-- 21. ENQUIRY PREFERRED PROJECT + MANAGED PROJECT LIST (Settings → Projects).
+-- Mirrors supabase/migrations/20261024140000_enquiry_preferred_project.sql.
+-- =============================================================================
+
+-- 1. The enquiry field ----------------------------------------------------------
+
+alter table public.enquiries
+  add column if not exists preferred_project text;
+
+alter table public.enquiries drop constraint if exists enquiries_preferred_project_check;
+alter table public.enquiries
+  add constraint enquiries_preferred_project_check
+  check (preferred_project is null or (preferred_project = btrim(preferred_project) and length(preferred_project) between 1 and 120));
+
+-- 2. The list -----------------------------------------------------------------
+
+create table if not exists public.projects (
+  id          uuid primary key default gen_random_uuid(),
+  category    text not null check (category in ('condo', 'house_land')),
+  name        text not null check (name = btrim(name) and length(name) between 1 and 120),
+  sort_order  integer not null default 0,
+  is_active   boolean not null default true,
+  created_by  uuid references public.profiles(id) on delete set null default auth.uid(),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create unique index if not exists projects_category_name_key on public.projects (category, lower(name));
+create index if not exists projects_category_order_idx on public.projects (category, sort_order);
+
+drop trigger if exists trg_projects_updated_at on public.projects;
+create trigger trg_projects_updated_at before update on public.projects
+  for each row execute function public.set_updated_at();
+
+-- 3. RLS: everyone reads, Manager and above write -----------------------------
+
+alter table public.projects enable row level security;
+
+drop policy if exists projects_select on public.projects;
+create policy projects_select on public.projects for select
+  to authenticated using (true);
+
+drop policy if exists projects_insert on public.projects;
+create policy projects_insert on public.projects for insert
+  to authenticated with check (public.is_manager_or_above());
+
+drop policy if exists projects_update on public.projects;
+create policy projects_update on public.projects for update
+  to authenticated using (public.is_manager_or_above()) with check (public.is_manager_or_above());
+
+drop policy if exists projects_delete on public.projects;
+create policy projects_delete on public.projects for delete
+  to authenticated using (public.is_manager_or_above());
+
+-- 4. Reorder in one atomic statement (security invoker: RLS decides) ----------
+
+create or replace function public.reorder_projects(p_category text, p_ids uuid[])
+returns void
+language sql security invoker set search_path = public as $$
+  update public.projects p
+  set sort_order = x.ord * 10
+  from unnest(p_ids) with ordinality as x(id, ord)
+  where p.id = x.id and p.category = p_category;
+$$;
+
+grant execute on function public.reorder_projects(text, uuid[]) to authenticated;
+
+-- 5. Audit trail — same rules as enquiry_sources: every add, rename, hide/show
+-- and delete, with who did it; reorders aren't logged.
+
+create or replace function public.audit_projects() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'UPDATE'
+     and new.name = old.name and new.category = old.category and new.is_active = old.is_active then
+    return new;
+  end if;
+
+  insert into public.audit_logs (action, target_table, target_id, performed_by, old_value, new_value)
+  values (
+    'project_' || lower(tg_op),
+    'projects',
+    coalesce(new.id, old.id),
+    auth.uid(),
+    case when tg_op <> 'INSERT' then jsonb_build_object('name', old.name, 'category', old.category, 'is_active', old.is_active) end,
+    case when tg_op <> 'DELETE' then jsonb_build_object('name', new.name, 'category', new.category, 'is_active', new.is_active) end
+  );
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists trg_projects_audit on public.projects;
+create trigger trg_projects_audit after insert or update or delete on public.projects
+  for each row execute function public.audit_projects();
+
+-- 6. Realtime ------------------------------------------------------------------
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'projects'
+  ) then
+    execute 'alter publication supabase_realtime add table public.projects';
+  end if;
+end $$;
+
+-- 7. Seed: the projects leads actually ask for (5+ leads each), filed under
+-- the department most of their leads belong to, busiest first. Plot sizes,
+-- open-house events and street addresses are left out — they aren't projects.
+
+alter table public.projects disable trigger trg_projects_audit;
+
+insert into public.projects (category, name, sort_order, created_by)
+select 'condo', name, ord * 10, null
+from unnest(array[
+  'Dagon Landmark Residence',
+  'Perfect Signature Residence',
+  'Ba Htoo Gyi Condo',
+  'The Century Condo',
+  'Aung Zay Ya City',
+  'Aye Chan Thar Yar Condo',
+  'Lilie''s Apartment',
+  'Einzali Residence',
+  'Emerald Bay',
+  'Aung Chanthar Condo',
+  'MTP Condo',
+  '65K Residence',
+  'GRC Condo',
+  'Royal Theikdi Condo',
+  'Pinlon Village Residence',
+  'My Condo Residence',
+  'ERC Condo',
+  'KER Condo',
+  'Topaz Condo (Bahan)',
+  'Residence 18',
+  'Mahar Swe Condo',
+  'Yankin Condo'
+]) with ordinality as s(name, ord)
+on conflict do nothing;
+
+insert into public.projects (category, name, sort_order, created_by)
+select 'house_land', name, ord * 10, null
+from unnest(array[
+  'North Dagon',
+  'Orchard',
+  'Shwe Padauk Avenue',
+  'South Dagon',
+  'Mayangone',
+  'Hlaing Tharyar'
+]) with ordinality as s(name, ord)
+on conflict do nothing;
+
+alter table public.projects enable trigger trg_projects_audit;
+
+-- =============================================================================
 -- End of database/crm.sql
 -- =============================================================================

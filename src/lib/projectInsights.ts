@@ -8,14 +8,18 @@ import { soldDateOf } from '@/lib/soldDate';
  * Attribution rules, in order of trust:
  *   Leads      → their preferred_project, folded into project groups.
  *   Enquiries  → (1) the project of the lead they were converted into;
- *                (2) otherwise a project named in the enquiry's message;
- *                (3) otherwise "unattributed" — counted in totals, never
+ *                (2) otherwise the Preferred project picked on the enquiry;
+ *                (3) otherwise a project named in the enquiry's message;
+ *                (4) otherwise "unattributed" — counted in totals, never
  *                    guessed into a project.
  * A row naming several projects counts once toward each of them, so
  * per-project figures can sum to more than the overall total. */
 
 export interface InsightLead {
   id: string;
+  name: string;
+  phone: string | null;
+  owner_id: string | null;
   preferred_project: string | null;
   lead_source: string | null;
   status: string;
@@ -28,15 +32,22 @@ export interface InsightLead {
 
 export interface InsightEnquiry {
   id: string;
+  enquiry_no: string;
+  name: string;
+  phone: string | null;
+  assigned_to: string | null;
   source: string | null;
+  preferred_project: string | null;
   message: string | null;
   status: string;
   converted_lead_id: string | null;
   created_at: string;
 }
 
-export const LEAD_COLUMNS = 'id,preferred_project,lead_source,status,lead_grade,sale_amount,created_at,updated_at,sold_at';
-export const ENQUIRY_COLUMNS = 'id,source,message,status,converted_lead_id,created_at';
+// name/phone/owner columns are only for listing the records behind a
+// number (the drill-down) — the analysis itself never reads them.
+export const LEAD_COLUMNS = 'id,name,phone,owner_id,preferred_project,lead_source,status,lead_grade,sale_amount,created_at,updated_at,sold_at';
+export const ENQUIRY_COLUMNS = 'id,enquiry_no,name,phone,assigned_to,source,preferred_project,message,status,converted_lead_id,created_at';
 
 /** Sentinel group for leads with no project / unmatched enquiries. */
 export const UNSPECIFIED = '__unspecified__';
@@ -45,15 +56,16 @@ export const NO_SOURCE = '__no_source__';
 
 export type DateRange = { gte: string; lt: string } | null;
 
-export type EnquiryAttribution = { labels: string[]; via: 'lead' | 'message' | null };
+export type EnquiryAttribution = { labels: string[]; via: 'lead' | 'project' | 'message' | null };
 
 /** Which project(s) an enquiry is about — the single rule shared by the
  * Project Insights page and the Enquiries page's Project filter, so the
- * two can never disagree. The converted lead's project wins over the
- * message (a message mentioning Orchard that became a Shwe Padauk lead is
- * a Shwe Padauk enquiry); unattributed enquiries get UNSPECIFIED. */
+ * two can never disagree. The converted lead's project wins (a Shwe Padauk
+ * enquiry that became an Orchard lead is an Orchard enquiry), then the
+ * project picked on the enquiry, then one named in the message;
+ * unattributed enquiries get UNSPECIFIED. */
 export function attributeEnquiry(
-  enq: { message?: string | null; converted_lead_id?: string | null },
+  enq: { message?: string | null; preferred_project?: string | null; converted_lead_id?: string | null },
   projectOfLead: (leadId: string) => string | null | undefined,
   index: ProjectIndex,
 ): EnquiryAttribution {
@@ -61,10 +73,74 @@ export function attributeEnquiry(
     const viaLead = index.groupsOf(projectOfLead(enq.converted_lead_id));
     if (viaLead.length > 0) return { labels: viaLead, via: 'lead' };
   }
+  const picked = enq.preferred_project?.trim();
+  if (picked) {
+    // Fold into the same group its leads use ("The Century Condo" joins the
+    // leads typed "The Century Condo "); a project with no leads yet keeps
+    // its own name.
+    const groups = index.groupsOf(picked);
+    const labels = groups.length > 0 ? groups : index.detectIn(picked);
+    return { labels: labels.length > 0 ? labels : [picked], via: 'project' };
+  }
   const viaMessage = index.detectIn(enq.message);
   if (viaMessage.length > 0) return { labels: viaMessage, via: 'message' };
   return { labels: [UNSPECIFIED], via: null };
 }
+
+/** Why an enquiry counted in the period has no matching lead in the same
+ * project and period. */
+export type EnquiryOnlyReason =
+  | 'open'            // not converted yet — still pending/accepted
+  | 'closedNoLead'    // completed without ever becoming a lead
+  | 'leadOtherPeriod' // converted, but the lead was created outside the period
+  | 'leadNoProject'   // converted into a lead with no preferred project
+  | 'leadHidden'      // converted into a lead the viewer can't see
+  | 'duplicate';      // a second enquiry converted into the same lead
+
+/** Why a lead counted in the period has no matching enquiry in the same
+ * project and period. */
+export type LeadOnlyReason =
+  | 'noEnquiry'           // added directly, or its enquiry isn't visible
+  | 'enquiryOtherPeriod'  // its enquiry arrived outside the period
+  | 'enquiryOtherProject'; // its enquiry is counted under another project
+
+/** Display order: most common and most actionable first. */
+export const ENQUIRY_ONLY_REASONS: EnquiryOnlyReason[] = ['open', 'closedNoLead', 'leadOtherPeriod', 'leadNoProject', 'duplicate', 'leadHidden'];
+export const LEAD_ONLY_REASONS: LeadOnlyReason[] = ['noEnquiry', 'enquiryOtherPeriod', 'enquiryOtherProject'];
+
+/** How an enquiry count and a lead count relate. The two are counted
+ * independently — enquiries by when they arrived, leads by when they were
+ * created — so they rarely match. This splits both into the customers they
+ * share and the reasons each side has extra. Every counted record lands in
+ * exactly one bucket, so by construction:
+ *   enquiries = shared + duplicate + Σ other enquiryOnly
+ *   leads     = shared + Σ leadOnly */
+export interface Reconciliation {
+  /** Leads in the period created from an enquiry counted alongside them. */
+  shared: number;
+  enquiryOnly: Record<EnquiryOnlyReason, number>;
+  leadOnly: Record<LeadOnlyReason, number>;
+  /** The records behind every number above, so each one can be opened:
+   * lead ids for `shared` and `leadOnly`, enquiry ids for `enquiryOnly`. */
+  members: {
+    shared: string[];
+    enquiryOnly: Record<EnquiryOnlyReason, string[]>;
+    leadOnly: Record<LeadOnlyReason, string[]>;
+  };
+}
+
+const emptyReconciliation = (): Reconciliation => ({
+  shared: 0,
+  enquiryOnly: { open: 0, closedNoLead: 0, leadOtherPeriod: 0, leadNoProject: 0, leadHidden: 0, duplicate: 0 },
+  leadOnly: { noEnquiry: 0, enquiryOtherPeriod: 0, enquiryOtherProject: 0 },
+  members: {
+    shared: [],
+    enquiryOnly: { open: [], closedNoLead: [], leadOtherPeriod: [], leadNoProject: [], leadHidden: [], duplicate: [] },
+    leadOnly: { noEnquiry: [], enquiryOtherPeriod: [], enquiryOtherProject: [] },
+  },
+});
+
+export const sumValues = (r: Record<string, number>) => Object.values(r).reduce((a, b) => a + b, 0);
 
 export interface MonthPoint { month: string; enquiries: number; leads: number }
 
@@ -85,6 +161,8 @@ export interface ProjectStats {
   grades: Map<string, number>;
   /** Trailing 12 months, independent of the selected period. */
   trend: MonthPoint[];
+  /** Why `enquiries` and `leads` differ for this project. */
+  reconciliation: Reconciliation;
 }
 
 export interface InsightsResult {
@@ -100,10 +178,13 @@ export interface InsightsResult {
     /** Enquiries in the period that could be tied to a project. */
     attributedEnquiries: number;
     attributedByConversion: number;
+    attributedByProject: number;
     attributedByMessage: number;
   };
   /** Every source seen in the period, most used first (leads + enquiries). */
   sources: { source: string; leads: number; enquiries: number }[];
+  /** Why totals.enquiries and totals.leads differ, across all projects. */
+  reconciliation: Reconciliation;
   index: ProjectIndex;
 }
 
@@ -161,6 +242,7 @@ export function computeProjectInsights(
         leads: 0, leadsPrev: 0, sold: 0, revenue: 0,
         leadSources: new Map(), enquirySources: new Map(), statuses: new Map(), grades: new Map(),
         trend: months.map((month) => ({ month, enquiries: 0, leads: 0 })),
+        reconciliation: emptyReconciliation(),
       };
       byLabel.set(label, s);
     }
@@ -173,7 +255,7 @@ export function computeProjectInsights(
 
   const totals: InsightsResult['totals'] = {
     enquiries: 0, enquiriesPrev: 0, convertedEnquiries: 0, leads: 0, leadsPrev: 0, sold: 0, revenue: 0,
-    attributedEnquiries: 0, attributedByConversion: 0, attributedByMessage: 0,
+    attributedEnquiries: 0, attributedByConversion: 0, attributedByProject: 0, attributedByMessage: 0,
   };
   const sourceTotals = new Map<string, { leads: number; enquiries: number }>();
   const bumpSource = (src: string, field: 'leads' | 'enquiries') => {
@@ -182,10 +264,58 @@ export function computeProjectInsights(
     sourceTotals.set(src, row);
   };
 
+  // Reconciliation state. `leadInfo` is every lead visible to the viewer;
+  // `sharedLeads` holds, per project, the leads already paired with one of
+  // its enquiries (ALL is the cross-project total).
+  const ALL = '\u0000all';
+  const totalRecon = emptyReconciliation();
+  const reconFor = (label: string) => (label === ALL ? totalRecon : statsFor(label).reconciliation);
+  const leadInfo = new Map<string, { labels: string[]; current: boolean }>();
+  const sharedLeads = new Map<string, Set<string>>();
+  const sharedFor = (label: string) => {
+    let s = sharedLeads.get(label);
+    if (!s) sharedLeads.set(label, (s = new Set()));
+    return s;
+  };
+  const leadsWithEnquiry = new Set<string>();
+  const leadsWithCurrentEnquiry = new Set<string>();
+
+  /** One counted enquiry, seen from one project (or ALL). The order of the
+   * checks matters: each enquiry must land in exactly one bucket. */
+  const classifyEnquiry = (enq: InsightEnquiry, label: string) => {
+    const r = reconFor(label);
+    const place = (reason: EnquiryOnlyReason) => { r.enquiryOnly[reason] += 1; r.members.enquiryOnly[reason].push(enq.id); };
+    if (!enq.converted_lead_id) {
+      place(enq.status === 'completed' ? 'closedNoLead' : 'open');
+      return;
+    }
+    const lead = leadInfo.get(enq.converted_lead_id);
+    if (!lead) place('leadHidden');
+    else if (label !== ALL && !lead.labels.includes(label)) place('leadNoProject');
+    else if (!lead.current) place('leadOtherPeriod');
+    else {
+      const shared = sharedFor(label);
+      if (shared.has(enq.converted_lead_id)) place('duplicate');
+      else shared.add(enq.converted_lead_id);
+    }
+  };
+
+  /** One counted lead, seen from one project (or ALL). Runs after every
+   * enquiry has been classified, so `sharedFor` is complete. */
+  const classifyLead = (leadId: string, label: string) => {
+    const r = reconFor(label);
+    const place = (reason: LeadOnlyReason) => { r.leadOnly[reason] += 1; r.members.leadOnly[reason].push(leadId); };
+    if (sharedFor(label).has(leadId)) return; // tallied from sharedLeads below
+    if (leadsWithCurrentEnquiry.has(leadId)) place('enquiryOtherProject');
+    else if (leadsWithEnquiry.has(leadId)) place('enquiryOtherPeriod');
+    else place('noEnquiry');
+  };
+
   for (const lead of leads) {
     const groups = index.groupsOf(lead.preferred_project);
     const labels = groups.length > 0 ? groups : [UNSPECIFIED];
     const current = inRange(lead.created_at, range);
+    leadInfo.set(lead.id, { labels, current });
     const previous = !!prevRange && inRange(lead.created_at, prevRange);
     // A sale counts in the period it was sold in, not when its lead was added.
     const soldDate = soldDateOf(lead);
@@ -220,12 +350,20 @@ export function computeProjectInsights(
     const isConverted = !!enq.converted_lead_id;
     const src = sourceKey(enq.source);
 
+    if (enq.converted_lead_id) {
+      leadsWithEnquiry.add(enq.converted_lead_id);
+      if (current) leadsWithCurrentEnquiry.add(enq.converted_lead_id);
+    }
+
     if (current) {
       totals.enquiries += 1;
       if (isConverted) totals.convertedEnquiries += 1;
       if (via === 'lead') { totals.attributedEnquiries += 1; totals.attributedByConversion += 1; }
+      else if (via === 'project') { totals.attributedEnquiries += 1; totals.attributedByProject += 1; }
       else if (via === 'message') { totals.attributedEnquiries += 1; totals.attributedByMessage += 1; }
       bumpSource(src, 'enquiries');
+      classifyEnquiry(enq, ALL);
+      labels.forEach((label) => classifyEnquiry(enq, label));
     }
     if (previous) totals.enquiriesPrev += 1;
 
@@ -240,6 +378,17 @@ export function computeProjectInsights(
     }
   }
 
+  for (const [leadId, { labels, current }] of leadInfo) {
+    if (!current) continue;
+    classifyLead(leadId, ALL);
+    labels.forEach((label) => classifyLead(leadId, label));
+  }
+  for (const [label, ids] of sharedLeads) {
+    const r = reconFor(label);
+    r.shared = ids.size;
+    r.members.shared = Array.from(ids);
+  }
+
   // Only projects with activity in the selected or previous period — a
   // project last enquired about two years ago isn't noise worth a row.
   const projects = Array.from(byLabel.values())
@@ -249,7 +398,7 @@ export function computeProjectInsights(
   const sources = Array.from(sourceTotals, ([source, v]) => ({ source, ...v }))
     .sort((a, b) => (b.leads + b.enquiries) - (a.leads + a.enquiries));
 
-  return { projects, totals, sources, index };
+  return { projects, totals, sources, reconciliation: totalRecon, index };
 }
 
 /** Percentage change, or null when there's no baseline to compare with. */

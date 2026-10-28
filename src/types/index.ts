@@ -72,6 +72,9 @@ export interface Lead {
   budget_range?: string | null;
   purpose?: string | null;
   lead_source?: string | null;
+  /** The enquiry this lead was converted from. Server-owned: while set, the
+   * database keeps lead_source equal to that enquiry's source. */
+  source_enquiry_id?: string | null;
   department_code: Department;
   team_id?: string | null;
   status: LeadStage;
@@ -108,6 +111,8 @@ export interface Enquiry {
   budget?: string | null;
   source?: string | null;
   category?: EnquiryCategory | null;
+  /** Picked from Settings → Projects; free text so list edits never rewrite it. */
+  preferred_project?: string | null;
   message?: string | null;
   assigned_to: string;
   assigned_by?: string | null;
@@ -265,8 +270,10 @@ export const INTEREST_TYPES = ['ဝယ်ရန်', 'ငှားရန်', '�
 export const PROPERTY_TYPES = ['ကွန်ဒို', 'လုံးချင်း', 'တိုက်ခန်း', 'မြေကွက်', 'Commercial Area', 'Hotel'];
 export const BUDGET_RANGES = ['သိန်း ၁၀၀၀ အောက်', 'သိန်း ၁၀၀၀ မှ ၃၀၀၀ ကြား', 'သိန်း ၃၀၀၀ မှ ၅၀၀၀ ကြား', 'သိန်း ၅၀၀၀ မှ ၁၀၀၀၀ ကြား', 'သိန်း ၁၀၀၀၀ အထက်'];
 export const PURPOSES = ['ကိုယ်တိုင်နေထိုင်ရန်', 'ရင်းနှီးမြှုပ်နှံရန်', 'စီးပွားရေး'];
-export const LEAD_SOURCES = ['Facebook', 'TikTok', 'YouTube', 'Instagram', 'Boss Content', 'Admin Content', 'Own Content Lead', 'Hotline', 'Walk-in', 'Agent', 'Freelance', 'Open House Inquiry', 'Open Verse'];
 
+/** Lead and enquiry sources are one list, managed in Settings → Lead sources
+ * (public.enquiry_sources, read via useEnquirySources). These two lists are
+ * only the fallback used if that table can't be read — they match its seed. */
 export const CONDO_SOURCES = [
   'Condo Channel Facebook',
   'Condo Listing Facebook',
@@ -275,9 +282,11 @@ export const CONDO_SOURCES = [
   'DLM Facebook',
   'BHG Facebook',
   'Property Seeker Facebook',
+  'ACTY Facebook',
   'Condo Channel Tiktok',
   'PSM Properties Original Tiktok',
   'Property Seeker Tiktok',
+  'ACTY TikTok',
   'Boss Phone',
   'Boss Viber',
   'DLM WalkIn',
@@ -287,11 +296,14 @@ export const CONDO_SOURCES = [
   'House Hotline',
   'Condo Hotline',
   'PTZ Hotline',
+  'ACTY Hotline',
   'Production Department',
   'Marketing Department',
   'AI Department',
   'Open Verse',
   'Own Enquiry',
+  'From Latt Latt Aung',
+  'From Min Pyae',
 ];
 export const HOUSE_LAND_SOURCES = [
   'House&Land Listing',
@@ -310,4 +322,6 @@ export const HOUSE_LAND_SOURCES = [
   'AI Department',
   'Open Verse',
   'Own Enquiry',
+  'From Latt Latt Aung',
+  'From Min Pyae',
 ];

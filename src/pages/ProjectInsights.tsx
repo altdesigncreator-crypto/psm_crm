@@ -9,27 +9,29 @@ import {
 import { Bar, Line } from 'react-chartjs-2';
 import {
   ArrowLeft, ArrowDownRight, ArrowUpRight, ArrowUpDown, Building2, ChevronRight, FileSpreadsheet, Inbox,
-  Info, Layers, Minus, RefreshCw, Search, Sparkles, Target, Users, Wifi, ExternalLink, Trophy,
+  Info, Layers, Minus, RefreshCw, Scale, Search, Sparkles, Target, Users, Wifi, ExternalLink, Trophy,
 } from 'lucide-react';
 import { supabase } from '@/db/supabase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import PeriodFilterBar from '@/components/PeriodFilterBar';
 import { useAuth } from '@/contexts/AuthContext';
+import { useProfiles } from '@/hooks/useProfiles';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { usePeriodFilter, type Period } from '@/hooks/usePeriodFilter';
-import { canAccessRoute } from '@/lib/permissions';
+import { canAccessRoute, isAdminOrAbove } from '@/lib/permissions';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { enumLabel } from '@/lib/translations';
 import { LEAD_STAGES } from '@/types';
 import {
   computeProjectInsights, pctDelta, ratio, sourceCount, topEntries, topSource,
-  ENQUIRY_COLUMNS, LEAD_COLUMNS, NO_SOURCE, UNSPECIFIED,
-  type DateRange, type InsightEnquiry, type InsightLead, type ProjectStats,
+  ENQUIRY_COLUMNS, ENQUIRY_ONLY_REASONS, LEAD_COLUMNS, LEAD_ONLY_REASONS, NO_SOURCE, UNSPECIFIED,
+  type DateRange, type EnquiryOnlyReason, type InsightEnquiry, type InsightLead, type LeadOnlyReason, type ProjectStats, type Reconciliation,
 } from '@/lib/projectInsights';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Tooltip, Legend);
@@ -45,6 +47,7 @@ const SERIES = {
 
 type SortKey = 'project' | 'enquiries' | 'leads' | 'conversion' | 'sold' | 'revenue' | 'sources' | 'growth';
 type SourceMode = 'leads' | 'enquiries';
+type ReconView = 'projects' | 'overall';
 
 /** Tracks the app's class-based dark mode, so charts (which take literal
  * colours, not CSS tokens) re-render when the theme is toggled. */
@@ -94,6 +97,7 @@ export default function ProjectInsights() {
   const [sortKey, setSortKey] = useState<SortKey>('leads');
   const [sortAsc, setSortAsc] = useState(false);
   const [sourceMode, setSourceMode] = useState<SourceMode>('leads');
+  const [reconView, setReconView] = useState<ReconView>('projects');
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
 
   /* ── data ─────────────────────────────────────────────────────────── */
@@ -146,9 +150,31 @@ export default function ProjectInsights() {
   );
   const { totals } = insights;
   const hasPrev = period !== 'overall';
+  // Below admin, RLS shows a manager their teams' leads but only their own
+  // enquiries — so "added directly" overstates, and the panel says why.
+  const enquiriesScopedToSelf = !isAdminOrAbove(role);
 
   const labelOf = useCallback((label: string) => (label === UNSPECIFIED ? t('projects.unspecified') : label), [t]);
   const sourceLabel = useCallback((s: string) => (s === NO_SOURCE ? t('projects.noSource') : s), [t]);
+  const stageLabel = useCallback((s: string) => enumLabel('stage', s, LEAD_STAGES.find((x) => x.value === s)?.label ?? s, lang), [lang]);
+  const enquiryStatusLabel = useCallback((s: string) => enumLabel('enquiryStatus', s, s, lang), [lang]);
+
+  /* ── drill-down: the records behind a reconciliation number ────────── */
+
+  const { nameOf } = useProfiles();
+  const [openedBucket, setOpenedBucket] = useState<OpenedBucket | null>(null);
+  const leadsById = useMemo(() => new Map(leads.map((l) => [l.id, l])), [leads]);
+  const enquiriesById = useMemo(() => new Map(enquiries.map((e) => [e.id, e])), [enquiries]);
+  // The earliest enquiry converted into each lead — the one it came from.
+  const enquiryOfLead = useMemo(() => {
+    const m = new Map<string, InsightEnquiry>();
+    for (const e of [...enquiries].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))) {
+      if (e.converted_lead_id && !m.has(e.converted_lead_id)) m.set(e.converted_lead_id, e);
+    }
+    return m;
+  }, [enquiries]);
+  const openLead = useCallback((id: string) => navigate(`/lead/${id}`), [navigate]);
+  const openEnquiry = useCallback((no: string) => navigate(`/enquiries?${new URLSearchParams({ q: no })}`), [navigate]);
 
   // Real projects only (no "unspecified" bucket) for rankings and charts.
   const named = useMemo(() => insights.projects.filter((p) => p.label !== UNSPECIFIED && p.leads + p.enquiries > 0), [insights.projects]);
@@ -236,6 +262,16 @@ export default function ProjectInsights() {
       }));
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(projectSheet), 'Projects');
 
+      const reconSheet = tableRows.map((p) => ({
+        [t('projects.colProject')]: labelOf(p.label),
+        [t('projects.colEnquiries')]: p.enquiries,
+        [t('projects.colLeads')]: p.leads,
+        [t('projects.recon.shared')]: p.reconciliation.shared,
+        ...Object.fromEntries(ENQUIRY_ONLY_REASONS.map((k) => [`${t('projects.recon.onlyEnquiries')}: ${t(`projects.recon.${k}`)}`, p.reconciliation.enquiryOnly[k]])),
+        ...Object.fromEntries(LEAD_ONLY_REASONS.map((k) => [`${t('projects.recon.onlyLeads')}: ${t(`projects.recon.${k}`)}`, p.reconciliation.leadOnly[k]])),
+      }));
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(reconSheet), 'Enquiries vs leads');
+
       const matrix: Record<string, string | number>[] = [];
       for (const p of tableRows) {
         for (const [src, n] of topEntries(p.leadSources)) matrix.push({ Project: labelOf(p.label), Type: 'Lead', Source: sourceLabel(src), Count: n });
@@ -309,6 +345,28 @@ export default function ProjectInsights() {
         <KpiTile icon={<Trophy className="w-4 h-4 text-success" />} tone="bg-success/10" label={t('projects.kpiSold')} value={totals.sold.toLocaleString()} hint={totals.revenue > 0 ? totals.revenue.toLocaleString() : undefined} />
         <KpiTile icon={<Layers className="w-4 h-4 text-primary" />} tone="bg-primary/10" label={t('projects.kpiSources')} value={insights.sources.filter((s) => s.source !== NO_SOURCE).length.toLocaleString()} />
       </div>
+
+      {/* Why enquiries and leads differ — per project, or across all of them */}
+      {(totals.enquiries > 0 || totals.leads > 0) && (
+        <Card className="shadow-card rounded-xl border-0">
+          <CardHeader className="pb-2 flex flex-row items-center justify-between gap-3 space-y-0">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2"><Scale className="w-4 h-4 text-primary" /> {t('projects.recon.title')}</CardTitle>
+            <Tabs value={reconView} onValueChange={(v) => setReconView(v as ReconView)}>
+              <TabsList className="h-9">
+                <TabsTrigger value="projects" className="text-xs">{t('projects.recon.byProject')}</TabsTrigger>
+                <TabsTrigger value="overall" className="text-xs">{t('projects.recon.overall')}</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            {reconView === 'projects' ? (
+              <ReconciliationByProject projects={insights.projects} palette={palette} labelOf={labelOf} scopeNote={enquiriesScopedToSelf} onSelect={setSelectedLabel} onOpen={(project, bucket) => setOpenedBucket({ ...bucket, project })} t={t} />
+            ) : (
+              <ReconciliationPanel recon={insights.reconciliation} enquiries={totals.enquiries} leads={totals.leads} palette={palette} scopeNote={enquiriesScopedToSelf} onOpen={(bucket) => setOpenedBucket({ ...bucket, project: null })} t={t} />
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Enquiries vs leads per project */}
       <Card className="shadow-card rounded-xl border-0">
@@ -438,6 +496,7 @@ export default function ProjectInsights() {
             .replace('{total}', String(totals.enquiries))
             .replace('{pct}', String(attributedPct))
             .replace('{viaLead}', String(totals.attributedByConversion))
+            .replace('{viaProject}', String(totals.attributedByProject))
             .replace('{viaMessage}', String(totals.attributedByMessage))}
           {unspecified && unspecified.leads > 0 && ` ${t('projects.unspecifiedLeads').replace('{n}', String(unspecified.leads))}`}
         </span>
@@ -452,9 +511,28 @@ export default function ProjectInsights() {
         periodLabel={period === 'overall' ? t('period.overall') : periodLabel}
         labelOf={labelOf}
         sourceLabel={sourceLabel}
-        stageLabel={(s) => enumLabel('stage', s, LEAD_STAGES.find((x) => x.value === s)?.label ?? s, lang)}
-        onViewLeads={(label) => navigate(`/leads?${new URLSearchParams({ project: label, period, month: String(selectedMonth), year: String(selectedYear) })}`)}
+        stageLabel={stageLabel}
+        scopeNote={enquiriesScopedToSelf}
+        onOpenBucket={(project, bucket) => setOpenedBucket({ ...bucket, project })}
+        onViewLeads={(label, source) => navigate(`/leads?${new URLSearchParams({ project: label, ...(source ? { source } : {}), period, month: String(selectedMonth), year: String(selectedYear) })}`)}
         onViewEnquiries={(label) => navigate(`/enquiries?${new URLSearchParams({ project: label, period, month: String(selectedMonth), year: String(selectedYear) })}`)}
+        t={t}
+      />
+
+      {/* Opens over the detail sheet when launched from it. */}
+      <ReconRecordsDialog
+        opened={openedBucket}
+        onClose={() => setOpenedBucket(null)}
+        leadsById={leadsById}
+        enquiriesById={enquiriesById}
+        enquiryOfLead={enquiryOfLead}
+        nameOf={nameOf}
+        labelOf={labelOf}
+        stageLabel={stageLabel}
+        enquiryStatusLabel={enquiryStatusLabel}
+        periodLabel={period === 'overall' ? t('period.overall') : periodLabel}
+        onOpenLead={openLead}
+        onOpenEnquiry={openEnquiry}
         t={t}
       />
     </div>
@@ -664,9 +742,11 @@ function sum(m: Map<string, number>): number {
 /** Everything about one project: headline numbers, 12-month trend, where
  * its leads and enquiries come from, where its leads sit in the
  * pipeline, and the raw spellings folded into it. */
-function ProjectDetailSheet({ project, open, onOpenChange, palette, hasPrev, periodLabel, labelOf, sourceLabel, stageLabel, onViewLeads, onViewEnquiries, t }: {
+function ProjectDetailSheet({ project, open, onOpenChange, palette, hasPrev, periodLabel, labelOf, sourceLabel, stageLabel, scopeNote, onOpenBucket, onViewLeads, onViewEnquiries, t }: {
   project: ProjectStats | null; open: boolean; onOpenChange: (o: boolean) => void; palette: Palette; hasPrev: boolean; periodLabel: string;
-  labelOf: (l: string) => string; sourceLabel: (s: string) => string; stageLabel: (s: string) => string; onViewLeads: (label: string) => void; onViewEnquiries: (label: string) => void; t: T;
+  labelOf: (l: string) => string; sourceLabel: (s: string) => string; stageLabel: (s: string) => string; scopeNote: boolean;
+  onOpenBucket: (project: string, bucket: Bucket) => void;
+  onViewLeads: (label: string, source?: string) => void; onViewEnquiries: (label: string) => void; t: T;
 }) {
   const [tab, setTab] = useState<SourceMode>('leads');
   useEffect(() => { setTab('leads'); }, [project?.label]);
@@ -711,6 +791,13 @@ function ProjectDetailSheet({ project, open, onOpenChange, palette, hasPrev, per
             <DetailStat label={t('projects.colSold')} value={project.sold} hint={project.revenue > 0 ? `${t('projects.colRevenue')}: ${project.revenue.toLocaleString()}` : `${ratio(project.sold, project.leads)}%`} />
           </div>
 
+          {project.enquiries + project.leads > 0 && (
+            <section>
+              <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2"><Scale className="w-4 h-4 text-primary" />{t('projects.recon.title')}</h3>
+              <ReconciliationPanel recon={project.reconciliation} enquiries={project.enquiries} leads={project.leads} palette={palette} scopeNote={scopeNote} onOpen={(bucket) => onOpenBucket(project.label, bucket)} t={t} />
+            </section>
+          )}
+
           <section>
             <h3 className="text-sm font-semibold text-foreground mb-2">{t('projects.trend12mo')}</h3>
             <div className="h-48"><Line data={trendData} options={trendOptions} /></div>
@@ -730,8 +817,14 @@ function ProjectDetailSheet({ project, open, onOpenChange, palette, hasPrev, per
               <p className="text-xs text-muted-foreground py-3">{t('projects.noData')}</p>
             ) : (
               <div className="space-y-2.5">
+                {/* A lead source opens the Leads list filtered to this
+                    project + source, so every number here is one tap from
+                    the records behind it. */}
                 {sources.map(([src, n]) => (
-                  <BarRow key={src} label={sourceLabel(src)} value={n} max={sourceMax} color={tab === 'leads' ? palette.leads : palette.enquiries} />
+                  <BarRow
+                    key={src} label={sourceLabel(src)} value={n} max={sourceMax} color={tab === 'leads' ? palette.leads : palette.enquiries}
+                    onClick={tab === 'leads' && !isUnspecified ? () => onViewLeads(project.label, src) : undefined}
+                  />
                 ))}
               </div>
             )}
@@ -799,16 +892,377 @@ function DetailStat({ label, value, delta, hint, swatch }: { label: string; valu
   );
 }
 
-function BarRow({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
-  return (
-    <div>
+function BarRow({ label, value, max, color, onClick }: { label: string; value: number; max: number; color: string; onClick?: () => void }) {
+  const body = (
+    <>
       <div className="flex items-center justify-between gap-2 text-xs mb-1">
         <span className="text-foreground truncate">{label}</span>
-        <span className="text-muted-foreground tabular-nums shrink-0">{value}</span>
+        <span className="text-muted-foreground tabular-nums shrink-0 inline-flex items-center gap-0.5">
+          {value}{onClick && <ChevronRight className="w-3 h-3" />}
+        </span>
       </div>
       <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
         <div className="h-full rounded-full" style={{ width: `${Math.max(3, (value / max) * 100)}%`, backgroundColor: color }} />
       </div>
+    </>
+  );
+  if (!onClick) return <div>{body}</div>;
+  return (
+    <button type="button" onClick={onClick} className="block w-[calc(100%+0.75rem)] text-left rounded-md -mx-1.5 px-1.5 py-1 hover:bg-muted/60 active:bg-muted transition-colors">
+      {body}
+    </button>
+  );
+}
+
+/** One number on the reconciliation, ready to be opened. */
+type BucketKey = 'shared' | EnquiryOnlyReason | LeadOnlyReason;
+interface Bucket { key: BucketKey; kind: 'leads' | 'enquiries'; ids: string[] }
+type OpenBucket = (bucket: Bucket) => void;
+
+/** Every non-empty bucket of a reconciliation, in display order. */
+function bucketsOf(r: Reconciliation): { enquiryOnly: Bucket[]; leadOnly: Bucket[]; shared: Bucket } {
+  return {
+    enquiryOnly: ENQUIRY_ONLY_REASONS.filter((k) => r.enquiryOnly[k] > 0).map((k) => ({ key: k, kind: 'enquiries', ids: r.members.enquiryOnly[k] })),
+    leadOnly: LEAD_ONLY_REASONS.filter((k) => r.leadOnly[k] > 0).map((k) => ({ key: k, kind: 'leads', ids: r.members.leadOnly[k] })),
+    shared: { key: 'shared', kind: 'leads', ids: r.members.shared },
+  };
+}
+
+const bucketTitleKey = (key: BucketKey) => (key === 'shared' ? 'projects.recon.shared' : `projects.recon.${key}`);
+const bucketHintKey = (key: BucketKey) => (key === 'shared' ? 'projects.recon.sharedHint' : `projects.recon.${key}Hint`);
+
+/** Explains the gap between an enquiry count and a lead count. Two bars on
+ * one scale: each starts with the customers both sides share (solid), then
+ * what only that side has (striped), so the gap is visible at a glance.
+ * Every bucket is itemised underneath with its count and cause, so nothing
+ * depends on reading the bars or telling colours apart — and every count
+ * opens the exact records behind it. */
+function ReconciliationPanel({ recon, enquiries, leads, palette, scopeNote, onOpen, t }: {
+  recon: Reconciliation; enquiries: number; leads: number; palette: Palette; scopeNote: boolean; onOpen: OpenBucket; t: T;
+}) {
+  const buckets = bucketsOf(recon);
+  const enquiryRows = buckets.enquiryOnly;
+  const leadRows = buckets.leadOnly;
+  const matches = enquiryRows.length === 0 && leadRows.length === 0;
+  const scale = Math.max(1, enquiries, leads);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-foreground leading-relaxed">
+        {matches
+          ? t('projects.recon.match')
+          : t('projects.recon.summary').replace('{enquiries}', enquiries.toLocaleString()).replace('{leads}', leads.toLocaleString()).replace('{shared}', recon.shared.toLocaleString())}
+      </p>
+
+      <div className="space-y-2" role="img" aria-label={`${t('projects.colEnquiries')} ${enquiries}, ${t('projects.colLeads')} ${leads}, ${t('projects.recon.shared')} ${recon.shared}`}>
+        <ReconBar label={t('projects.colEnquiries')} total={enquiries} shared={recon.shared} scale={scale} color={palette.enquiries} />
+        <ReconBar label={t('projects.colLeads')} total={leads} shared={recon.shared} scale={scale} color={palette.leads} />
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-0.5 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm bg-muted-foreground" />{t('projects.recon.shared')}</span>
+          <span className="inline-flex items-center gap-1.5"><span className="w-3 h-2 rounded-sm opacity-70" style={{ backgroundImage: stripes('hsl(var(--muted-foreground))') }} />{t('projects.recon.onlyEnquiries')} / {t('projects.recon.onlyLeads')}</span>
+          {recon.shared > 0 && (
+            <button type="button" onClick={() => onOpen(buckets.shared)} className="ml-auto inline-flex items-center gap-0.5 font-medium text-primary hover:underline">
+              {t('projects.recon.viewShared').replace('{n}', recon.shared.toLocaleString())}<ChevronRight className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {!matches && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <ReconList title={t('projects.recon.onlyEnquiries')} extra={enquiries - recon.shared} rows={enquiryRows} color={palette.enquiries} onOpen={onOpen} t={t} />
+          <ReconList title={t('projects.recon.onlyLeads')} extra={leads - recon.shared} rows={leadRows} color={palette.leads} onOpen={onOpen} t={t} />
+        </div>
+      )}
+
+      {scopeNote && (
+        <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+          <Info className="w-3.5 h-3.5 shrink-0 mt-px" /><span>{t('projects.recon.scopeNote')}</span>
+        </p>
+      )}
     </div>
+  );
+}
+
+/** The same reconciliation, one row per project: its two bars plus a chip
+ * per reason, so you can scan which projects don't line up and why without
+ * opening each one. Biggest mismatch first; "no project" always last. */
+function ReconciliationByProject({ projects, palette, labelOf, scopeNote, onSelect, onOpen, t }: {
+  projects: ProjectStats[]; palette: Palette; labelOf: (l: string) => string; scopeNote: boolean;
+  onSelect: (label: string) => void; onOpen: (project: string, bucket: Bucket) => void; t: T;
+}) {
+  const LIMIT = 8;
+  const [expanded, setExpanded] = useState(false);
+  const rows = useMemo(() => projects
+    .filter((p) => p.enquiries + p.leads > 0)
+    .map((p) => ({ p, unmatched: p.enquiries + p.leads - 2 * p.reconciliation.shared }))
+    .sort((a, b) => Number(a.p.label === UNSPECIFIED) - Number(b.p.label === UNSPECIFIED)
+      || b.unmatched - a.unmatched
+      || (b.p.leads + b.p.enquiries) - (a.p.leads + a.p.enquiries)), [projects]);
+
+  if (rows.length === 0) return <EmptyState text={t('projects.noData')} />;
+  const visible = expanded ? rows : rows.slice(0, LIMIT);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+        <span>{t('projects.recon.byProjectHint')}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: palette.enquiries }} />{t('projects.recon.onlyEnquiries')}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: palette.leads }} />{t('projects.recon.onlyLeads')}</span>
+      </div>
+
+      <ul className="divide-y divide-border -mx-1">
+        {visible.map(({ p, unmatched }) => {
+          const r = p.reconciliation;
+          const { enquiryOnly, leadOnly } = bucketsOf(r);
+          const chips = [
+            ...enquiryOnly.map((b) => ({ bucket: b, color: palette.enquiries })),
+            ...leadOnly.map((b) => ({ bucket: b, color: palette.leads })),
+          ];
+          const scale = Math.max(1, p.enquiries, p.leads);
+          // The row opens the project's detail; each chip opens just its
+          // records. Chips are real buttons (not nested in the row's), so
+          // both work from the keyboard.
+          return (
+            <li
+              key={p.label}
+              onClick={() => onSelect(p.label)}
+              className="cursor-pointer px-1 py-3 rounded-lg hover:bg-muted/40 transition-colors grid gap-2.5 md:grid-cols-[minmax(0,13rem)_minmax(0,1fr)_minmax(0,1.15fr)_2rem] md:items-center md:gap-4"
+            >
+              <button type="button" onClick={(e) => { e.stopPropagation(); onSelect(p.label); }} className="min-w-0 text-left rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <p className={`text-sm font-medium truncate ${p.label === UNSPECIFIED ? 'text-muted-foreground italic' : 'text-foreground'}`}>{labelOf(p.label)}</p>
+                <p className="text-[11px] text-muted-foreground tabular-nums">{t('projects.recon.shared')}: {r.shared.toLocaleString()}</p>
+              </button>
+              <div className="space-y-1">
+                <ReconBar label={t('projects.colEnquiries')} total={p.enquiries} shared={r.shared} scale={scale} color={palette.enquiries} compact />
+                <ReconBar label={t('projects.colLeads')} total={p.leads} shared={r.shared} scale={scale} color={palette.leads} compact />
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {unmatched === 0 ? (
+                  <span className="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full bg-success/10 text-success font-medium">{t('projects.recon.matchShort')}</span>
+                ) : chips.map(({ bucket, color }) => (
+                  <button
+                    key={bucket.key}
+                    type="button"
+                    title={t(bucketHintKey(bucket.key))}
+                    onClick={(e) => { e.stopPropagation(); onOpen(p.label, bucket); }}
+                    className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-muted text-foreground max-w-full hover:bg-primary/10 hover:text-primary active:bg-primary/15 transition-colors"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                    <span className="font-semibold tabular-nums">+{bucket.ids.length.toLocaleString()}</span>
+                    <span className="truncate">{t(bucketTitleKey(bucket.key))}</span>
+                  </button>
+                ))}
+              </div>
+              <ChevronRight className="hidden md:block w-4 h-4 text-muted-foreground justify-self-end" aria-hidden />
+            </li>
+          );
+        })}
+      </ul>
+
+      {rows.length > LIMIT && (
+        <Button variant="ghost" className="h-10 w-full text-xs font-medium text-primary" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? t('projects.recon.showLess') : t('projects.recon.showAll').replace('{n}', String(rows.length))}
+        </Button>
+      )}
+
+      {scopeNote && (
+        <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+          <Info className="w-3.5 h-3.5 shrink-0 mt-px" /><span>{t('projects.recon.scopeNote')}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+const stripes = (color: string) => `repeating-linear-gradient(-45deg, ${color} 0 3px, transparent 3px 6px)`;
+
+function ReconBar({ label, total, shared, scale, color, compact = false }: { label: string; total: number; shared: number; scale: number; color: string; compact?: boolean }) {
+  const pct = (n: number) => `${(n / scale) * 100}%`;
+  return (
+    <div className={`grid items-center gap-2 ${compact ? 'grid-cols-[4.5rem_1fr_2.25rem]' : 'grid-cols-[4.5rem_1fr_2.75rem]'}`}>
+      <span className={`${compact ? 'text-[11px]' : 'text-xs'} text-muted-foreground truncate`}>{label}</span>
+      <div className={`${compact ? 'h-2' : 'h-3.5'} w-full rounded-full bg-muted overflow-hidden flex`}>
+        <div className="h-full transition-[width] duration-500" style={{ width: pct(shared), backgroundColor: color }} />
+        <div className="h-full opacity-70 transition-[width] duration-500" style={{ width: pct(total - shared), backgroundImage: stripes(color) }} />
+      </div>
+      <span className={`${compact ? 'text-xs' : 'text-sm'} font-semibold text-foreground tabular-nums text-right`}>{total.toLocaleString()}</span>
+    </div>
+  );
+}
+
+function ReconList({ title, extra, rows, color, onOpen, t }: { title: string; extra: number; rows: Bucket[]; color: string; onOpen: OpenBucket; t: T }) {
+  return (
+    <div className="rounded-xl bg-muted/40 p-3">
+      <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+        <span className="w-2 h-2 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+        {title}
+        <span className="ml-auto tabular-nums">{extra > 0 ? `+${extra.toLocaleString()}` : '0'}</span>
+      </p>
+      {rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground mt-2">{t('projects.recon.none')}</p>
+      ) : (
+        <ul className="mt-1.5 space-y-0.5 -mx-1.5">
+          {rows.map((bucket) => (
+            <li key={bucket.key}>
+              <button
+                type="button"
+                onClick={() => onOpen(bucket)}
+                className="w-full flex items-start gap-2.5 text-left rounded-lg px-1.5 py-1.5 hover:bg-background/70 active:bg-background transition-colors"
+              >
+                <span className="text-sm font-bold text-foreground tabular-nums min-w-[2ch] text-right leading-5">{bucket.ids.length.toLocaleString()}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium text-foreground leading-5">{t(bucketTitleKey(bucket.key))}</p>
+                  <p className="text-[11px] text-muted-foreground leading-snug">{t(bucketHintKey(bucket.key))}</p>
+                </div>
+                <span className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-medium text-primary leading-5">
+                  {t('projects.recon.view')}<ChevronRight className="w-3 h-3" />
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+interface OpenedBucket extends Bucket {
+  /** The project it belongs to, or null for the all-projects total. */
+  project: string | null;
+}
+
+interface RecordRow {
+  id: string;
+  title: string;
+  subtitle: string;
+  meta: string;
+  status: string;
+  createdAt: string;
+  haystack: string;
+  open: () => void;
+  secondary?: { label: string; open: () => void };
+}
+
+const shortDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+/** The records behind one reconciliation number — the answer to "which 6
+ * leads were added directly?". Newest first, searchable, and each row opens
+ * the lead (Lead Detail) or the enquiry (Enquiries, filtered to it), with a
+ * shortcut to the other side of the pair where there is one. */
+function ReconRecordsDialog({ opened, onClose, leadsById, enquiriesById, enquiryOfLead, nameOf, labelOf, stageLabel, enquiryStatusLabel, periodLabel, onOpenLead, onOpenEnquiry, t }: {
+  opened: OpenedBucket | null; onClose: () => void;
+  leadsById: Map<string, InsightLead>; enquiriesById: Map<string, InsightEnquiry>; enquiryOfLead: Map<string, InsightEnquiry>;
+  nameOf: (id: string | null | undefined) => string; labelOf: (l: string) => string;
+  stageLabel: (s: string) => string; enquiryStatusLabel: (s: string) => string; periodLabel: string;
+  onOpenLead: (id: string) => void; onOpenEnquiry: (enquiryNo: string) => void; t: T;
+}) {
+  const [query, setQuery] = useState('');
+  useEffect(() => { setQuery(''); }, [opened]);
+
+  const rows = useMemo<RecordRow[]>(() => {
+    if (!opened) return [];
+    const out: RecordRow[] = [];
+    if (opened.kind === 'leads') {
+      for (const id of opened.ids) {
+        const l = leadsById.get(id);
+        if (!l) continue;
+        const enq = enquiryOfLead.get(l.id);
+        const owner = l.owner_id ? nameOf(l.owner_id) : '';
+        out.push({
+          id: l.id,
+          title: l.name,
+          subtitle: [l.phone, owner].filter(Boolean).join(' · '),
+          meta: [shortDate(l.created_at), l.preferred_project, l.lead_source].filter(Boolean).join(' · '),
+          status: stageLabel(l.status),
+          createdAt: l.created_at,
+          haystack: [l.name, l.phone, owner, l.preferred_project, enq?.enquiry_no].filter(Boolean).join(' ').toLowerCase(),
+          open: () => onOpenLead(l.id),
+          secondary: enq ? { label: enq.enquiry_no, open: () => onOpenEnquiry(enq.enquiry_no) } : undefined,
+        });
+      }
+    } else {
+      for (const id of opened.ids) {
+        const e = enquiriesById.get(id);
+        if (!e) continue;
+        const assignee = e.assigned_to ? nameOf(e.assigned_to) : '';
+        const lead = e.converted_lead_id ? leadsById.get(e.converted_lead_id) : undefined;
+        out.push({
+          id: e.id,
+          title: e.name,
+          subtitle: [e.enquiry_no, e.phone, assignee].filter(Boolean).join(' · '),
+          meta: [shortDate(e.created_at), e.preferred_project, e.source].filter(Boolean).join(' · '),
+          status: enquiryStatusLabel(e.status),
+          createdAt: e.created_at,
+          haystack: [e.name, e.phone, e.enquiry_no, assignee, e.preferred_project].filter(Boolean).join(' ').toLowerCase(),
+          open: () => onOpenEnquiry(e.enquiry_no),
+          secondary: lead ? { label: t('projects.recon.openLead'), open: () => onOpenLead(lead.id) } : undefined,
+        });
+      }
+    }
+    return out.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  }, [opened, leadsById, enquiriesById, enquiryOfLead, nameOf, stageLabel, enquiryStatusLabel, onOpenLead, onOpenEnquiry, t]);
+
+  const q = query.trim().toLowerCase();
+  const visible = q ? rows.filter((r) => r.haystack.includes(q)) : rows;
+
+  return (
+    <Dialog open={!!opened} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-[calc(100%-2rem)] md:max-w-lg p-0 gap-0 overflow-hidden flex flex-col max-h-[85dvh]">
+        {opened && (
+          <>
+            <DialogHeader className="px-5 pt-5 pb-3 text-left space-y-1">
+              <DialogTitle className="text-base pr-6 flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-sm shrink-0 bg-primary" aria-hidden />
+                {t(bucketTitleKey(opened.key))}
+                <span className="text-muted-foreground font-normal tabular-nums">· {rows.length.toLocaleString()}</span>
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                {opened.project ? labelOf(opened.project) : t('projects.recon.allProjects')} · {periodLabel}
+              </DialogDescription>
+              <p className="text-xs text-muted-foreground leading-relaxed">{t(bucketHintKey(opened.key))}</p>
+            </DialogHeader>
+
+            {rows.length > 6 && (
+              <div className="px-5 pb-3">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                  <Input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('projects.recon.searchRecords')} className="h-10 pl-8" />
+                </div>
+              </div>
+            )}
+
+            <div className="overflow-y-auto overscroll-contain border-t border-border">
+              {visible.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-10">{t('projects.recon.noRecords')}</p>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {visible.map((r) => (
+                    <li key={r.id} className="flex items-stretch">
+                      <button type="button" onClick={r.open} className="flex-1 min-w-0 text-left px-5 py-3 hover:bg-muted/50 active:bg-muted transition-colors">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-medium text-foreground truncate">{r.title}</p>
+                          <span className="shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">{r.status}</span>
+                        </div>
+                        {r.subtitle && <p className="text-xs text-muted-foreground truncate mt-0.5">{r.subtitle}</p>}
+                        <p className="text-[11px] text-muted-foreground/80 truncate mt-0.5">{r.meta}</p>
+                      </button>
+                      {r.secondary && (
+                        <button
+                          type="button" onClick={r.secondary.open}
+                          className="shrink-0 px-3 text-[11px] font-medium text-primary hover:bg-primary/5 active:bg-primary/10 transition-colors border-l border-border inline-flex items-center gap-0.5"
+                        >
+                          {r.secondary.label}<ExternalLink className="w-3 h-3" />
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

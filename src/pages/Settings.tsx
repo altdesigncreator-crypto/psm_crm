@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
-import { getRoleLabel, getDepartmentLabel, isExec } from '@/lib/permissions';
+import { getRoleLabel, getDepartmentLabel, isExec, isManagerOrAbove } from '@/lib/permissions';
 import { getEdgeFunctionErrorMessage } from '@/lib/edgeFunctionError';
 import { useDepartments } from '@/hooks/useDepartments';
 import {
@@ -14,6 +14,7 @@ import { isPushSupported, hasActivePushSubscription, subscribeToPush, unsubscrib
 import AvatarCropDialog from '@/components/AvatarCropDialog';
 import StorageImage from '@/components/StorageImage';
 import AppUpdateCard from '@/components/AppUpdateCard';
+import { ProjectsManager, SourcesManager } from '@/components/ManagedListManager';
 import UpdateDot from '@/components/UpdateDot';
 import { appUpdateStore } from '@/lib/appUpdate';
 import { Card, CardContent } from '@/components/ui/card';
@@ -24,7 +25,7 @@ import { Separator } from '@/components/ui/separator';
 import {
   ArrowLeft, User, Mail, Shield, Building2, Moon, Bell, Info, Phone, MapPin,
   HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern, KeyRound, Eye, EyeOff, Trash2, Edit2,
-  Camera, Download, ChevronRight,
+  Camera, Download, ChevronRight, ListChecks,
 } from 'lucide-react';
 import {
   AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -33,7 +34,7 @@ import {
 import { useTranslation } from '@/contexts/TranslationContext';
 import { toast } from 'sonner';
 
-type SectionKey = 'profile' | 'preferences' | 'system' | 'about';
+type SectionKey = 'profile' | 'preferences' | 'enquirySources' | 'projects' | 'system' | 'about';
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -361,6 +362,9 @@ export default function Settings() {
   const SECTIONS: { key: SectionKey; label: string; description: string; icon: typeof User }[] = [
     { key: 'profile', label: t('settings.section.profile'), description: user?.email || '—', icon: User },
     { key: 'preferences', label: t('settings.section.preferences'), description: t('settings.section.preferencesDesc'), icon: Moon },
+    // Manager and above — the same rule the enquiry_sources RLS policies enforce.
+    ...(isManagerOrAbove(role) ? [{ key: 'enquirySources' as const, label: t('settings.section.enquirySources'), description: t('settings.section.enquirySourcesDesc'), icon: ListChecks }] : []),
+    ...(isManagerOrAbove(role) ? [{ key: 'projects' as const, label: t('settings.section.projects'), description: t('settings.section.projectsDesc'), icon: Building2 }] : []),
     ...(isExec(role) ? [{ key: 'system' as const, label: t('settings.section.system'), description: t('settings.section.systemDesc'), icon: SettingsIcon }] : []),
     { key: 'about', label: t('settings.section.about'), description: t('settings.section.aboutDesc'), icon: Info },
   ];
@@ -623,6 +627,18 @@ export default function Settings() {
                 )}
               </CardContent>
             </Card>
+          )}
+
+          {activeSection === 'enquirySources' && isManagerOrAbove(role) && (
+            <div className="max-w-2xl">
+              <SourcesManager />
+            </div>
+          )}
+
+          {activeSection === 'projects' && isManagerOrAbove(role) && (
+            <div className="max-w-2xl">
+              <ProjectsManager />
+            </div>
           )}
 
           {activeSection === 'system' && isExec(role) && (

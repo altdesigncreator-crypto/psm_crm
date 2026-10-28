@@ -12,11 +12,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent } from '@/components/ui/card';
 import { MapPin, User, FileText, TrendingUp, CheckCircle2, Circle, X, AlertTriangle, Eye, Phone as PhoneIcon, Loader2, Sparkles, Camera, CalendarClock, ListChecks } from 'lucide-react';
 import {
-  INTEREST_TYPES, PROPERTY_TYPES, PURPOSES, LEAD_SOURCES, LEAD_GRADES,
+  INTEREST_TYPES, PROPERTY_TYPES, PURPOSES, LEAD_GRADES,
   type Enquiry,
 } from '@/types';
+import { SourcePicker } from '@/components/ManagedListSelect';
+import { categoryOfDepartment } from '@/lib/sources';
 import { BudgetStepperInput } from '@/components/ui/budget-stepper-input';
-import ProjectNameInput from '@/components/ProjectNameInput';
+import ProjectNameInput, { normalizeProjectName } from '@/components/ProjectNameInput';
 import { invalidateProjectNames } from '@/hooks/useProjectNames';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useProfiles } from '@/hooks/useProfiles';
@@ -87,7 +89,12 @@ export default function AddLead() {
       setName(enquiry.name);
       setPhone(enquiry.phone);
       if (enquiry.message) setRemarks(enquiry.message);
-      if (enquiry.source && LEAD_SOURCES.includes(enquiry.source)) setLeadSource(enquiry.source);
+      // Same list on both sides, so the enquiry's source carries over as-is
+      // (and the database keeps the two in sync from here on).
+      if (enquiry.source) setLeadSource(enquiry.source);
+      // Unlike the source, still editable — the client may settle on a
+      // different project once a salesperson talks to them.
+      if (enquiry.preferred_project) setPreferredProject(enquiry.preferred_project);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enquiryId]);
@@ -108,6 +115,10 @@ export default function AddLead() {
   }, [teamOptions.map((t) => t.id).join(',')]);
 
   const selectedTeam = teamOptions.find((t) => t.id === teamId) || null;
+  // Converting an enquiry that has a source: the lead's source is the
+  // enquiry's, so it's shown but not editable here.
+  const sourceLockedByEnquiry = !!sourceEnquiry?.source;
+  const sourceCategory = sourceEnquiry?.category ?? categoryOfDepartment(selectedTeam?.department_code || department);
   const teamMemberIds = teamId ? membersOf(teamId) : [];
   const teamMemberProfiles = profiles.filter((p) => teamMemberIds.includes(p.id) && p.role === 'sale');
 
@@ -140,7 +151,7 @@ export default function AddLead() {
     current_location: currentLocation.trim() || null,
     interest_type: interestType || null,
     property_type: propertyType || null,
-    preferred_project: preferredProject.trim(),
+    preferred_project: normalizeProjectName(preferredProject),
     budget_range: budgetRangeDisplay,
     purpose: purpose || null,
     lead_source: leadSource || null,
@@ -358,7 +369,7 @@ export default function AddLead() {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">{t('addLead.preferredProject')} <span className="text-destructive">*</span></Label>
-                  <ProjectNameInput placeholder={t('addLead.enterProjectName')} value={preferredProject} onChange={setPreferredProject} required className="h-12" />
+                  <ProjectNameInput placeholder={t('addLead.enterProjectName')} value={preferredProject} onChange={setPreferredProject} category={sourceCategory} required className="h-12" />
                 </div>
                 <div className="space-y-3 md:col-span-2">
                   <Label className="text-sm font-medium">{t('addLead.estimatedBudget')}</Label>
@@ -386,10 +397,10 @@ export default function AddLead() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
                 <div className="space-y-2">
                   <div className="h-5 flex items-center"><Label className="text-sm font-medium">{t('addLead.leadSource')}</Label></div>
-                  <Select value={leadSource} onValueChange={setLeadSource}>
-                    <SelectTrigger className="h-12"><SelectValue placeholder={t('addLead.selectSource')} /></SelectTrigger>
-                    <SelectContent>{LEAD_SOURCES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-                  </Select>
+                  <SourcePicker value={leadSource} onChange={setLeadSource} category={sourceCategory} disabled={sourceLockedByEnquiry} className="h-12" />
+                  {sourceLockedByEnquiry && sourceEnquiry && (
+                    <p className="text-[11px] text-muted-foreground">{t('addLead.sourceFromEnquiry').replace('{no}', sourceEnquiry.enquiry_no)}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <div className="h-5 flex items-center">

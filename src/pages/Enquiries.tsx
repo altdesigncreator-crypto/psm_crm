@@ -11,9 +11,11 @@ import PeriodFilterBar from '@/components/PeriodFilterBar';
 import {
   canAssignEnquiry, canActOnEnquiry, canEditEnquiry, canDeleteEnquiry, isExec, getRoleLabel, getDepartmentLabel, type CurrentUser,
 } from '@/lib/permissions';
-import {
-  ENQUIRY_STATUSES, CONDO_SOURCES, HOUSE_LAND_SOURCES, type Enquiry, type EnquiryStatus, type EnquiryCategory,
-} from '@/types';
+import { ENQUIRY_STATUSES, type Enquiry, type EnquiryStatus, type EnquiryCategory } from '@/types';
+import { useEnquirySources } from '@/hooks/useEnquirySources';
+import { buildSourceGroups, groupOfKey, sourceOfKey, SOURCE_KEY_SEP, type SourceGroup } from '@/lib/sources';
+import { SourceFilterSelect, SourcePicker } from '@/components/ManagedListSelect';
+import ProjectNameInput, { normalizeProjectName } from '@/components/ProjectNameInput';
 import { enumLabel } from '@/lib/translations';
 import { notifyUser } from '@/lib/notifyUser';
 import { fetchAllRows } from '@/lib/fetchAllRows';
@@ -26,9 +28,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -105,15 +105,6 @@ function openViberShare(text: string) {
   window.open(`viber://forward?text=${encodeURIComponent(text)}`, '_blank');
 }
 
-interface SourceGroup { key: string; label: string; sources: string[] }
-
-// Some sources (e.g. "Boss Viber") exist under both categories, so options
-// are keyed "<group>::<source>" to keep Select values unique; filtering
-// always compares on the source part alone.
-const SOURCE_KEY_SEP = '::';
-const sourceFilterKey = (group: string, source: string) => `${group}${SOURCE_KEY_SEP}${source}`;
-const sourceFromKey = (key: string) => key.slice(key.indexOf(SOURCE_KEY_SEP) + SOURCE_KEY_SEP.length);
-
 interface EnquiriesListUiState {
   search: string;
   statusFilter: 'all' | EnquiryStatus;
@@ -143,6 +134,7 @@ interface EnquiryFilterFieldsProps {
   sourceFilter: string;
   setSourceFilter: (v: string) => void;
   sourceGroups: SourceGroup[];
+  sourceCounts: Map<string, number>;
   projectFilter: string;
   setProjectFilter: (v: string) => void;
   projectOptions: { value: string; label: string; count: number }[];
@@ -156,7 +148,7 @@ interface EnquiryFilterFieldsProps {
 }
 
 function EnquiryFilterFields({
-  statusFilter, setStatusFilter, showStatus, categoryFilter, setCategoryFilter, sourceFilter, setSourceFilter, sourceGroups,
+  statusFilter, setStatusFilter, showStatus, categoryFilter, setCategoryFilter, sourceFilter, setSourceFilter, sourceGroups, sourceCounts,
   projectFilter, setProjectFilter, projectOptions, showStaffFilters, teamFilter, onTeamChange, teamOptions, assigneeFilter, setAssigneeFilter, assigneeOptions,
 }: EnquiryFilterFieldsProps) {
   const { t, lang } = useTranslation();
@@ -191,23 +183,7 @@ function EnquiryFilterFields({
       )}
       <div className="space-y-2">
         <label className="text-sm font-medium text-foreground">{t('addLead.leadSource')}</label>
-        <Select value={sourceFilter} onValueChange={setSourceFilter}>
-          <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('addLead.selectSource')} /></SelectTrigger>
-          <SelectContent className="max-h-80">
-            <SelectItem value="all">{t('enquiries.allSources')}</SelectItem>
-            {sourceGroups.map((g) => (
-              <React.Fragment key={g.key}>
-                <SelectSeparator />
-                <SelectGroup>
-                  <SelectLabel className="text-[11px] uppercase tracking-wider text-muted-foreground">{g.label}</SelectLabel>
-                  {g.sources.map((s) => (
-                    <SelectItem key={s} value={sourceFilterKey(g.key, s)}>{s}</SelectItem>
-                  ))}
-                </SelectGroup>
-              </React.Fragment>
-            ))}
-          </SelectContent>
-        </Select>
+        <SourceFilterSelect value={sourceFilter} onChange={setSourceFilter} groups={sourceGroups} counts={sourceCounts} allLabel={t('enquiries.allSources')} className="w-full h-12" />
       </div>
       <div className="space-y-2">
         <label className="text-sm font-medium text-foreground">{t('leads.filter.project')}</label>
@@ -330,16 +306,18 @@ export default function Enquiries() {
   // The Dashboard's Condo / House & Land tiles link here with ?category=…,
   // which wins over whatever category was cached from the last visit.
   // Project Insights links with ?project=…&period=…&month=…&year=… — a
-  // fresh intent, so the cached filters are dropped entirely for it.
+  // fresh intent, so the cached filters are dropped entirely for it — or
+  // with ?q=ENQ-… to open one enquiry (any period, every filter cleared).
   const [searchParams] = useSearchParams();
   const urlCategory = searchParams.get('category');
   const urlProject = searchParams.get('project');
   const urlPeriod = searchParams.get('period');
-  const restoredState = urlProject ? null : cachedListState;
+  const urlQuery = searchParams.get('q');
+  const restoredState = urlProject || urlQuery ? null : cachedListState;
   const linkedPeriod = urlPeriod === 'monthly' || urlPeriod === 'yearly' || urlPeriod === 'overall'
     ? { period: urlPeriod, selectedMonth: Number(searchParams.get('month') ?? new Date().getMonth()), selectedYear: Number(searchParams.get('year') ?? new Date().getFullYear()) } as const
     : undefined;
-  const [search, setSearch] = useState(() => restoredState?.search ?? '');
+  const [search, setSearch] = useState(() => urlQuery ?? restoredState?.search ?? '');
   const [statusFilter, setStatusFilter] = useState<'all' | EnquiryStatus>(() => restoredState?.statusFilter ?? 'all');
   const [categoryFilter, setCategoryFilterState] = useState<'all' | EnquiryCategory>(() =>
     urlCategory === 'condo' || urlCategory === 'house_land' ? urlCategory : restoredState?.categoryFilter ?? 'all');
@@ -400,26 +378,31 @@ export default function Enquiries() {
     if (assigneeFilter !== managerId && !membersOf(teamId).includes(assigneeFilter)) setAssigneeFilter('all');
   };
 
-  const sourceGroups = useMemo<SourceGroup[]>(() => {
-    const known = new Set<string>([...CONDO_SOURCES, ...HOUSE_LAND_SOURCES]);
-    const legacy = Array.from(new Set(enquiries.map((e) => e.source).filter((s): s is string => !!s && !known.has(s)))).sort();
-    return [
-      { key: 'condo', label: t('enquiries.categoryCondo'), sources: CONDO_SOURCES },
-      { key: 'house_land', label: t('enquiries.categoryHouseLand'), sources: HOUSE_LAND_SOURCES },
-      ...(legacy.length > 0 ? [{ key: 'other', label: t('enquiries.otherSources'), sources: legacy }] : []),
-    ].filter((g) => categoryFilter === 'all' || g.key === categoryFilter || g.key === 'other');
-  }, [enquiries, t, categoryFilter]);
+  // Managed in Settings → Lead sources — the same list, groups and filter
+  // as the Leads page (lib/sources, components/SourceSelect).
+  const { byCategory: enquirySources } = useEnquirySources();
+  const sourceGroups = useMemo<SourceGroup[]>(() => buildSourceGroups(
+    enquirySources,
+    enquiries.map((e) => e.source),
+    { condo: t('enquiries.categoryCondo'), house_land: t('enquiries.categoryHouseLand'), other: t('enquiries.otherSources') },
+    categoryFilter === 'all' ? null : categoryFilter,
+  ), [enquiries, enquirySources, t, categoryFilter]);
+  const sourceCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    enquiries.forEach((e) => { if (e.source) counts.set(e.source, (counts.get(e.source) ?? 0) + 1); });
+    return counts;
+  }, [enquiries]);
 
   // Keeps the source filter inside the chosen category — a Condo-only source
   // left selected under House & Land would silently match nothing.
   const setCategoryFilter = (category: 'all' | EnquiryCategory) => {
     setCategoryFilterState(category);
     if (category === 'all' || sourceFilter === 'all') return;
-    const sourceGroup = sourceFilter.slice(0, sourceFilter.indexOf(SOURCE_KEY_SEP));
+    const sourceGroup = groupOfKey(sourceFilter);
     if (sourceGroup !== category && sourceGroup !== 'other') setSourceFilter('all');
   };
 
-  const selectedSource = sourceFilter === 'all' ? null : sourceFromKey(sourceFilter);
+  const selectedSource = sourceFilter === 'all' ? null : sourceOfKey(sourceFilter);
 
   // Search covers name, phone, enquiry number, assignee and the message.
   // Each row's searchable text is normalized once per data change, and the
@@ -428,7 +411,7 @@ export default function Enquiries() {
   const searchQuery = useMemo(() => parseQuery(deferredSearch), [deferredSearch]);
   const highlight = useMemo(() => highlightPattern(searchQuery), [searchQuery]);
   const haystacks = useMemo(
-    () => new Map(enquiries.map((e) => [e.id, buildHaystack([e.name, e.phone, e.enquiry_no, nameOf(e.assigned_to), e.message])])),
+    () => new Map(enquiries.map((e) => [e.id, buildHaystack([e.name, e.phone, e.enquiry_no, nameOf(e.assigned_to), e.preferred_project, e.message])])),
     [enquiries, nameOf],
   );
 
@@ -501,7 +484,7 @@ export default function Enquiries() {
   };
 
   const filterFieldProps = {
-    statusFilter, setStatusFilter, categoryFilter, setCategoryFilter, sourceFilter, setSourceFilter, sourceGroups,
+    statusFilter, setStatusFilter, categoryFilter, setCategoryFilter, sourceFilter, setSourceFilter, sourceGroups, sourceCounts,
     projectFilter, setProjectFilter, projectOptions, showStaffFilters, teamFilter, onTeamChange: handleTeamChange, teamOptions,
     assigneeFilter, setAssigneeFilter, assigneeOptions,
   };
@@ -520,14 +503,13 @@ export default function Enquiries() {
   const [budget, setBudget] = useState('');
   const [sourceCategory, setSourceCategory] = useState<'condo' | 'house_land'>('condo');
   const [source, setSource] = useState('');
+  const [preferredProject, setPreferredProject] = useState('');
   const [message, setMessage] = useState('');
   const [assignTo, setAssignTo] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const sourceOptions = sourceCategory === 'house_land' ? HOUSE_LAND_SOURCES : CONDO_SOURCES;
-
   const resetForm = () => {
-    setName(''); setPhone(''); setBudget(''); setSourceCategory('condo'); setSource(''); setMessage(''); setAssignTo('');
+    setName(''); setPhone(''); setBudget(''); setSourceCategory('condo'); setSource(''); setPreferredProject(''); setMessage(''); setAssignTo('');
   };
 
   const openCreateDialog = () => {
@@ -543,6 +525,7 @@ export default function Enquiries() {
     setBudget(enq.budget || '');
     setSourceCategory(categoryOf(enq));
     setSource(enq.source || '');
+    setPreferredProject(enq.preferred_project || '');
     setMessage(enq.message || '');
     setAssignTo(enq.assigned_to);
     setDialogOpen(true);
@@ -554,6 +537,7 @@ export default function Enquiries() {
       phone: phone.trim(),
       budget: budget.trim() || null,
       source: source || null,
+      preferred_project: normalizeProjectName(preferredProject) || null,
       category: sourceCategory,
       message: message.trim() || null,
       assigned_to: assignTo,
@@ -572,6 +556,7 @@ export default function Enquiries() {
       phone: phone.trim(),
       budget: budget.trim() || null,
       source: source || null,
+      preferred_project: normalizeProjectName(preferredProject) || null,
       category: sourceCategory,
       message: message.trim() || null,
       assigned_to: assignTo,
@@ -966,10 +951,13 @@ export default function Enquiries() {
               </div>
               <div className="space-y-2">
                 <Label className="text-sm font-medium">{t('addLead.leadSource')}</Label>
-                <Select value={source} onValueChange={setSource}>
-                  <SelectTrigger className="h-11"><SelectValue placeholder={t('addLead.selectSource')} /></SelectTrigger>
-                  <SelectContent>{sourceOptions.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-                </Select>
+                <SourcePicker value={source} onChange={setSource} category={sourceCategory} className="h-11" />
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                {/* The same field as Add Lead — same suggestions, same rules — so
+                    converting carries the project over without re-typing it. */}
+                <Label className="text-sm font-medium">{t('addLead.preferredProject')}</Label>
+                <ProjectNameInput value={preferredProject} onChange={setPreferredProject} category={sourceCategory} placeholder={t('addLead.enterProjectName')} className="h-11" />
               </div>
               <div className="space-y-2 sm:col-span-2">
                 <Label className="text-sm font-medium">{t('enquiries.assignTo')} <span className="text-destructive">*</span></Label>
