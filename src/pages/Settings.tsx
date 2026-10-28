@@ -14,6 +14,7 @@ import { isPushSupported, hasActivePushSubscription, subscribeToPush, unsubscrib
 import AvatarCropDialog from '@/components/AvatarCropDialog';
 import StorageImage from '@/components/StorageImage';
 import AppUpdateCard from '@/components/AppUpdateCard';
+import InstallAppCard from '@/components/InstallAppCard';
 import { ProjectsManager, SourcesManager } from '@/components/ManagedListManager';
 import UpdateDot from '@/components/UpdateDot';
 import { appUpdateStore } from '@/lib/appUpdate';
@@ -714,6 +715,7 @@ export default function Settings() {
 
           {activeSection === 'about' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+              <InstallAppCard />
               <AppUpdateCard />
 
               <Card className="shadow-card rounded-xl border-0">

@@ -1,25 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Download, X, Share, SquarePlus } from 'lucide-react';
 import { usePwaInstall } from '@/hooks/usePwaInstall';
+import { isIOSDevice, isSafariBrowser } from '@/lib/pwaInstall';
 
 const DISMISS_KEY = 'pwa-install-dismissed';
 
-function isIOSDevice() {
-  if (typeof navigator === 'undefined') return false;
-  const ua = navigator.userAgent;
-  // iPadOS 13+ reports as "MacIntel" but exposes multi-touch, unlike a real Mac.
-  return /iphone|ipad|ipod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-}
-
-function isSafariBrowser() {
-  if (typeof navigator === 'undefined') return false;
-  const ua = navigator.userAgent;
-  return /safari/i.test(ua) && !/crios|fxios|edgios|chrome|android/i.test(ua);
-}
-
 /** Chrome/Android fires `beforeinstallprompt` and can trigger the native
- * install dialog directly (see src/hooks/usePwaInstall.ts, also used by the
- * always-visible header button in AppLayout.tsx). iOS Safari never fires
+ * install dialog directly (see src/lib/pwaInstall.ts, also used by the
+ * header button in AppLayout.tsx and Settings → About). iOS Safari never fires
  * that event — there is no programmatic install API — so home-screen
  * installation there is always a manual "Share → Add to Home Screen" action
  * we can only walk the user through with instructions. */
