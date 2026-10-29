@@ -9,11 +9,12 @@ import { useTeams } from '@/hooks/useTeams';
 import { usePeriodFilter, type Period } from '@/hooks/usePeriodFilter';
 import PeriodFilterBar from '@/components/PeriodFilterBar';
 import {
-  canAssignEnquiry, canActOnEnquiry, canEditEnquiry, canDeleteEnquiry, isExec, getRoleLabel, getDepartmentLabel, type CurrentUser,
+  canAssignEnquiry, canActOnEnquiry, canEditEnquiry, canDeleteEnquiry, hasPermission, getRoleLabel, getDepartmentLabel, type CurrentUser,
 } from '@/lib/permissions';
 import { ENQUIRY_STATUSES, type Enquiry, type EnquiryStatus, type EnquiryCategory } from '@/types';
 import { useEnquirySources } from '@/hooks/useEnquirySources';
 import { buildSourceGroups, groupOfKey, sourceOfKey, SOURCE_KEY_SEP, type SourceGroup } from '@/lib/sources';
+import { branchOfDepartment } from '@/lib/departments';
 import { SourceFilterSelect, SourcePicker } from '@/components/ManagedListSelect';
 import ProjectNameInput, { normalizeProjectName } from '@/components/ProjectNameInput';
 import { enumLabel } from '@/lib/translations';
@@ -490,7 +491,7 @@ export default function Enquiries() {
   };
 
   const assignableProfiles = useMemo(
-    () => profiles.filter((p) => (p.role === 'manager' || p.role === 'sale') && p.status === 'active'),
+    () => profiles.filter((p) => hasPermission(p.role, 'enquiries.receive') && p.status === 'active'),
     [profiles]
   );
 
@@ -507,6 +508,9 @@ export default function Enquiries() {
   const [message, setMessage] = useState('');
   const [assignTo, setAssignTo] = useState('');
   const [saving, setSaving] = useState(false);
+  // An enquiry belongs to its assignee's branch, so the form offers that
+  // branch's sources and projects (yours until someone is picked).
+  const formBranch = branchOfDepartment(profiles.find((p) => p.id === assignTo)?.department_code ?? department);
 
   const resetForm = () => {
     setName(''); setPhone(''); setBudget(''); setSourceCategory('condo'); setSource(''); setPreferredProject(''); setMessage(''); setAssignTo('');
@@ -951,13 +955,13 @@ export default function Enquiries() {
               </div>
               <div className="space-y-2">
                 <Label className="text-sm font-medium">{t('addLead.leadSource')}</Label>
-                <SourcePicker value={source} onChange={setSource} category={sourceCategory} className="h-11" />
+                <SourcePicker value={source} onChange={setSource} category={sourceCategory} branch={formBranch} className="h-11" />
               </div>
               <div className="space-y-2 sm:col-span-2">
                 {/* The same field as Add Lead — same suggestions, same rules — so
                     converting carries the project over without re-typing it. */}
                 <Label className="text-sm font-medium">{t('addLead.preferredProject')}</Label>
-                <ProjectNameInput value={preferredProject} onChange={setPreferredProject} category={sourceCategory} placeholder={t('addLead.enterProjectName')} className="h-11" />
+                <ProjectNameInput value={preferredProject} onChange={setPreferredProject} category={sourceCategory} branch={formBranch} placeholder={t('addLead.enterProjectName')} className="h-11" />
               </div>
               <div className="space-y-2 sm:col-span-2">
                 <Label className="text-sm font-medium">{t('enquiries.assignTo')} <span className="text-destructive">*</span></Label>
@@ -966,7 +970,7 @@ export default function Enquiries() {
                   <SelectContent>
                     {assignableProfiles.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
-                        {p.name} · {getRoleLabel(p.role, lang)}{isExec(role) ? ` · ${getDepartmentLabel(p.department_code)}` : ''}
+                        {p.name} · {getRoleLabel(p.role, lang)}{hasPermission(role, 'enquiries.create', 'all') ? ` · ${getDepartmentLabel(p.department_code)}` : ''}
                       </SelectItem>
                     ))}
                   </SelectContent>

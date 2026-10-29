@@ -8,7 +8,7 @@ import { useProfiles } from '@/hooks/useProfiles';
 import StorageImage from '@/components/StorageImage';
 import { useDepartments } from '@/hooks/useDepartments';
 import { useDebounce } from '@/hooks/use-debounce';
-import { isDepartmentScoped, getDepartmentLabel, getRoleLabel, ROLE_TIERS } from '@/lib/permissions';
+import { seesAllDepartments, getDepartmentLabel, getRole, getRoleLabel } from '@/lib/permissions';
 import { enumLabel } from '@/lib/translations';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -142,7 +142,7 @@ export default function TeamActivity() {
       if (f.created_by && byUser.has(f.created_by)) byUser.get(f.created_by)!.followUps.push(f);
     }
 
-    const tierIndex = (r: string) => { const i = ROLE_TIERS.indexOf(r as (typeof ROLE_TIERS)[number]); return i === -1 ? 99 : i; };
+    const tierIndex = (r: string) => getRole(r)?.rank ?? Number.MAX_SAFE_INTEGER;
     return Array.from(byUser.values()).sort((a, b) => {
       const d = tierIndex(a.profile.role) - tierIndex(b.profile.role);
       return d !== 0 ? d : a.profile.name.localeCompare(b.profile.name);
@@ -238,14 +238,14 @@ export default function TeamActivity() {
                   </SheetTitle>
                 </SheetHeader>
                 <div className="space-y-5">
-                  {!isDepartmentScoped(role) && (
+                  {seesAllDepartments(role) && (
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-foreground">{t('leads.filter.department')}</label>
                       <Select value={deptFilter} onValueChange={setDeptFilter}>
                         <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.department')} /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">{t('leads.filter.allDepartments')}</SelectItem>
-                          {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+                          {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{getDepartmentLabel(d.code)}</SelectItem>))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -293,12 +293,12 @@ export default function TeamActivity() {
             {/* Desktop/tablet only — mobile uses the compact Filters sheet
                 trigger next to search instead of these inline selects. */}
             <div className="hidden md:flex items-center gap-2 md:ml-auto flex-wrap">
-              {!isDepartmentScoped(role) && (
+              {seesAllDepartments(role) && (
                 <Select value={deptFilter} onValueChange={setDeptFilter}>
                   <SelectTrigger className="h-11 w-[160px] text-sm"><Filter className="w-3.5 h-3.5 mr-1 text-muted-foreground" /><SelectValue placeholder={t('leads.filter.department')} /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">{t('leads.filter.allDepartments')}</SelectItem>
-                    {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+                    {departments.map((d) => (<SelectItem key={d.code} value={d.code}>{getDepartmentLabel(d.code)}</SelectItem>))}
                   </SelectContent>
                 </Select>
               )}

@@ -19,6 +19,8 @@ interface ProjectNameInputProps {
   onChange: (value: string) => void;
   /** Narrows the curated list (Settings → Projects) to Condo or House & Land. */
   category?: EnquiryCategory | null;
+  /** The branch whose project list to suggest from; omit for every branch. */
+  branch?: string | null;
   placeholder?: string;
   className?: string;
   required?: boolean;
@@ -37,9 +39,9 @@ interface ProjectNameInputProps {
  * spelling. Full keyboard support (↑ ↓ Enter Esc) — Enter only picks a
  * highlighted suggestion, so it never submits the surrounding form by
  * accident. */
-export default function ProjectNameInput({ value, onChange, category = null, placeholder, className, required }: ProjectNameInputProps) {
+export default function ProjectNameInput({ value, onChange, category = null, branch, placeholder, className, required }: ProjectNameInputProps) {
   const { index } = useProjectIndex();
-  const { byCategory } = useProjectOptions();
+  const { byCategory } = useProjectOptions(branch);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);

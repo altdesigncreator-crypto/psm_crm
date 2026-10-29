@@ -11,8 +11,9 @@ const SOURCES: ManagedListConfig = {
   fallback: { condo: CONDO_SOURCES, house_land: HOUSE_LAND_SOURCES },
 };
 
-/** Lead and enquiry sources — one list (Settings → Lead sources), read by
- * every source picker and filter on the Enquiries and Leads pages. */
-export function useEnquirySources() {
-  return useManagedList(SOURCES);
+/** Lead and enquiry sources — one list per branch (Settings → Lead
+ * sources), read by every source picker and filter on the Enquiries and
+ * Leads pages. Pass the branch the form is for; omit it for filters. */
+export function useEnquirySources(branch?: string | null) {
+  return useManagedList(SOURCES, branch);
 }

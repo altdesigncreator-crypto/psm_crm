@@ -1,8 +1,9 @@
 -- =============================================================================
 -- PSM Real Estate Sales CRM — Postgres schema for Supabase
 -- =============================================================================
--- Org model: department-scoped (house / condo / project), five role tiers
--- (boss, super_admin, admin, manager, sale). See src/lib/permissions.ts for the
+-- Org model: department-scoped (house / condo / project), with dynamic roles
+-- (section 2a) — five built-in (boss, super_admin, admin, manager, sale) plus
+-- any created from Role Management. See src/lib/permissions.ts for the
 -- client-side mirror of this model.
 --
 -- Run this whole file once against a fresh Supabase project's SQL editor
@@ -16,10 +17,6 @@ create extension if not exists pgcrypto;
 -- =============================================================================
 -- 1. ENUM TYPES
 -- =============================================================================
-
-do $$ begin
-  create type role_tier as enum ('boss', 'super_admin', 'admin', 'manager', 'sale');
-exception when duplicate_object then null; end $$;
 
 do $$ begin
   create type user_status as enum ('active', 'inactive');
@@ -94,12 +91,33 @@ exception when duplicate_object then null; end $$;
 -- 2. CORE TABLES
 -- =============================================================================
 
-create table if not exists public.departments (
-  code        text primary key,
-  name        text not null,
+-- Branches (Yangon, Mandalay, …) own departments; everything that belongs
+-- to a department belongs to its branch. See section 24 for who may edit them.
+create table if not exists public.branches (
+  code        text primary key check (code ~ '^[a-z][a-z0-9_]{1,39}$'),
+  name        text not null check (length(trim(name)) between 1 and 60),
+  name_mm     text,
+  sort_order  integer not null default 0,
   is_active   boolean not null default true,
   created_at  timestamptz not null default now()
 );
+
+insert into public.branches (code, name, name_mm, sort_order) values
+  ('yangon',   'Yangon',   'ရန်ကုန်',  10),
+  ('mandalay', 'Mandalay', 'မန္တလေး', 20)
+on conflict (code) do nothing;
+
+create table if not exists public.departments (
+  code         text primary key,
+  name         text not null,
+  branch_code  text not null references public.branches(code),
+  -- Which project / lead-source list (Condo or House & Land) its forms use.
+  category     text check (category in ('condo', 'house_land')),
+  is_active    boolean not null default true,
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists idx_departments_branch on public.departments(branch_code);
 
 create table if not exists public.attendance_settings (
   department_code  text primary key references public.departments(code) on delete cascade,
@@ -111,20 +129,173 @@ create table if not exists public.attendance_settings (
   updated_at       timestamptz not null default now()
 );
 
+-- =============================================================================
+-- 2a. ROLES & PERMISSIONS — roles are data, not code. A role holds a set of
+-- permissions, each at a scope (own / team / department / all). The RLS
+-- policies in section 12 only ever ask "what scope does the caller have for
+-- permission X?" (public.my_scope), never "is the caller an Admin?".
+-- Built-in roles are seeded below; more are created from Role Management.
+-- =============================================================================
+
+-- Catalog tables -----------------------------------------------------------
+
+create table if not exists public.roles (
+  key                  text primary key check (key ~ '^[a-z][a-z0-9_]{1,39}$'),
+  name                 text not null check (length(trim(name)) between 1 and 60),
+  name_mm              text,
+  description          text,
+  -- Seniority: lower is more senior. Orders role lists and decides who may
+  -- edit whom (you can only edit roles with a higher rank than your own).
+  rank                 integer not null check (rank >= 0),
+  -- Built-in roles can be re-permissioned but not deleted.
+  is_system            boolean not null default false,
+  -- The single all-access role. Its permissions are implicit (always every
+  -- permission at its widest scope), so it can never be locked out.
+  is_owner             boolean not null default false,
+  -- Department-scoped roles must belong to a department; global roles
+  -- (Boss / Super Admin) don't.
+  requires_department  boolean not null default true,
+  created_at           timestamptz not null default now(),
+  updated_at           timestamptz not null default now()
+);
+
+create unique index if not exists roles_single_owner on public.roles (is_owner) where is_owner;
+
+create table if not exists public.permissions (
+  key          text primary key,
+  category     text not null,
+  -- Scopes this permission supports, narrowest first. A yes/no permission
+  -- has just {all}.
+  scopes       text[] not null check (scopes <@ array['own', 'team', 'department', 'branch', 'all']::text[] and cardinality(scopes) > 0),
+  sort_order   integer not null default 0,
+  description  text not null,
+  -- 'access' grants data or actions. 'capability' only makes the holder
+  -- eligible for something others grant (being a team's manager, being
+  -- assigned enquiries) — it doesn't count when checking for escalation.
+  kind         text not null default 'access' check (kind in ('access', 'capability'))
+);
+
+create table if not exists public.role_permissions (
+  role_key        text not null references public.roles(key) on delete cascade,
+  permission_key  text not null references public.permissions(key) on delete cascade,
+  scope           text not null check (scope in ('own', 'team', 'department', 'branch', 'all')),
+  primary key (role_key, permission_key)
+);
+
+create index if not exists idx_role_permissions_permission on public.role_permissions(permission_key);
+
+
+-- Permission catalog -------------------------------------------------------
+-- Owned by code: re-running refreshes descriptions and allowed scopes.
+
+insert into public.permissions (key, category, scopes, sort_order, description, kind) values
+  ('leads.view',               'leads',      '{own,team,department,branch,all}', 10,  'See leads and their history, follow-ups, appointments and site visits', 'access'),
+  ('leads.edit',               'leads',      '{own,team,department,branch,all}', 20,  'Edit lead details and move leads through the pipeline', 'access'),
+  ('leads.followup',           'leads',      '{own,team,department,branch,all}', 30,  'Log follow-ups, appointments and site visits', 'access'),
+  ('leads.reassign',           'leads',      '{team,department,branch,all}',     40,  'Assign or reassign leads to other staff', 'access'),
+  ('leads.delete',             'leads',      '{own,team,department,branch,all}', 50,  'Delete leads', 'access'),
+  ('leads.import',             'leads',      '{all}',                     60,  'Import leads from a spreadsheet', 'access'),
+  ('leads.bulk_delete',        'leads',      '{all}',                     70,  'Select and delete many leads at once', 'access'),
+  ('enquiries.view',           'enquiries',  '{own,team,department,branch,all}', 110, 'See enquiries', 'access'),
+  ('enquiries.create',         'enquiries',  '{department,branch,all}',          120, 'Log new enquiries and assign them to staff', 'access'),
+  ('enquiries.manage',         'enquiries',  '{department,branch,all}',          130, 'Correct or delete other people''s pending enquiries', 'access'),
+  ('enquiries.manage_accepted','enquiries',  '{all}',                     140, 'Also correct or delete enquiries after they''re accepted', 'access'),
+  ('enquiries.receive',        'enquiries',  '{all}',                     150, 'Can be assigned enquiries', 'capability'),
+  ('staff.view',               'staff',      '{team,department,branch,all}',     210, 'See staff profiles (department-wide or wider opens the Staff page)', 'access'),
+  ('staff.manage',             'staff',      '{all}',                     220, 'Create, edit, deactivate and delete staff accounts; reset passwords', 'access'),
+  ('staff.warn',               'staff',      '{team,department,branch,all}',     230, 'Issue warnings to staff', 'access'),
+  ('staff.notify',             'staff',      '{all}',                     240, 'Send push notifications to other staff', 'access'),
+  ('attendance.manage',        'staff',      '{team,department,branch,all}',     250, 'See and adjust other people''s check-ins', 'access'),
+  ('attendance.delete',        'staff',      '{all}',                     260, 'Delete check-in records', 'access'),
+  ('teams.view',               'teams',      '{department,branch,all}',          310, 'See teams', 'access'),
+  ('teams.manage',             'teams',      '{department,branch,all}',          320, 'Create teams and change their members', 'access'),
+  ('teams.lead',               'teams',      '{all}',                     330, 'Can be a team''s manager', 'capability'),
+  ('teams.join',               'teams',      '{all}',                     340, 'Can be a team member', 'capability'),
+  ('reports.kpi',              'reports',    '{all}',                     410, 'KPI board and analytics', 'access'),
+  ('reports.team_activity',    'reports',    '{all}',                     420, 'Team activity', 'access'),
+  ('reports.project_insights', 'reports',    '{all}',                     430, 'Project insights', 'access'),
+  ('catalog.manage',           'system',     '{branch,all}',                     510, 'Manage the project and lead-source lists', 'access'),
+  ('map.manage',               'system',     '{all}',                     520, 'Edit or delete anyone''s map pins', 'access'),
+  ('system.configure',         'system',     '{all}',                     530, 'Departments, attendance windows, system settings and backups', 'access'),
+  ('audit.view',               'system',     '{all}',                     540, 'Read the audit log', 'access'),
+  ('roles.manage',             'system',     '{all}',                     550, 'Create and edit roles and their permissions', 'access')
+on conflict (key) do update
+  set category = excluded.category, scopes = excluded.scopes,
+      sort_order = excluded.sort_order, description = excluded.description, kind = excluded.kind;
+
+
+-- Built-in roles -------------------
+-- `on conflict do nothing`: re-running never overwrites an admin's edits.
+
+insert into public.roles (key, name, name_mm, rank, is_system, is_owner, requires_department) values
+  ('boss',        'Boss',         'ဘော့စ်',              0,  true, true,  false),
+  ('super_admin', 'Super Admin',  'အကြီးတန်း Admin',      10, true, false, false),
+  ('admin',       'Admin',        'Admin',               20, true, false, true),
+  ('manager',     'Manager',      'မန်နေဂျာ',             30, true, false, true),
+  ('sale',        'Sales Person', 'အရောင်းဝန်ထမ်း',        40, true, false, true)
+on conflict (key) do nothing;
+
+insert into public.role_permissions (role_key, permission_key, scope)
+select v.role_key, v.permission_key, v.scope
+from (values
+  -- Super Admin: everything, globally (Boss is the owner role — implicit).
+  ('super_admin', 'leads.view', 'all'), ('super_admin', 'leads.edit', 'all'),
+  ('super_admin', 'leads.followup', 'all'), ('super_admin', 'leads.reassign', 'all'),
+  ('super_admin', 'leads.delete', 'all'), ('super_admin', 'leads.import', 'all'),
+  ('super_admin', 'leads.bulk_delete', 'all'),
+  ('super_admin', 'enquiries.view', 'all'), ('super_admin', 'enquiries.create', 'all'),
+  ('super_admin', 'enquiries.manage', 'all'), ('super_admin', 'enquiries.manage_accepted', 'all'),
+  ('super_admin', 'staff.view', 'all'), ('super_admin', 'staff.manage', 'all'),
+  ('super_admin', 'staff.warn', 'all'), ('super_admin', 'staff.notify', 'all'),
+  ('super_admin', 'attendance.manage', 'all'), ('super_admin', 'attendance.delete', 'all'),
+  ('super_admin', 'teams.view', 'all'), ('super_admin', 'teams.manage', 'all'),
+  ('super_admin', 'reports.kpi', 'all'), ('super_admin', 'reports.team_activity', 'all'),
+  ('super_admin', 'reports.project_insights', 'all'),
+  ('super_admin', 'catalog.manage', 'all'), ('super_admin', 'map.manage', 'all'),
+  ('super_admin', 'system.configure', 'all'), ('super_admin', 'audit.view', 'all'),
+  ('super_admin', 'roles.manage', 'all'),
+  -- Admin: their own department.
+  ('admin', 'leads.view', 'department'), ('admin', 'leads.edit', 'department'),
+  ('admin', 'leads.followup', 'department'), ('admin', 'leads.reassign', 'department'),
+  ('admin', 'leads.import', 'all'),
+  ('admin', 'enquiries.view', 'department'), ('admin', 'enquiries.create', 'department'),
+  ('admin', 'enquiries.manage', 'department'),
+  ('admin', 'staff.view', 'department'), ('admin', 'staff.warn', 'department'),
+  ('admin', 'staff.notify', 'all'), ('admin', 'attendance.manage', 'department'),
+  ('admin', 'teams.view', 'department'), ('admin', 'teams.manage', 'department'),
+  ('admin', 'reports.team_activity', 'all'), ('admin', 'reports.project_insights', 'all'),
+  ('admin', 'catalog.manage', 'branch'),
+  -- Manager: the teams they run, plus their own leads.
+  ('manager', 'leads.view', 'team'), ('manager', 'leads.edit', 'own'),
+  ('manager', 'leads.followup', 'own'), ('manager', 'leads.reassign', 'team'),
+  ('manager', 'leads.delete', 'own'), ('manager', 'leads.import', 'all'),
+  ('manager', 'enquiries.view', 'own'), ('manager', 'enquiries.receive', 'all'),
+  ('manager', 'staff.view', 'team'), ('manager', 'staff.warn', 'team'),
+  ('manager', 'attendance.manage', 'team'),
+  ('manager', 'teams.view', 'department'), ('manager', 'teams.lead', 'all'),
+  ('manager', 'reports.team_activity', 'all'), ('manager', 'reports.project_insights', 'all'),
+  ('manager', 'catalog.manage', 'branch'),
+  -- Sales Person: their own work.
+  ('sale', 'leads.view', 'own'), ('sale', 'leads.edit', 'own'),
+  ('sale', 'leads.followup', 'own'), ('sale', 'leads.delete', 'own'),
+  ('sale', 'enquiries.view', 'own'), ('sale', 'enquiries.receive', 'all'),
+  ('sale', 'teams.view', 'department'), ('sale', 'teams.join', 'all')
+) as v(role_key, permission_key, scope)
+where not exists (select 1 from public.role_permissions rp where rp.role_key = v.role_key)
+on conflict do nothing;
+
+
 create table if not exists public.profiles (
   id               uuid primary key references auth.users(id) on delete cascade,
   email            text not null unique,
   name             text not null,
   phone            text,
-  role             role_tier not null default 'sale',
+  role             text not null default 'sale' references public.roles(key),
   department_code  text references public.departments(code),
   status           user_status not null default 'active',
   avatar_url       text,
   created_at       timestamptz not null default now(),
-  updated_at       timestamptz not null default now(),
-  constraint profiles_department_required_for_scoped_roles check (
-    role in ('boss', 'super_admin') or department_code is not null
-  )
+  updated_at       timestamptz not null default now()
 );
 
 create index if not exists idx_profiles_department on public.profiles(department_code);
@@ -190,14 +361,13 @@ create index if not exists idx_team_members_person on public.team_members(sale_p
 create or replace function public.enforce_team_manager_rules() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
-  v_role public.role_tier;
   v_dept text;
 begin
   if new.manager_id is not null then
-    select role, department_code into v_role, v_dept from public.profiles where id = new.manager_id;
-    if v_role is distinct from 'manager' then
-      raise exception 'A team''s manager must have the Manager role.';
+    if public.user_scope(new.manager_id, 'teams.lead') = 0 then
+      raise exception 'A team''s manager must have a role that can lead teams.';
     end if;
+    select department_code into v_dept from public.profiles where id = new.manager_id;
     if v_dept is distinct from new.department_code then
       raise exception 'A manager can only run teams inside their own department.';
     end if;
@@ -238,14 +408,13 @@ create trigger trg_teams_cascade_manager after insert or update of manager_id on
 create or replace function public.enforce_team_member_rules() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare
-  v_role public.role_tier;
   v_dept text;
   v_team_dept text;
 begin
-  select role, department_code into v_role, v_dept from public.profiles where id = new.sale_person_id;
+  select department_code into v_dept from public.profiles where id = new.sale_person_id;
   select department_code into v_team_dept from public.teams where id = new.team_id;
-  if v_role is distinct from 'sale' then
-    raise exception 'Only Sales Person accounts can be added to a team.';
+  if public.user_scope(new.sale_person_id, 'teams.join') = 0 then
+    raise exception 'Only staff whose role can join teams can be added to a team.';
   end if;
   if v_dept is distinct from v_team_dept then
     raise exception 'A sales person can only join teams inside their own department.';
@@ -591,48 +760,95 @@ create table if not exists public.settings (
 -- 7. HELPER FUNCTIONS (used by RLS policies)
 -- =============================================================================
 
-create or replace function public.current_role() returns role_tier
-language sql stable security definer set search_path = public as $$
-  select role from public.profiles where id = auth.uid();
-$$;
-
 create or replace function public.current_department() returns text
 language sql stable security definer set search_path = public as $$
   select department_code from public.profiles where id = auth.uid();
 $$;
 
-create or replace function public.is_exec() returns boolean
-language sql stable as $$
-  select public.current_role() in ('boss', 'super_admin');
+-- Resolver -----------------------------------------------------------------
+
+create or replace function public.scope_rank(p_scope text) returns integer
+language sql immutable as $$
+  select case p_scope
+    when 'own' then 1 when 'team' then 2 when 'department' then 3 when 'branch' then 4 when 'all' then 5
+    else 0 end;
 $$;
 
-create or replace function public.is_admin_or_above() returns boolean
-language sql stable as $$
-  select public.current_role() in ('boss', 'super_admin', 'admin');
-$$;
-
-create or replace function public.is_manager_or_above() returns boolean
-language sql stable as $$
-  select public.current_role() in ('boss', 'super_admin', 'admin', 'manager');
-$$;
-
-create or replace function public.owns_lead(p_lead_id uuid) returns boolean
+-- A role's scope for a permission, 0-4. Unknown permission keys resolve to 0
+-- (fail closed), and the owner role always gets the widest scope offered.
+create or replace function public.role_scope(p_role text, p_permission text) returns integer
 language sql stable security definer set search_path = public as $$
-  select exists (
-    select 1 from public.leads where id = p_lead_id and owner_id = auth.uid()
-  );
+  select coalesce((
+    select case
+      when r.is_owner then (select max(public.scope_rank(s)) from unnest(pm.scopes) s)
+      else coalesce(public.scope_rank(rp.scope), 0)
+    end
+    from public.roles r
+    join public.permissions pm on pm.key = p_permission
+    left join public.role_permissions rp on rp.role_key = r.key and rp.permission_key = pm.key
+    where r.key = p_role
+  ), 0);
 $$;
 
--- Admin is department-scoped (like Manager, with more power inside the
--- department); only Boss/Super Admin see across departments. This helper
--- checks a lead against the caller's own department.
-create or replace function public.lead_in_my_department(p_lead_id uuid) returns boolean
+create or replace function public.user_scope(p_user uuid, p_permission text) returns integer
 language sql stable security definer set search_path = public as $$
-  select exists (
-    select 1 from public.leads
-    where id = p_lead_id and department_code = public.current_department()
-  );
+  select public.role_scope((select role from public.profiles where id = p_user), p_permission);
 $$;
+
+-- What RLS policies call. Wrap in `(select ...)` inside a policy so Postgres
+-- evaluates it once per statement rather than once per row.
+create or replace function public.my_scope(p_permission text) returns integer
+language sql stable security definer set search_path = public as $$
+  select public.user_scope(auth.uid(), p_permission);
+$$;
+
+create or replace function public.has_permission(p_permission text, p_min_scope text default 'own') returns boolean
+language sql stable as $$
+  select public.my_scope(p_permission) >= greatest(public.scope_rank(p_min_scope), 1);
+$$;
+
+-- Is every permission in p_role within what p_user holds? The owner role is
+-- only "within" another owner. This is the anti-escalation check.
+create or replace function public.role_within_user(p_role text, p_user uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select
+    case when (select is_owner from public.roles where key = p_role)
+      then coalesce((select r.is_owner from public.profiles p join public.roles r on r.key = p.role where p.id = p_user), false)
+      else not exists (
+        select 1 from public.permissions pm
+        where pm.kind = 'access'
+          and public.role_scope(p_role, pm.key) > public.user_scope(p_user, pm.key)
+      )
+    end;
+$$;
+
+-- Edge Functions (service role) ask on behalf of the caller.
+create or replace function public.user_can_assign_role(p_user uuid, p_role text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.roles where key = p_role)
+     and public.user_scope(p_user, 'staff.manage') >= public.scope_rank('all')
+     and public.role_within_user(p_role, p_user);
+$$;
+
+-- Edge Functions (service role) ask "does this user hold X at scope Y?"
+-- instead of comparing numbers themselves.
+create or replace function public.user_has_permission(p_user uuid, p_permission text, p_min_scope text default 'own')
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.user_scope(p_user, p_permission) >= greatest(public.scope_rank(p_min_scope), 1);
+$$;
+
+revoke execute on function public.user_has_permission(uuid, text, text) from public, anon, authenticated;
+grant execute on function public.user_has_permission(uuid, text, text) to service_role;
+
+revoke execute on function public.role_scope(text, text) from public, anon, authenticated;
+revoke execute on function public.user_scope(uuid, text) from public, anon, authenticated;
+revoke execute on function public.role_within_user(text, uuid) from public, anon, authenticated;
+revoke execute on function public.user_can_assign_role(uuid, text) from public, anon, authenticated;
+grant execute on function public.role_scope(text, text) to service_role;
+grant execute on function public.user_scope(uuid, text) to service_role;
+grant execute on function public.role_within_user(text, uuid) to service_role;
+grant execute on function public.user_can_assign_role(uuid, text) to service_role;
 
 -- Team-scoped equivalents of the helpers above — Manager's RLS uses these
 -- instead of department-wide checks; Admin/exec are unaffected by teams.
@@ -677,23 +893,95 @@ language sql stable security definer set search_path = public as $$
   );
 $$;
 
--- Who can attach/replace a lead's visit or appointment photo — mirrors the
--- same visibility rule as manager_scoped_lead/canMonitorLead (team-scoped
--- manager, department-scoped admin, exec: all) plus the lead's own owner and
--- whoever created it, so the person filling out Add Lead can still attach a
--- photo for a lead they've just handed off to someone else.
+-- Scope predicates ---------------------------------------------------------
+-- One definition of "is this row inside my scope" per data shape, so every
+-- policy agrees. All return false, never null: plpgsql treats `if not null`
+-- as "don't raise", which would silently authorize.
+--
+-- Leads: `own` means leads you own. Pass p_owner = null to ignore ownership
+-- (reassigning was never granted just for owning the lead).
+-- People: scope covers the people you oversee — never yourself. Policies
+-- that should include "your own row" say so explicitly.
+
+create or replace function public.department_branch(p_dept text) returns text
+language sql stable security definer set search_path = public as $$
+  select branch_code from public.departments where code = p_dept;
+$$;
+
+create or replace function public.current_branch() returns text
+language sql stable security definer set search_path = public as $$
+  select d.branch_code from public.profiles p
+  join public.departments d on d.code = p.department_code
+  where p.id = auth.uid();
+$$;
+
+create or replace function public.lead_in_scope(p_scope integer, p_owner uuid, p_dept text, p_team uuid) returns boolean
+language sql stable as $$
+  select coalesce(
+    p_scope >= public.scope_rank('all')
+    or (p_scope >= public.scope_rank('branch') and public.department_branch(p_dept) = public.current_branch())
+    or (p_scope >= public.scope_rank('department') and p_dept = public.current_department())
+    or (p_scope >= public.scope_rank('team') and p_team is not null and public.manages_team(p_team))
+    or (p_scope >= public.scope_rank('own') and p_owner = auth.uid()),
+    false);
+$$;
+
+create or replace function public.person_in_scope(p_scope integer, p_person uuid, p_dept text) returns boolean
+language sql stable as $$
+  select coalesce(
+    p_scope >= public.scope_rank('all')
+    or (p_scope >= public.scope_rank('branch') and public.department_branch(p_dept) = public.current_branch())
+    or (p_scope >= public.scope_rank('department') and p_dept = public.current_department())
+    or (p_scope >= public.scope_rank('team') and public.manages_person(p_person)),
+    false);
+$$;
+
+create or replace function public.dept_in_scope(p_scope integer, p_dept text) returns boolean
+language sql stable as $$
+  select coalesce(
+    p_scope >= public.scope_rank('all')
+    or (p_scope >= public.scope_rank('branch') and public.department_branch(p_dept) = public.current_branch())
+    or (p_scope >= public.scope_rank('department') and p_dept = public.current_department()),
+    false);
+$$;
+
+-- For rows that belong to a branch directly (projects, lead sources).
+create or replace function public.branch_in_scope(p_scope integer, p_branch text) returns boolean
+language sql stable as $$
+  select coalesce(
+    p_scope >= public.scope_rank('all')
+    or (p_scope >= public.scope_rank('branch') and p_branch = public.current_branch()),
+    false);
+$$;
+
+-- For child tables (follow-ups, appointments, …): looks the lead up without
+-- going through leads RLS, then applies the caller's scope for p_permission.
+create or replace function public.lead_permitted(p_lead_id uuid, p_permission text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.leads l
+    where l.id = p_lead_id
+      and public.lead_in_scope(public.my_scope(p_permission), l.owner_id, l.department_code, l.team_id)
+  );
+$$;
+
+create or replace function public.profile_department(p_person uuid) returns text
+language sql stable security definer set search_path = public as $$
+  select department_code from public.profiles where id = p_person;
+$$;
+
+create or replace function public.team_department(p_team uuid) returns text
+language sql stable security definer set search_path = public as $$
+  select department_code from public.teams where id = p_team;
+$$;
+
 create or replace function public.can_manage_lead_photos(p_lead_id uuid) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (
     select 1 from public.leads l
     where l.id = p_lead_id
-      and (
-        public.is_exec()
-        or (public.current_role() = 'admin' and l.department_code = public.current_department())
-        or (public.current_role() = 'manager' and l.team_id is not null and public.manages_team(l.team_id))
-        or l.owner_id = auth.uid()
-        or l.created_by = auth.uid()
-      )
+      and (public.lead_in_scope(public.my_scope('leads.view'), l.owner_id, l.department_code, l.team_id)
+           or l.created_by = auth.uid())
   );
 $$;
 
@@ -1077,10 +1365,16 @@ begin
   if (new.role is distinct from old.role
       or new.department_code is distinct from old.department_code
       or new.status is distinct from old.status) then
-    -- Only Boss/Super Admin may change role, department, or active status
-    -- (FRD rule: Admin cannot manage managers/salespeople/roles).
-    if not public.is_exec() then
-      raise exception 'Only Boss/Super Admin can change role, department, or status';
+    if public.my_scope('staff.manage') < public.scope_rank('all') then
+      raise exception 'You don''t have permission to change role, department, or status';
+    end if;
+    -- You can't manage someone whose access exceeds yours…
+    if not public.role_within_user(old.role, auth.uid()) then
+      raise exception 'You can''t change an account whose role has more access than yours';
+    end if;
+    -- …or hand out more access than you have.
+    if new.role is distinct from old.role and not public.role_within_user(new.role, auth.uid()) then
+      raise exception 'You can''t assign a role with more access than your own';
     end if;
   end if;
 
@@ -1096,6 +1390,23 @@ $$;
 drop trigger if exists trg_profiles_guard on public.profiles;
 create trigger trg_profiles_guard before update on public.profiles
   for each row execute function public.enforce_profile_update_rules();
+
+-- Replaces the profiles_department_required_for_scoped_roles CHECK, which
+-- can't read another table.
+create or replace function public.enforce_profile_role_department() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.department_code is null
+     and coalesce((select requires_department from public.roles where key = new.role), true) then
+    raise exception 'The % role requires a department.', new.role;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_profiles_role_department on public.profiles;
+create trigger trg_profiles_role_department before insert or update of role, department_code on public.profiles
+  for each row execute function public.enforce_profile_role_department();
 
 -- =============================================================================
 -- 12. ROW LEVEL SECURITY
@@ -1127,7 +1438,7 @@ create policy departments_select on public.departments for select
 
 drop policy if exists departments_write on public.departments;
 create policy departments_write on public.departments for all
-  to authenticated using (public.is_exec()) with check (public.is_exec());
+  to authenticated using (public.has_permission('system.configure')) with check (public.has_permission('system.configure'));
 
 -- ---- attendance_settings ----
 drop policy if exists attendance_settings_select on public.attendance_settings;
@@ -1136,7 +1447,7 @@ create policy attendance_settings_select on public.attendance_settings for selec
 
 drop policy if exists attendance_settings_write on public.attendance_settings;
 create policy attendance_settings_write on public.attendance_settings for all
-  to authenticated using (public.is_exec()) with check (public.is_exec());
+  to authenticated using (public.has_permission('system.configure')) with check (public.has_permission('system.configure'));
 
 -- ---- teams ----
 -- Readable by any authenticated user in the same department (mirrors how
@@ -1145,54 +1456,36 @@ create policy attendance_settings_write on public.attendance_settings for all
 -- "admin role assigned to that department".
 drop policy if exists teams_select on public.teams;
 create policy teams_select on public.teams for select
-  to authenticated using (public.is_exec() or department_code = public.current_department());
+  to authenticated using (public.dept_in_scope((select public.my_scope('teams.view')), department_code));
 
 drop policy if exists teams_write on public.teams;
 create policy teams_write on public.teams for all
   to authenticated
-  using (public.is_exec() or (public.is_admin_or_above() and department_code = public.current_department()))
-  with check (public.is_exec() or (public.is_admin_or_above() and department_code = public.current_department()));
+  using (public.dept_in_scope((select public.my_scope('teams.manage')), department_code))
+  with check (public.dept_in_scope((select public.my_scope('teams.manage')), department_code));
 
 -- ---- team_members ----
 drop policy if exists team_members_select on public.team_members;
 create policy team_members_select on public.team_members for select
   to authenticated using (
-    public.is_exec()
-    or sale_person_id = auth.uid()
+    sale_person_id = auth.uid()
     or public.manages_team(team_id)
-    or exists (
-      select 1 from public.teams t where t.id = team_members.team_id
-        and public.current_role() = 'admin' and t.department_code = public.current_department()
-    )
+    or public.dept_in_scope((select public.my_scope('teams.manage')), public.team_department(team_id))
   );
 
 drop policy if exists team_members_write on public.team_members;
 create policy team_members_write on public.team_members for all
   to authenticated
-  using (
-    public.is_exec()
-    or exists (
-      select 1 from public.teams t where t.id = team_members.team_id
-        and public.current_role() = 'admin' and t.department_code = public.current_department()
-    )
-  )
-  with check (
-    public.is_exec()
-    or exists (
-      select 1 from public.teams t where t.id = team_members.team_id
-        and public.current_role() = 'admin' and t.department_code = public.current_department()
-    )
-  );
+  using (public.dept_in_scope((select public.my_scope('teams.manage')), public.team_department(team_id)))
+  with check (public.dept_in_scope((select public.my_scope('teams.manage')), public.team_department(team_id)));
 
 -- ---- profiles ----
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles for select
   to authenticated using (
     id = auth.uid()
-    or public.is_exec()
-    or (public.current_role() = 'admin' and department_code = public.current_department())
-    or (public.current_role() = 'manager' and public.manages_person(id))
-    or (public.current_role() = 'sale' and public.is_my_team_manager(id))
+    or public.person_in_scope((select public.my_scope('staff.view')), id, department_code)
+    or (public.is_my_team_manager(id) and public.has_permission('teams.join'))
   );
 
 -- Inserts happen only via the staff-provisioning Edge Function using the
@@ -1202,22 +1495,17 @@ create policy profiles_select on public.profiles for select
 
 drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles for update
-  to authenticated using (id = auth.uid() or public.is_exec())
-  with check (id = auth.uid() or public.is_exec());
+  to authenticated using (id = auth.uid() or public.has_permission('staff.manage'))
+  with check (id = auth.uid() or public.has_permission('staff.manage'));
 
 drop policy if exists profiles_delete on public.profiles;
 create policy profiles_delete on public.profiles for delete
-  to authenticated using (public.is_exec());
+  to authenticated using (public.has_permission('staff.manage'));
 
 -- ---- leads ----
 drop policy if exists leads_select on public.leads;
 create policy leads_select on public.leads for select
-  to authenticated using (
-    public.is_exec()
-    or (public.current_role() = 'admin' and department_code = public.current_department())
-    or (public.current_role() = 'manager' and team_id is not null and public.manages_team(team_id))
-    or owner_id = auth.uid()
-  );
+  to authenticated using (public.lead_in_scope((select public.my_scope('leads.view')), owner_id, department_code, team_id));
 
 drop policy if exists leads_insert on public.leads;
 create policy leads_insert on public.leads for insert
@@ -1225,42 +1513,21 @@ create policy leads_insert on public.leads for insert
 
 drop policy if exists leads_update on public.leads;
 create policy leads_update on public.leads for update
-  to authenticated using (
-    public.is_exec()
-    or (public.current_role() = 'admin' and department_code = public.current_department())
-    or (public.current_role() = 'manager' and department_code = public.current_department() and owner_id = auth.uid())
-    or owner_id = auth.uid()
-  )
-  with check (
-    public.is_exec()
-    or (public.current_role() = 'admin' and department_code = public.current_department())
-    or (public.current_role() = 'manager' and department_code = public.current_department() and owner_id = auth.uid())
-    or owner_id = auth.uid()
-  );
+  to authenticated
+  using (public.lead_in_scope((select public.my_scope('leads.edit')), owner_id, department_code, team_id))
+  with check (public.lead_in_scope((select public.my_scope('leads.edit')), owner_id, department_code, team_id));
 
 -- Boss/Super Admin can delete any lead; a Manager or Sales Person may only
 -- delete a lead they currently own (not the rest of their department/team).
 -- Admin has no delete rights, per the original FRD rule.
 drop policy if exists leads_delete on public.leads;
 create policy leads_delete on public.leads for delete
-  to authenticated using (
-    public.is_exec()
-    or (public.current_role() in ('manager', 'sale') and owner_id = auth.uid())
-  );
+  to authenticated using (public.lead_in_scope((select public.my_scope('leads.delete')), owner_id, department_code, team_id));
 
 -- ---- lead_assignments (read-only history; writes happen via trigger only) ----
 drop policy if exists lead_assignments_select on public.lead_assignments;
 create policy lead_assignments_select on public.lead_assignments for select
-  to authenticated using (
-    public.is_exec()
-    or exists (
-      select 1 from public.leads l
-      where l.id = lead_assignments.lead_id
-        and (l.owner_id = auth.uid()
-             or (public.current_role() = 'admin' and l.department_code = public.current_department())
-             or (public.current_role() = 'manager' and public.manager_scoped_lead(l.id)))
-    )
-  );
+  to authenticated using (public.lead_permitted(lead_id, 'leads.view'));
 
 -- Reassignment is performed by updating leads.owner_id (see leads_update
 -- policy above + the trg_leads_assignment trigger), plus a dedicated
@@ -1278,11 +1545,8 @@ declare
 begin
   select department_code, team_id into v_dept, v_team from public.leads where id = p_lead_id;
 
-  if not (
-    public.is_exec()
-    or (public.current_role() = 'admin' and v_dept = public.current_department())
-    or (public.current_role() = 'manager' and v_team is not null and public.manages_team(v_team))
-  ) then
+  -- Ownership alone never grants reassignment, hence p_owner = null.
+  if not public.lead_in_scope(public.my_scope('leads.reassign'), null, v_dept, v_team) then
     raise exception 'Not authorized to reassign this lead';
   end if;
 
@@ -1308,24 +1572,15 @@ $$;
 drop policy if exists enquiries_select on public.enquiries;
 create policy enquiries_select on public.enquiries for select
   to authenticated using (
-    assigned_to = auth.uid()
-    or public.is_exec()
-    or (public.current_role() = 'admin' and exists (
-      select 1 from public.profiles p where p.id = enquiries.assigned_to and p.department_code = public.current_department()
-    ))
+    (assigned_to = auth.uid() and public.has_permission('enquiries.view'))
+    or public.person_in_scope((select public.my_scope('enquiries.view')), assigned_to, public.profile_department(assigned_to))
   );
 
 drop policy if exists enquiries_insert on public.enquiries;
 create policy enquiries_insert on public.enquiries for insert
   to authenticated with check (
-    public.is_admin_or_above()
-    and assigned_by = auth.uid()
-    and (
-      public.is_exec()
-      or exists (
-        select 1 from public.profiles p where p.id = enquiries.assigned_to and p.department_code = public.current_department()
-      )
-    )
+    assigned_by = auth.uid()
+    and public.person_in_scope((select public.my_scope('enquiries.create')), assigned_to, public.profile_department(assigned_to))
   );
 
 -- Update covers both directions: the assignee moving their own row through
@@ -1336,27 +1591,20 @@ create policy enquiries_insert on public.enquiries for insert
 drop policy if exists enquiries_update on public.enquiries;
 create policy enquiries_update on public.enquiries for update
   to authenticated using (
-    assigned_to = auth.uid()
-    or public.is_exec()
-    or (public.current_role() = 'admin' and status = 'pending' and exists (
-      select 1 from public.profiles p where p.id = enquiries.assigned_to and p.department_code = public.current_department()
-    ))
+    (assigned_to = auth.uid() and public.has_permission('enquiries.view'))
+    or (public.person_in_scope((select public.my_scope('enquiries.manage')), assigned_to, public.profile_department(assigned_to))
+        and (status = 'pending' or public.has_permission('enquiries.manage_accepted')))
   )
   with check (
-    assigned_to = auth.uid()
-    or public.is_exec()
-    or (public.current_role() = 'admin' and exists (
-      select 1 from public.profiles p where p.id = enquiries.assigned_to and p.department_code = public.current_department()
-    ))
+    (assigned_to = auth.uid() and public.has_permission('enquiries.view'))
+    or public.person_in_scope((select public.my_scope('enquiries.manage')), assigned_to, public.profile_department(assigned_to))
   );
 
 drop policy if exists enquiries_delete on public.enquiries;
 create policy enquiries_delete on public.enquiries for delete
   to authenticated using (
-    public.is_exec()
-    or (public.current_role() = 'admin' and status = 'pending' and exists (
-      select 1 from public.profiles p where p.id = enquiries.assigned_to and p.department_code = public.current_department()
-    ))
+    public.person_in_scope((select public.my_scope('enquiries.manage')), assigned_to, public.profile_department(assigned_to))
+    and (status = 'pending' or public.has_permission('enquiries.manage_accepted'))
   );
 
 -- enquiry_counters is internal bookkeeping for generate_enquiry_no()
@@ -1366,107 +1614,59 @@ create policy enquiries_delete on public.enquiries for delete
 -- ---- follow_ups ----
 drop policy if exists followups_select on public.follow_ups;
 create policy followups_select on public.follow_ups for select
-  to authenticated using (
-    public.is_exec()
-    or exists (
-      select 1 from public.leads l where l.id = follow_ups.lead_id
-        and ((public.current_role() = 'admin' and l.department_code = public.current_department())
-             or (public.current_role() = 'manager' and public.manager_scoped_lead(l.id))
-             or l.owner_id = auth.uid())
-    )
-  );
+  to authenticated using (public.lead_permitted(lead_id, 'leads.view'));
 
--- Manager gets no team-wide clause here (unlike follow_ups_select above,
--- which allows manager_scoped_lead()) — a manager can only add/edit a
--- follow-up via owns_lead() below, i.e. only on a lead they personally own.
+-- Writing follow-ups is its own permission (leads.followup), separate from
+-- seeing them (leads.view): the built-in Manager sees their teams' follow-ups
+-- but can only add them on leads they personally own.
 -- Otherwise view only (FRD: Follow-up = "View Only" for Manager), same as
 -- exec/admin/the owning salesperson.
 drop policy if exists followups_insert on public.follow_ups;
 create policy followups_insert on public.follow_ups for insert
-  to authenticated with check (
-    public.is_exec()
-    or (public.current_role() = 'admin' and public.lead_in_my_department(lead_id))
-    or public.owns_lead(lead_id)
-  );
+  to authenticated with check (public.lead_permitted(lead_id, 'leads.followup'));
 
 drop policy if exists followups_update on public.follow_ups;
 create policy followups_update on public.follow_ups for update
-  to authenticated using (
-    public.is_exec()
-    or (public.current_role() = 'admin' and public.lead_in_my_department(lead_id))
-    or public.owns_lead(lead_id)
-  );
+  to authenticated using (public.lead_permitted(lead_id, 'leads.followup'));
 
 -- ---- pipeline_history (read-only; writes happen via trigger only) ----
 drop policy if exists pipeline_history_select on public.pipeline_history;
 create policy pipeline_history_select on public.pipeline_history for select
-  to authenticated using (
-    public.is_exec()
-    or exists (
-      select 1 from public.leads l where l.id = pipeline_history.lead_id
-        and ((public.current_role() = 'admin' and l.department_code = public.current_department())
-             or (public.current_role() = 'manager' and public.manager_scoped_lead(l.id))
-             or l.owner_id = auth.uid())
-    )
-  );
+  to authenticated using (public.lead_permitted(lead_id, 'leads.view'));
 
 -- ---- appointments / site_visits ----
 drop policy if exists appointments_select on public.appointments;
 create policy appointments_select on public.appointments for select
-  to authenticated using (
-    public.is_exec()
-    or exists (
-      select 1 from public.leads l where l.id = appointments.lead_id
-        and ((public.current_role() = 'admin' and l.department_code = public.current_department())
-             or (public.current_role() = 'manager' and public.manager_scoped_lead(l.id))
-             or l.owner_id = auth.uid())
-    )
-  );
+  to authenticated using (public.lead_permitted(lead_id, 'leads.view'));
 
 drop policy if exists appointments_write on public.appointments;
 create policy appointments_write on public.appointments for all
   to authenticated
-  using (public.is_exec() or (public.current_role() = 'admin' and public.lead_in_my_department(lead_id)) or public.owns_lead(lead_id))
-  with check (public.is_exec() or (public.current_role() = 'admin' and public.lead_in_my_department(lead_id)) or public.owns_lead(lead_id));
+  using (public.lead_permitted(lead_id, 'leads.followup'))
+  with check (public.lead_permitted(lead_id, 'leads.followup'));
 
 drop policy if exists site_visits_select on public.site_visits;
 create policy site_visits_select on public.site_visits for select
-  to authenticated using (
-    public.is_exec()
-    or exists (
-      select 1 from public.leads l where l.id = site_visits.lead_id
-        and ((public.current_role() = 'admin' and l.department_code = public.current_department())
-             or (public.current_role() = 'manager' and public.manager_scoped_lead(l.id))
-             or l.owner_id = auth.uid())
-    )
-  );
+  to authenticated using (public.lead_permitted(lead_id, 'leads.view'));
 
 drop policy if exists site_visits_write on public.site_visits;
 create policy site_visits_write on public.site_visits for all
   to authenticated
-  using (public.is_exec() or (public.current_role() = 'admin' and public.lead_in_my_department(lead_id)) or public.owns_lead(lead_id))
-  with check (public.is_exec() or (public.current_role() = 'admin' and public.lead_in_my_department(lead_id)) or public.owns_lead(lead_id));
+  using (public.lead_permitted(lead_id, 'leads.followup'))
+  with check (public.lead_permitted(lead_id, 'leads.followup'));
 
 -- ---- warnings ----
 drop policy if exists warnings_select on public.warnings;
 create policy warnings_select on public.warnings for select
   to authenticated using (
     issued_to = auth.uid()
-    or public.is_exec()
-    or (public.current_role() = 'admin' and exists (
-      select 1 from public.profiles p where p.id = warnings.issued_to and p.department_code = public.current_department()
-    ))
-    or (public.current_role() = 'manager' and public.manages_person(warnings.issued_to))
+    or public.person_in_scope((select public.my_scope('staff.view')), issued_to, public.profile_department(issued_to))
   );
 
 drop policy if exists warnings_insert on public.warnings;
 create policy warnings_insert on public.warnings for insert
   to authenticated with check (
-    public.is_exec()
-    or (public.current_role() = 'admin' and exists (
-      select 1 from public.profiles p where p.id = warnings.issued_to and p.department_code = public.current_department()
-    ))
-    or (public.current_role() = 'manager' and public.manages_person(warnings.issued_to))
+    public.person_in_scope((select public.my_scope('staff.warn')), issued_to, public.profile_department(issued_to))
   );
 
 -- ---- check_ins ----
@@ -1474,9 +1674,7 @@ drop policy if exists checkins_select on public.check_ins;
 create policy checkins_select on public.check_ins for select
   to authenticated using (
     employee_id = auth.uid()
-    or public.is_exec()
-    or (public.current_role() = 'admin' and department_code = public.current_department())
-    or (public.current_role() = 'manager' and public.manages_person(employee_id))
+    or public.person_in_scope((select public.my_scope('attendance.manage')), employee_id, department_code)
   );
 
 drop policy if exists checkins_insert on public.check_ins;
@@ -1487,14 +1685,12 @@ drop policy if exists checkins_update on public.check_ins;
 create policy checkins_update on public.check_ins for update
   to authenticated using (
     (employee_id = auth.uid() and check_in_date = current_date)
-    or public.is_exec()
-    or (public.current_role() = 'admin' and department_code = public.current_department())
-    or (public.current_role() = 'manager' and public.manages_person(employee_id))
+    or public.person_in_scope((select public.my_scope('attendance.manage')), employee_id, department_code)
   );
 
 drop policy if exists checkins_delete on public.check_ins;
 create policy checkins_delete on public.check_ins for delete
-  to authenticated using (public.is_exec());
+  to authenticated using (public.has_permission('attendance.delete'));
 
 -- ---- notifications ----
 drop policy if exists notifications_select on public.notifications;
@@ -1512,7 +1708,7 @@ create policy notifications_update on public.notifications for update
 -- ---- audit_logs ----
 drop policy if exists audit_logs_select on public.audit_logs;
 create policy audit_logs_select on public.audit_logs for select
-  to authenticated using (public.is_exec());
+  to authenticated using (public.has_permission('audit.view'));
 
 drop policy if exists audit_logs_insert on public.audit_logs;
 create policy audit_logs_insert on public.audit_logs for insert
@@ -1521,11 +1717,11 @@ create policy audit_logs_insert on public.audit_logs for insert
 -- ---- settings ----
 drop policy if exists settings_select on public.settings;
 create policy settings_select on public.settings for select
-  to authenticated using (public.is_exec());
+  to authenticated using (public.has_permission('system.configure'));
 
 drop policy if exists settings_write on public.settings;
 create policy settings_write on public.settings for all
-  to authenticated using (public.is_exec()) with check (public.is_exec());
+  to authenticated using (public.has_permission('system.configure')) with check (public.has_permission('system.configure'));
 
 -- =============================================================================
 -- 13. STORAGE (check-in selfies)
@@ -1560,7 +1756,7 @@ drop policy if exists avatar_photos_insert on storage.objects;
 create policy avatar_photos_insert on storage.objects for insert
   to authenticated with check (
     bucket_id = 'avatars'
-    and ((storage.foldername(name))[1] = auth.uid()::text or public.is_exec())
+    and ((storage.foldername(name))[1] = auth.uid()::text or public.has_permission('staff.manage'))
   );
 
 -- Lead evidence photos (site visit / appointment) — public bucket, viewable
@@ -1600,7 +1796,7 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['departments', 'teams', 'team_members', 'profiles', 'leads', 'enquiries', 'follow_ups', 'check_ins', 'notifications']
+  foreach t in array array['departments', 'teams', 'team_members', 'profiles', 'leads', 'enquiries', 'follow_ups', 'check_ins', 'notifications', 'roles', 'role_permissions', 'branches']
   loop
     if not exists (
       select 1 from pg_publication_tables
@@ -1646,10 +1842,12 @@ create or replace view public.v_agent_performance
 -- create the same accounts via Supabase Studio → Authentication → Add User
 -- (or the admin.createUser API) instead, then just run the profiles insert.
 
-insert into public.departments (code, name) values
-  ('house', 'House'),
-  ('condo', 'Condo'),
-  ('project', 'Project')
+insert into public.departments (code, name, branch_code, category) values
+  ('house', 'House', 'yangon', 'house_land'),
+  ('condo', 'Condo', 'yangon', 'condo'),
+  ('project', 'Project', 'yangon', null),
+  ('mdy_condo', 'Condo', 'mandalay', 'condo'),
+  ('mdy_house', 'House', 'mandalay', 'house_land')
 on conflict (code) do nothing;
 
 insert into public.attendance_settings (department_code) values
@@ -1674,11 +1872,11 @@ declare
     'House Manager', 'Condo Manager', 'Project Manager',
     'House Sales', 'Condo Sales', 'Project Sales'
   ];
-  v_roles role_tier[] := array[
+  v_roles text[] := array[
     'boss', 'super_admin', 'admin',
     'manager', 'manager', 'manager',
     'sale', 'sale', 'sale'
-  ]::role_tier[];
+  ];
   v_depts text[] := array[
     null, null, 'house',
     'house', 'condo', 'project',
@@ -2005,11 +2203,11 @@ create policy map_pins_insert on public.map_pins for insert
 
 drop policy if exists map_pins_update on public.map_pins;
 create policy map_pins_update on public.map_pins for update
-  to authenticated using (created_by = auth.uid() or public.is_exec());
+  to authenticated using (created_by = auth.uid() or public.has_permission('map.manage'));
 
 drop policy if exists map_pins_delete on public.map_pins;
 create policy map_pins_delete on public.map_pins for delete
-  to authenticated using (created_by = auth.uid() or public.is_exec());
+  to authenticated using (created_by = auth.uid() or public.has_permission('map.manage'));
 
 -- Realtime so a pin dropped by one staff member appears live on everyone
 -- else's already-open map, matching the rest of the app's live-update
@@ -2072,6 +2270,7 @@ create policy push_subscriptions_delete on public.push_subscriptions for delete
 
 create table if not exists public.enquiry_sources (
   id          uuid primary key default gen_random_uuid(),
+  branch_code text not null default public.current_branch() references public.branches(code),
   category    text not null check (category in ('condo', 'house_land')),
   name        text not null check (name = btrim(name) and length(name) between 1 and 80),
   sort_order  integer not null default 0,
@@ -2082,10 +2281,10 @@ create table if not exists public.enquiry_sources (
 );
 
 -- "ACTY Facebook" and "acty facebook" are the same source.
-create unique index if not exists enquiry_sources_category_name_key
-  on public.enquiry_sources (category, lower(name));
-create index if not exists enquiry_sources_category_order_idx
-  on public.enquiry_sources (category, sort_order);
+create unique index if not exists enquiry_sources_branch_category_name_key
+  on public.enquiry_sources (branch_code, category, lower(name));
+create index if not exists enquiry_sources_branch_category_order_idx
+  on public.enquiry_sources (branch_code, category, sort_order);
 
 drop trigger if exists trg_enquiry_sources_updated_at on public.enquiry_sources;
 create trigger trg_enquiry_sources_updated_at before update on public.enquiry_sources
@@ -2101,15 +2300,17 @@ create policy enquiry_sources_select on public.enquiry_sources for select
 
 drop policy if exists enquiry_sources_insert on public.enquiry_sources;
 create policy enquiry_sources_insert on public.enquiry_sources for insert
-  to authenticated with check (public.is_manager_or_above());
+  to authenticated with check (public.branch_in_scope((select public.my_scope('catalog.manage')), branch_code));
 
 drop policy if exists enquiry_sources_update on public.enquiry_sources;
 create policy enquiry_sources_update on public.enquiry_sources for update
-  to authenticated using (public.is_manager_or_above()) with check (public.is_manager_or_above());
+  to authenticated
+  using (public.branch_in_scope((select public.my_scope('catalog.manage')), branch_code))
+  with check (public.branch_in_scope((select public.my_scope('catalog.manage')), branch_code));
 
 drop policy if exists enquiry_sources_delete on public.enquiry_sources;
 create policy enquiry_sources_delete on public.enquiry_sources for delete
-  to authenticated using (public.is_manager_or_above());
+  to authenticated using (public.branch_in_scope((select public.my_scope('catalog.manage')), branch_code));
 
 -- 3. Reorder in one atomic statement -----------------------------------------
 -- Takes a category's ids in their new order. Security invoker, so the update
@@ -2173,8 +2374,8 @@ end $$;
 
 alter table public.enquiry_sources disable trigger trg_enquiry_sources_audit;
 
-insert into public.enquiry_sources (category, name, sort_order, created_by)
-select 'condo', name, ord * 10, null
+insert into public.enquiry_sources (branch_code, category, name, sort_order, created_by)
+select 'yangon', 'condo', name, ord * 10, null
 from unnest(array[
   'Condo Channel Facebook',
   'Condo Listing Facebook',
@@ -2208,8 +2409,8 @@ from unnest(array[
 ]) with ordinality as s(name, ord)
 on conflict do nothing;
 
-insert into public.enquiry_sources (category, name, sort_order, created_by)
-select 'house_land', name, ord * 10, null
+insert into public.enquiry_sources (branch_code, category, name, sort_order, created_by)
+select 'yangon', 'house_land', name, ord * 10, null
 from unnest(array[
   'House&Land Listing',
   'House Channel',
@@ -2230,6 +2431,16 @@ from unnest(array[
   'From Latt Latt Aung',
   'From Min Pyae'
 ]) with ordinality as s(name, ord)
+on conflict do nothing;
+
+-- Mandalay starts with the same lead sources as Yangon (company channels
+-- such as the Facebook pages are shared) and an empty project list — its
+-- projects are its own. Only on the first run: later edits are kept.
+insert into public.enquiry_sources (branch_code, category, name, sort_order, is_active, created_by)
+select 'mandalay', s.category, s.name, s.sort_order, s.is_active, null
+from public.enquiry_sources s
+where s.branch_code = 'yangon'
+  and not exists (select 1 from public.enquiry_sources m where m.branch_code = 'mandalay')
 on conflict do nothing;
 
 alter table public.enquiry_sources enable trigger trg_enquiry_sources_audit;
@@ -2379,6 +2590,7 @@ alter table public.enquiries
 
 create table if not exists public.projects (
   id          uuid primary key default gen_random_uuid(),
+  branch_code text not null default public.current_branch() references public.branches(code),
   category    text not null check (category in ('condo', 'house_land')),
   name        text not null check (name = btrim(name) and length(name) between 1 and 120),
   sort_order  integer not null default 0,
@@ -2388,8 +2600,10 @@ create table if not exists public.projects (
   updated_at  timestamptz not null default now()
 );
 
-create unique index if not exists projects_category_name_key on public.projects (category, lower(name));
-create index if not exists projects_category_order_idx on public.projects (category, sort_order);
+create unique index if not exists projects_branch_category_name_key
+  on public.projects (branch_code, category, lower(name));
+create index if not exists projects_branch_category_order_idx
+  on public.projects (branch_code, category, sort_order);
 
 drop trigger if exists trg_projects_updated_at on public.projects;
 create trigger trg_projects_updated_at before update on public.projects
@@ -2405,15 +2619,17 @@ create policy projects_select on public.projects for select
 
 drop policy if exists projects_insert on public.projects;
 create policy projects_insert on public.projects for insert
-  to authenticated with check (public.is_manager_or_above());
+  to authenticated with check (public.branch_in_scope((select public.my_scope('catalog.manage')), branch_code));
 
 drop policy if exists projects_update on public.projects;
 create policy projects_update on public.projects for update
-  to authenticated using (public.is_manager_or_above()) with check (public.is_manager_or_above());
+  to authenticated
+  using (public.branch_in_scope((select public.my_scope('catalog.manage')), branch_code))
+  with check (public.branch_in_scope((select public.my_scope('catalog.manage')), branch_code));
 
 drop policy if exists projects_delete on public.projects;
 create policy projects_delete on public.projects for delete
-  to authenticated using (public.is_manager_or_above());
+  to authenticated using (public.branch_in_scope((select public.my_scope('catalog.manage')), branch_code));
 
 -- 4. Reorder in one atomic statement (security invoker: RLS decides) ----------
 
@@ -2474,8 +2690,8 @@ end $$;
 
 alter table public.projects disable trigger trg_projects_audit;
 
-insert into public.projects (category, name, sort_order, created_by)
-select 'condo', name, ord * 10, null
+insert into public.projects (branch_code, category, name, sort_order, created_by)
+select 'yangon', 'condo', name, ord * 10, null
 from unnest(array[
   'Dagon Landmark Residence',
   'Perfect Signature Residence',
@@ -2502,8 +2718,8 @@ from unnest(array[
 ]) with ordinality as s(name, ord)
 on conflict do nothing;
 
-insert into public.projects (category, name, sort_order, created_by)
-select 'house_land', name, ord * 10, null
+insert into public.projects (branch_code, category, name, sort_order, created_by)
+select 'yangon', 'house_land', name, ord * 10, null
 from unnest(array[
   'North Dagon',
   'Orchard',
@@ -2519,3 +2735,336 @@ alter table public.projects enable trigger trg_projects_audit;
 -- =============================================================================
 -- End of database/crm.sql
 -- =============================================================================
+
+
+-- =============================================================================
+-- 22. ROLE MANAGEMENT — who may create and edit roles (section 2a), and the
+-- audit trail of every change. Mirrors
+-- supabase/migrations/20261028120000_dynamic_roles_permissions.sql.
+-- =============================================================================
+
+-- 1. Who may edit roles --------------------------------------------------------
+
+alter table public.roles enable row level security;
+alter table public.permissions enable row level security;
+alter table public.role_permissions enable row level security;
+
+-- Role definitions aren't secret: every signed-in user needs them to label
+-- people and to know what their own role allows.
+drop policy if exists roles_select on public.roles;
+create policy roles_select on public.roles for select to authenticated using (true);
+drop policy if exists permissions_select on public.permissions;
+create policy permissions_select on public.permissions for select to authenticated using (true);
+drop policy if exists role_permissions_select on public.role_permissions;
+create policy role_permissions_select on public.role_permissions for select to authenticated using (true);
+
+drop policy if exists roles_write on public.roles;
+create policy roles_write on public.roles for all
+  to authenticated using (public.has_permission('roles.manage')) with check (public.has_permission('roles.manage'));
+drop policy if exists role_permissions_write on public.role_permissions;
+create policy role_permissions_write on public.role_permissions for all
+  to authenticated using (public.has_permission('roles.manage')) with check (public.has_permission('roles.manage'));
+-- permissions is code-owned: no write policy.
+
+create or replace function public.my_role_rank() returns integer
+language sql stable security definer set search_path = public as $$
+  select r.rank from public.profiles p join public.roles r on r.key = p.role where p.id = auth.uid();
+$$;
+
+-- Guards that RLS alone can't express. Skipped when there's no signed-in
+-- user (migrations, service role), which RLS already blocks for clients.
+create or replace function public.enforce_role_rules() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_my_rank integer := public.my_role_rank();
+begin
+  if auth.uid() is null then
+    return coalesce(new, old);
+  end if;
+
+  if tg_op in ('UPDATE', 'DELETE') then
+    if old.is_owner then
+      raise exception 'The % role can''t be changed or deleted.', old.name;
+    end if;
+    if old.rank <= v_my_rank then
+      raise exception 'You can only change roles junior to your own.';
+    end if;
+  end if;
+
+  if tg_op = 'DELETE' then
+    if old.is_system then
+      raise exception 'Built-in roles can''t be deleted.';
+    end if;
+    if exists (select 1 from public.profiles where role = old.key) then
+      raise exception 'Move everyone off the % role before deleting it.', old.name;
+    end if;
+    return old;
+  end if;
+
+  if new.is_owner then
+    raise exception 'There can only be one owner role.';
+  end if;
+  if new.rank <= v_my_rank then
+    raise exception 'A role must be junior to your own (rank above %).', v_my_rank;
+  end if;
+  if tg_op = 'INSERT' then
+    new.is_system := false;
+  else
+    if new.key is distinct from old.key then
+      raise exception 'A role''s key can''t be changed.';
+    end if;
+    new.is_system := old.is_system;
+  end if;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_roles_rules on public.roles;
+create trigger trg_roles_rules before insert or update or delete on public.roles
+  for each row execute function public.enforce_role_rules();
+
+create or replace function public.enforce_role_permission_rules() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  v_role public.roles%rowtype;
+  v_allowed text[];
+  v_kind text;
+begin
+  select * into v_role from public.roles where key = coalesce(new.role_key, old.role_key);
+
+  if tg_op <> 'DELETE' then
+    select scopes, kind into v_allowed, v_kind from public.permissions where key = new.permission_key;
+    if not (new.scope = any (v_allowed)) then
+      raise exception 'Permission % doesn''t support the "%" scope.', new.permission_key, new.scope;
+    end if;
+  end if;
+
+  -- Cascading deletes from roles, and setup with no signed-in user, skip the
+  -- per-user checks.
+  if auth.uid() is null or v_role.key is null then
+    return coalesce(new, old);
+  end if;
+
+  if v_role.is_owner then
+    raise exception 'The % role always has every permission.', v_role.name;
+  end if;
+  if v_role.rank <= public.my_role_rank() then
+    raise exception 'You can only change roles junior to your own.';
+  end if;
+  if tg_op <> 'DELETE' and v_kind = 'access'
+     and public.scope_rank(new.scope) > public.my_scope(new.permission_key) then
+    raise exception 'You can''t grant % wider than you hold it.', new.permission_key;
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists trg_role_permissions_rules on public.role_permissions;
+create trigger trg_role_permissions_rules before insert or update or delete on public.role_permissions
+  for each row execute function public.enforce_role_permission_rules();
+
+
+-- Saves a role and its complete permission set in one transaction, so a
+-- failed save never leaves a role half-updated. Security invoker: RLS and
+-- the guard triggers above decide what's allowed. p_grants maps permission
+-- key -> scope; permissions not in it are removed. Only rows that actually
+-- change are written, so unchanged grants never trip the guards (or the
+-- audit log).
+create or replace function public.save_role(
+  p_key text,
+  p_name text,
+  p_name_mm text,
+  p_description text,
+  p_rank integer,
+  p_requires_department boolean,
+  p_grants jsonb
+) returns void
+language plpgsql security invoker set search_path = public as $$
+begin
+  insert into public.roles as r (key, name, name_mm, description, rank, requires_department)
+  values (p_key, trim(p_name), nullif(trim(p_name_mm), ''), nullif(trim(p_description), ''), p_rank, p_requires_department)
+  on conflict (key) do update
+    set name = excluded.name, name_mm = excluded.name_mm, description = excluded.description,
+        rank = excluded.rank, requires_department = excluded.requires_department
+    where (r.name, r.name_mm, r.description, r.rank, r.requires_department)
+          is distinct from (excluded.name, excluded.name_mm, excluded.description, excluded.rank, excluded.requires_department);
+
+  delete from public.role_permissions rp
+  where rp.role_key = p_key and not (p_grants ? rp.permission_key);
+
+  insert into public.role_permissions (role_key, permission_key, scope)
+  select p_key, g.key, g.value
+  from jsonb_each_text(p_grants) g
+  where not exists (
+    select 1 from public.role_permissions rp
+    where rp.role_key = p_key and rp.permission_key = g.key and rp.scope = g.value
+  )
+  on conflict (role_key, permission_key) do update set scope = excluded.scope;
+end;
+$$;
+
+-- 2. Audit trail ------------------------------------------------------------------
+
+create or replace function public.audit_roles() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.audit_logs (action, target_table, performed_by, old_value, new_value)
+  values ('role_' || lower(tg_op), 'roles', auth.uid(),
+          case when tg_op <> 'INSERT' then to_jsonb(old) end,
+          case when tg_op <> 'DELETE' then to_jsonb(new) end);
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists trg_roles_audit on public.roles;
+create trigger trg_roles_audit after insert or update or delete on public.roles
+  for each row execute function public.audit_roles();
+
+create or replace function public.audit_role_permissions() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.audit_logs (action, target_table, performed_by, old_value, new_value)
+  values ('role_permission_' || lower(tg_op), 'role_permissions', auth.uid(),
+          case when tg_op <> 'INSERT' then to_jsonb(old) end,
+          case when tg_op <> 'DELETE' then to_jsonb(new) end);
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists trg_role_permissions_audit on public.role_permissions;
+create trigger trg_role_permissions_audit after insert or update or delete on public.role_permissions
+  for each row execute function public.audit_role_permissions();
+
+
+-- =============================================================================
+-- 23. BUILT-IN ROLE DEFAULTS + TEAM INTEGRITY — the factory default of each
+-- built-in role (Role Management's "Reset to defaults"), and the rule that
+-- people only stay on teams they still qualify for after a department or
+-- role change. Mirrors
+-- supabase/migrations/20261029120000_role_defaults_team_integrity.sql.
+-- =============================================================================
+
+-- 1. Factory defaults -----------------------------------------------------------
+-- Code-owned: re-running refreshes them. Clients read them; nobody writes them.
+
+create table if not exists public.role_defaults (
+  role_key             text primary key references public.roles(key) on delete cascade,
+  name                 text not null,
+  name_mm              text,
+  rank                 integer not null,
+  requires_department  boolean not null,
+  -- permission key -> scope, in the shape public.save_role() takes. The owner
+  -- role's permissions are implicit, so its grants are empty.
+  grants               jsonb not null default '{}'::jsonb
+);
+
+alter table public.role_defaults enable row level security;
+drop policy if exists role_defaults_select on public.role_defaults;
+create policy role_defaults_select on public.role_defaults for select to authenticated using (true);
+
+insert into public.role_defaults (role_key, name, name_mm, rank, requires_department, grants) values
+  ('boss', 'Boss', 'ဘော့စ်', 0, false,
+   '{}'),
+  ('super_admin', 'Super Admin', 'အကြီးတန်း Admin', 10, false,
+   '{"leads.view": "all", "leads.edit": "all", "leads.followup": "all",
+     "leads.reassign": "all", "leads.delete": "all", "leads.import": "all",
+     "leads.bulk_delete": "all", "enquiries.view": "all", "enquiries.create": "all",
+     "enquiries.manage": "all", "enquiries.manage_accepted": "all", "staff.view": "all",
+     "staff.manage": "all", "staff.warn": "all", "staff.notify": "all",
+     "attendance.manage": "all", "attendance.delete": "all", "teams.view": "all",
+     "teams.manage": "all", "reports.kpi": "all", "reports.team_activity": "all",
+     "reports.project_insights": "all", "catalog.manage": "all", "map.manage": "all",
+     "system.configure": "all", "audit.view": "all", "roles.manage": "all"}'),
+  ('admin', 'Admin', 'Admin', 20, true,
+   '{"leads.view": "department", "leads.edit": "department", "leads.followup": "department",
+     "leads.reassign": "department", "leads.import": "all", "enquiries.view": "department",
+     "enquiries.create": "department", "enquiries.manage": "department", "staff.view": "department",
+     "staff.warn": "department", "staff.notify": "all", "attendance.manage": "department",
+     "teams.view": "department", "teams.manage": "department", "reports.team_activity": "all",
+     "reports.project_insights": "all", "catalog.manage": "branch"}'),
+  ('manager', 'Manager', 'မန်နေဂျာ', 30, true,
+   '{"leads.view": "team", "leads.edit": "own", "leads.followup": "own",
+     "leads.reassign": "team", "leads.delete": "own", "leads.import": "all",
+     "enquiries.view": "own", "enquiries.receive": "all", "staff.view": "team",
+     "staff.warn": "team", "attendance.manage": "team", "teams.view": "department",
+     "teams.lead": "all", "reports.team_activity": "all", "reports.project_insights": "all",
+     "catalog.manage": "branch"}'),
+  ('sale', 'Sales Person', 'အရောင်းဝန်ထမ်း', 40, true,
+   '{"leads.view": "own", "leads.edit": "own", "leads.followup": "own",
+     "leads.delete": "own", "enquiries.view": "own", "enquiries.receive": "all",
+     "teams.view": "department", "teams.join": "all"}')
+on conflict (role_key) do update
+  set name = excluded.name, name_mm = excluded.name_mm, rank = excluded.rank,
+      requires_department = excluded.requires_department, grants = excluded.grants;
+
+
+-- 2. Team integrity -------------------------------------------------------------
+-- A person may only belong to teams in their own department, and only while
+-- their role can join teams; likewise for running a team (teams.lead). These
+-- rules were checked when someone was added to a team, but never again.
+
+-- Removes whoever no longer qualifies, for one person (p_person) or for
+-- everyone with one role (p_role) — or, with both null, everyone.
+create or replace function public.enforce_team_eligibility(p_person uuid default null, p_role text default null)
+returns void
+language sql security definer set search_path = public as $$
+  delete from public.team_members tm
+  using public.teams t, public.profiles p
+  where t.id = tm.team_id and p.id = tm.sale_person_id
+    and (p_person is null or p.id = p_person)
+    and (p_role is null or p.role = p_role)
+    and (t.department_code is distinct from p.department_code or public.user_scope(p.id, 'teams.join') = 0);
+
+  update public.teams t set manager_id = null
+  from public.profiles p
+  where p.id = t.manager_id
+    and (p_person is null or p.id = p_person)
+    and (p_role is null or p.role = p_role)
+    and (t.department_code is distinct from p.department_code or public.user_scope(p.id, 'teams.lead') = 0);
+$$;
+
+revoke execute on function public.enforce_team_eligibility(uuid, text) from public, anon, authenticated;
+
+create or replace function public.cascade_profile_team_rules() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.role is distinct from old.role or new.department_code is distinct from old.department_code then
+    perform public.enforce_team_eligibility(new.id, null);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_profiles_team_rules on public.profiles;
+create trigger trg_profiles_team_rules after update of role, department_code on public.profiles
+  for each row execute function public.cascade_profile_team_rules();
+
+create or replace function public.cascade_role_team_rules() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.enforce_team_eligibility(null, old.role_key);
+  return old;
+end;
+$$;
+
+drop trigger if exists trg_role_permissions_team_rules on public.role_permissions;
+create trigger trg_role_permissions_team_rules after delete on public.role_permissions
+  for each row when (old.permission_key in ('teams.join', 'teams.lead'))
+  execute function public.cascade_role_team_rules();
+
+
+-- =============================================================================
+-- 24. BRANCHES — everyone reads them; System settings (system.configure)
+-- edits them. Tables, scope and list changes are in place above (sections 2,
+-- 2a, 7, 19, 21). Mirrors supabase/migrations/20261030120000_branches.sql.
+-- =============================================================================
+
+alter table public.branches enable row level security;
+
+drop policy if exists branches_select on public.branches;
+create policy branches_select on public.branches for select to authenticated using (true);
+
+drop policy if exists branches_write on public.branches;
+create policy branches_write on public.branches for all
+  to authenticated using (public.has_permission('system.configure')) with check (public.has_permission('system.configure'));

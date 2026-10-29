@@ -1,3 +1,4 @@
+import { getDepartment } from '@/lib/departments';
 import type { EnquiryCategory } from '@/types';
 
 /** One source list for enquiries and leads (public.enquiry_sources, managed
@@ -27,10 +28,11 @@ export interface SourceGroup { key: string; label: string; sources: string[] }
 
 /** Leads carry a department, enquiries a category — the same split under
  * two names. Null for departments with no source list of their own. */
+/** Which list (Condo or House & Land) a department's forms use — stored on
+ * the department (Settings → Departments), not inferred from its code, so
+ * every branch's Condo department maps the same way. */
 export function categoryOfDepartment(code: string | null | undefined): EnquiryCategory | null {
-  if (code === 'condo') return 'condo';
-  if (code === 'house') return 'house_land';
-  return null;
+  return getDepartment(code)?.category ?? null;
 }
 
 /** Filter groups: each category's sources — hidden ones too, since saved

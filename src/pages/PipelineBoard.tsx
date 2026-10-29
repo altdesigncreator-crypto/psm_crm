@@ -18,7 +18,7 @@ import { useStatusColors } from '@/hooks/useStatusColors';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useDepartments } from '@/hooks/useDepartments';
 import { useTeams } from '@/hooks/useTeams';
-import { canEditLead, isDepartmentScoped, getDepartmentLabel } from '@/lib/permissions';
+import { canEditLead, seesAllDepartments, getDepartmentLabel } from '@/lib/permissions';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import {
   Phone, ArrowRight, MoveRight, Columns3,
@@ -367,7 +367,7 @@ export default function PipelineBoard() {
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
                       dateFilter={dateFilter} setDateFilter={setDateFilter}
                       uniqueAgents={uniqueAgents} projectGroups={projectIndex.groups} departments={departments} teamOptions={teamOptions}
-                      showDept={!isDepartmentScoped(role)} showDate={false}
+                      showDept={seesAllDepartments(role)} showDate={false}
                     />
                   </PopoverContent>
                 </Popover>
@@ -403,7 +403,7 @@ export default function PipelineBoard() {
                       agentFilter={agentFilter} setAgentFilter={setAgentFilter}
                       dateFilter={dateFilter} setDateFilter={setDateFilter}
                       uniqueAgents={uniqueAgents} projectGroups={projectIndex.groups} departments={departments} teamOptions={teamOptions}
-                      showDept={!isDepartmentScoped(role)}
+                      showDept={seesAllDepartments(role)}
                     />
                     <SheetClose asChild>
                       <button type="button" className="w-full h-12 text-sm font-medium transition-colors rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80">
@@ -701,7 +701,7 @@ function PipelineFilterFields({
             <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectDepartment')} /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">{t('leads.filter.allDepartments')}</SelectItem>
-              {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+              {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{getDepartmentLabel(d.code)}</SelectItem>))}
             </SelectContent>
           </Select>
         </div>

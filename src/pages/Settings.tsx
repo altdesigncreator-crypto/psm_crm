@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
-import { getRoleLabel, getDepartmentLabel, isExec, isManagerOrAbove } from '@/lib/permissions';
+import { getRole, getRoleLabel, getDepartmentLabel, hasPermission } from '@/lib/permissions';
 import { getEdgeFunctionErrorMessage } from '@/lib/edgeFunctionError';
 import { useDepartments } from '@/hooks/useDepartments';
 import {
@@ -14,6 +14,11 @@ import { isPushSupported, hasActivePushSubscription, subscribeToPush, unsubscrib
 import AvatarCropDialog from '@/components/AvatarCropDialog';
 import StorageImage from '@/components/StorageImage';
 import AppUpdateCard from '@/components/AppUpdateCard';
+import BranchesCard from '@/components/BranchesCard';
+import { useBranches } from '@/hooks/useBranches';
+import { branchOfDepartment, getBranchLabel } from '@/lib/departments';
+import { CATEGORY_LABEL_KEYS } from '@/hooks/useManagedList';
+import type { EnquiryCategory } from '@/types';
 import InstallAppCard from '@/components/InstallAppCard';
 import { ProjectsManager, SourcesManager } from '@/components/ManagedListManager';
 import UpdateDot from '@/components/UpdateDot';
@@ -23,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   ArrowLeft, User, Mail, Shield, Building2, Moon, Bell, Info, Phone, MapPin,
   HeartHandshake, Globe, Save, Loader2, SettingsIcon, Plus, FingerprintPattern, KeyRound, Eye, EyeOff, Trash2, Edit2,
@@ -42,6 +48,13 @@ export default function Settings() {
   const { lang, setLang, t } = useTranslation();
   const { user, role, department, refreshProfile } = useAuth();
   const { departments, createDepartment, updateDepartment, deleteDepartment, deactivateDepartment } = useDepartments();
+  const { branches } = useBranches();
+  const myBranch = branchOfDepartment(department);
+  // Whose lists this person may edit: every branch with an "all" scope,
+  // otherwise their own (the database enforces the same).
+  const listBranches = hasPermission(role, 'catalog.manage', 'all') ? branches : branches.filter((b) => b.code === myBranch);
+  const [listBranchChoice, setListBranchChoice] = useState<string | null>(null);
+  const listBranch = listBranchChoice ?? myBranch ?? listBranches[0]?.code ?? null;
   usePageHeader(t('settings.pageTitle'), t('settings.subtitle'));
 
   const [name, setName] = useState(user?.name || '');
@@ -348,11 +361,16 @@ export default function Settings() {
     }
   };
 
+  const [newDeptBranch, setNewDeptBranch] = useState('');
+  const [newDeptCategory, setNewDeptCategory] = useState<EnquiryCategory | 'none'>('condo');
+
   const handleAddDepartment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newDeptCode.trim() || !newDeptName.trim()) { toast.error(t('settings.enterCodeAndName')); return; }
     setSavingDept(true);
-    const error = await createDepartment(newDeptCode, newDeptName);
+    const branchCode = newDeptBranch || branches[0]?.code;
+    if (!branchCode) { toast.error(t('branches.pickBranch')); return; }
+    const error = await createDepartment(newDeptCode, newDeptName, branchCode, newDeptCategory === 'none' ? null : newDeptCategory);
     setSavingDept(false);
     if (error) { toast.error(error.message || t('settings.deptAddError')); return; }
     toast.success(`${newDeptName.trim()} ${t('settings.deptAddedToastSuffix')}`);
@@ -360,13 +378,33 @@ export default function Settings() {
     setNewDeptName('');
   };
 
+  // Boss / Super Admin edit every branch's lists; everyone else just theirs.
+  const listBranchSwitcher = listBranches.length > 1 && (
+    <div role="radiogroup" aria-label={t('branches.title')} className="mb-3 inline-flex rounded-lg border border-border bg-muted/40 p-0.5">
+      {listBranches.map((b) => (
+        <button
+          key={b.code}
+          type="button"
+          role="radio"
+          aria-checked={listBranch === b.code}
+          onClick={() => setListBranchChoice(b.code)}
+          className={`min-h-9 rounded-md px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+            listBranch === b.code ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          {getBranchLabel(b.code, lang)}
+        </button>
+      ))}
+    </div>
+  );
+
   const SECTIONS: { key: SectionKey; label: string; description: string; icon: typeof User }[] = [
     { key: 'profile', label: t('settings.section.profile'), description: user?.email || '—', icon: User },
     { key: 'preferences', label: t('settings.section.preferences'), description: t('settings.section.preferencesDesc'), icon: Moon },
     // Manager and above — the same rule the enquiry_sources RLS policies enforce.
-    ...(isManagerOrAbove(role) ? [{ key: 'enquirySources' as const, label: t('settings.section.enquirySources'), description: t('settings.section.enquirySourcesDesc'), icon: ListChecks }] : []),
-    ...(isManagerOrAbove(role) ? [{ key: 'projects' as const, label: t('settings.section.projects'), description: t('settings.section.projectsDesc'), icon: Building2 }] : []),
-    ...(isExec(role) ? [{ key: 'system' as const, label: t('settings.section.system'), description: t('settings.section.systemDesc'), icon: SettingsIcon }] : []),
+    ...(hasPermission(role, 'catalog.manage') ? [{ key: 'enquirySources' as const, label: t('settings.section.enquirySources'), description: t('settings.section.enquirySourcesDesc'), icon: ListChecks }] : []),
+    ...(hasPermission(role, 'catalog.manage') ? [{ key: 'projects' as const, label: t('settings.section.projects'), description: t('settings.section.projectsDesc'), icon: Building2 }] : []),
+    ...(hasPermission(role, 'system.configure') ? [{ key: 'system' as const, label: t('settings.section.system'), description: t('settings.section.systemDesc'), icon: SettingsIcon }] : []),
     { key: 'about', label: t('settings.section.about'), description: t('settings.section.aboutDesc'), icon: Info },
   ];
 
@@ -492,10 +530,10 @@ export default function Settings() {
                   </CardContent>
                 </Card>
 
-                {/* Danger zone — the Boss account can't self-delete; a Super
-                    Admin can, unless they're the last executive (server
+                {/* Danger zone — the owner role (Boss) can't self-delete; a
+                    role manager can, unless they're the last one (server
                     enforces both). */}
-                {role !== 'boss' && (
+                {!getRole(role)?.is_owner && (
                   <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
                     <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
                       <Trash2 className="w-4 h-4 text-destructive" /> {t('settings.deleteAccount')}
@@ -630,28 +668,44 @@ export default function Settings() {
             </Card>
           )}
 
-          {activeSection === 'enquirySources' && isManagerOrAbove(role) && (
+          {activeSection === 'enquirySources' && hasPermission(role, 'catalog.manage') && (
             <div className="max-w-2xl">
-              <SourcesManager />
+              {listBranchSwitcher}
+              <SourcesManager key={listBranch ?? 'none'} branch={listBranch} />
             </div>
           )}
 
-          {activeSection === 'projects' && isManagerOrAbove(role) && (
+          {activeSection === 'projects' && hasPermission(role, 'catalog.manage') && (
             <div className="max-w-2xl">
-              <ProjectsManager />
+              {listBranchSwitcher}
+              <ProjectsManager key={listBranch ?? 'none'} branch={listBranch} />
             </div>
           )}
 
-          {activeSection === 'system' && isExec(role) && (
+          {activeSection === 'system' && hasPermission(role, 'system.configure') && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+              <BranchesCard />
+
               <Card className="shadow-card rounded-xl border-0">
                 <CardContent className="p-5 md:p-6 space-y-3">
                   <p className="text-sm font-semibold text-foreground">{t('settings.departments')}</p>
                   <p className="text-xs text-muted-foreground">{t('settings.departmentsDesc')}</p>
-                  <form onSubmit={handleAddDepartment} className="flex flex-col sm:flex-row gap-2">
-                    <Input placeholder={t('settings.codePlaceholder')} value={newDeptCode} onChange={(e) => setNewDeptCode(e.target.value)} className="h-10 sm:w-40" />
-                    <Input placeholder={t('settings.displayNamePlaceholder')} value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="h-10 flex-1" />
-                    <Button type="submit" disabled={savingDept} size="sm" className="h-10 gap-1.5 shrink-0">
+                  <form onSubmit={handleAddDepartment} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <Input placeholder={t('settings.codePlaceholder')} value={newDeptCode} onChange={(e) => setNewDeptCode(e.target.value)} className="h-10" aria-label={t('settings.code')} />
+                    <Input placeholder={t('settings.displayNamePlaceholder')} value={newDeptName} onChange={(e) => setNewDeptName(e.target.value)} className="h-10" aria-label={t('settings.displayNamePlaceholder')} />
+                    <Select value={newDeptBranch || branches[0]?.code || ''} onValueChange={setNewDeptBranch}>
+                      <SelectTrigger className="h-10" aria-label={t('branches.branch')}><SelectValue placeholder={t('branches.branch')} /></SelectTrigger>
+                      <SelectContent>{branches.map((b) => (<SelectItem key={b.code} value={b.code}>{getBranchLabel(b.code, lang)}</SelectItem>))}</SelectContent>
+                    </Select>
+                    <Select value={newDeptCategory} onValueChange={(v) => setNewDeptCategory(v as EnquiryCategory | 'none')}>
+                      <SelectTrigger className="h-10" aria-label={t('branches.listCategory')}><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="condo">{t(CATEGORY_LABEL_KEYS.condo)}</SelectItem>
+                        <SelectItem value="house_land">{t(CATEGORY_LABEL_KEYS.house_land)}</SelectItem>
+                        <SelectItem value="none">{t('branches.noCategory')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button type="submit" disabled={savingDept} size="sm" className="h-10 gap-1.5 sm:col-span-2">
                       {savingDept ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} {t('settings.add')}
                     </Button>
                   </form>
@@ -677,7 +731,9 @@ export default function Settings() {
                           <>
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium text-foreground truncate">{d.name}</p>
-                              <p className="text-[11px] text-muted-foreground">{t('settings.code')}: {d.code}</p>
+                              <p className="text-[11px] text-muted-foreground truncate">
+                                {getBranchLabel(d.branch_code, lang)} · {d.category ? t(CATEGORY_LABEL_KEYS[d.category]) : t('branches.noCategory')} · {t('settings.code')}: {d.code}
+                              </p>
                             </div>
                             <Button variant="ghost" size="icon" aria-label={`${t('settings.renameSuffix')} ${d.name}`} className="h-10 w-10 min-h-0 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => { setEditingDeptCode(d.code); setEditingDeptName(d.name); }}>
                               <Edit2 className="w-4 h-4" />

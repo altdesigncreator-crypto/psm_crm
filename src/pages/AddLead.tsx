@@ -17,6 +17,7 @@ import {
 } from '@/types';
 import { SourcePicker } from '@/components/ManagedListSelect';
 import { categoryOfDepartment } from '@/lib/sources';
+import { branchOfDepartment } from '@/lib/departments';
 import { BudgetStepperInput } from '@/components/ui/budget-stepper-input';
 import ProjectNameInput, { normalizeProjectName } from '@/components/ProjectNameInput';
 import { invalidateProjectNames } from '@/hooks/useProjectNames';
@@ -24,7 +25,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useProfiles } from '@/hooks/useProfiles';
 import { useTeams } from '@/hooks/useTeams';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
-import { isManagerOrAbove, isAdminOrAbove, getDepartmentLabel } from '@/lib/permissions';
+import { hasPermission, getDepartmentLabel } from '@/lib/permissions';
 import { notifyUser } from '@/lib/notifyUser';
 
 function initialsOf(name: string) {
@@ -99,14 +100,16 @@ export default function AddLead() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enquiryId]);
 
-  const canAssign = isManagerOrAbove(role);
+  const canAssign = hasPermission(role, 'leads.reassign');
+  const assignsDepartmentWide = hasPermission(role, 'leads.reassign', 'department');
 
   const teamOptions = useMemo(() => {
     const active = teams.filter((t) => t.is_active !== false);
-    if (role === 'manager') return active.filter((t) => t.manager_id === user?.id);
-    if (isAdminOrAbove(role)) return active; // admin: own department only (RLS-scoped); exec: all
-    return user ? active.filter((t) => teamsOf(user.id).includes(t.id)) : []; // sale: teams they're on
-  }, [teams, role, user, teamsOf]);
+    // Department-wide assigners can file under any team they can see (RLS
+    // scopes the list); everyone else under teams they run or belong to.
+    if (assignsDepartmentWide) return active;
+    return user ? active.filter((t) => t.manager_id === user.id || teamsOf(user.id).includes(t.id)) : [];
+  }, [teams, assignsDepartmentWide, user, teamsOf]);
 
   useEffect(() => {
     if (teamOptions.length === 1) setTeamId(teamOptions[0].id);
@@ -119,8 +122,10 @@ export default function AddLead() {
   // enquiry's, so it's shown but not editable here.
   const sourceLockedByEnquiry = !!sourceEnquiry?.source;
   const sourceCategory = sourceEnquiry?.category ?? categoryOfDepartment(selectedTeam?.department_code || department);
+  // The lead is filed under this department, so its lists are that branch's.
+  const sourceBranch = branchOfDepartment(selectedTeam?.department_code || department);
   const teamMemberIds = teamId ? membersOf(teamId) : [];
-  const teamMemberProfiles = profiles.filter((p) => teamMemberIds.includes(p.id) && p.role === 'sale');
+  const teamMemberProfiles = profiles.filter((p) => teamMemberIds.includes(p.id) && hasPermission(p.role, 'teams.join'));
 
   useEffect(() => {
     if (ownerId && ownerId !== user?.id && !teamMemberIds.includes(ownerId)) setOwnerId('');
@@ -369,7 +374,7 @@ export default function AddLead() {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">{t('addLead.preferredProject')} <span className="text-destructive">*</span></Label>
-                  <ProjectNameInput placeholder={t('addLead.enterProjectName')} value={preferredProject} onChange={setPreferredProject} category={sourceCategory} required className="h-12" />
+                  <ProjectNameInput placeholder={t('addLead.enterProjectName')} value={preferredProject} onChange={setPreferredProject} category={sourceCategory} branch={sourceBranch} required className="h-12" />
                 </div>
                 <div className="space-y-3 md:col-span-2">
                   <Label className="text-sm font-medium">{t('addLead.estimatedBudget')}</Label>
@@ -397,7 +402,7 @@ export default function AddLead() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
                 <div className="space-y-2">
                   <div className="h-5 flex items-center"><Label className="text-sm font-medium">{t('addLead.leadSource')}</Label></div>
-                  <SourcePicker value={leadSource} onChange={setLeadSource} category={sourceCategory} disabled={sourceLockedByEnquiry} className="h-12" />
+                  <SourcePicker value={leadSource} onChange={setLeadSource} category={sourceCategory} branch={sourceBranch} disabled={sourceLockedByEnquiry} className="h-12" />
                   {sourceLockedByEnquiry && sourceEnquiry && (
                     <p className="text-[11px] text-muted-foreground">{t('addLead.sourceFromEnquiry').replace('{no}', sourceEnquiry.enquiry_no)}</p>
                   )}
@@ -423,7 +428,7 @@ export default function AddLead() {
                       <SelectContent>
                         {teamOptions.map((tm) => (
                           <SelectItem key={tm.id} value={tm.id}>
-                            {tm.name}{isAdminOrAbove(role) ? ` · ${getDepartmentLabel(tm.department_code)}` : ''}
+                            {tm.name}{assignsDepartmentWide ? ` · ${getDepartmentLabel(tm.department_code)}` : ''}
                           </SelectItem>
                         ))}
                       </SelectContent>

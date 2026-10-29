@@ -4,13 +4,15 @@ import { supabase } from '@/db/supabase';
 import { cacheGet, cacheSet } from '@/lib/localCache';
 import type { EnquiryCategory } from '@/types';
 
-/** A short list of names per category (Condo / House & Land) that Manager
- * and above maintain in Settings — enquiry/lead sources and projects today.
+/** A short list of names per branch and category (Condo / House & Land)
+ * that Manager and above maintain in Settings — enquiry/lead sources and
+ * projects today. Each branch keeps its own lists.
  * Every such list is the same shape in the database (category, name,
  * sort_order, is_active; see the enquiry_sources and projects migrations),
  * so one hook, one picker and one Settings screen serve them all. */
 export interface ListItem {
   id: string;
+  branch_code: string;
   category: EnquiryCategory;
   name: string;
   sort_order: number;
@@ -35,7 +37,7 @@ export const CATEGORY_LABEL_KEYS: Record<EnquiryCategory, string> = {
 };
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const COLUMNS = 'id, category, name, sort_order, is_active';
+const COLUMNS = 'id, branch_code, category, name, sort_order, is_active';
 
 /** Collapses runs of whitespace — "ACTY  Facebook " and "ACTY Facebook" are one entry. */
 export const normalizeListName = (name: string) => name.trim().replace(/\s+/g, ' ');
@@ -44,12 +46,14 @@ const byOrder = (a: ListItem, b: ListItem) => a.sort_order - b.sort_order || a.n
 
 function fallbackRows(config: ManagedListConfig): ListItem[] {
   return ENQUIRY_CATEGORIES.flatMap((category) => config.fallback[category].map((name, i) => ({
-    id: `fallback:${category}:${name}`, category, name, sort_order: (i + 1) * 10, is_active: true,
+    id: `fallback:${category}:${name}`, branch_code: '', category, name, sort_order: (i + 1) * 10, is_active: true,
   })));
 }
 
-/** Pass a module-level config constant — it keys the callbacks below. */
-export function useManagedList(config: ManagedListConfig) {
+/** Pass a module-level config constant — it keys the callbacks below.
+ * `branch` narrows to that branch's list (what forms and Settings use);
+ * leave it out to see every branch's names (what filters use). */
+export function useManagedList(config: ManagedListConfig, branch?: string | null) {
   const cached = cacheGet<ListItem[]>(config.cacheKey, CACHE_TTL_MS);
   const [rows, setRows] = useState<ListItem[]>(() => cached ?? fallbackRows(config));
   const [loading, setLoading] = useState(cached === undefined);
@@ -89,7 +93,14 @@ export function useManagedList(config: ManagedListConfig) {
       condo: { rows: [], active: [], all: [] },
       house_land: { rows: [], active: [], all: [] },
     };
-    for (const r of [...rows].sort(byOrder)) {
+    // The built-in fallback (branch_code '') stands in for any branch.
+    const inBranch = (r: ListItem) => !branch || r.branch_code === branch || r.branch_code === '';
+    const seen = new Set<string>();
+    for (const r of [...rows].filter(inBranch).sort(byOrder)) {
+      // Across branches the same name appears once per branch; list it once.
+      const key = `${r.category}|${r.name.toLowerCase()}`;
+      if (!branch && seen.has(key)) continue;
+      seen.add(key);
       const bucket = out[r.category];
       if (!bucket) continue;
       bucket.rows.push(r);
@@ -97,19 +108,21 @@ export function useManagedList(config: ManagedListConfig) {
       if (r.is_active) bucket.active.push(r.name);
     }
     return out;
-  }, [rows]);
+  }, [rows, branch]);
 
-  /** Adds `name` to each given category, after that category's last entry. */
+  /** Adds `name` to each given category of this branch, after its last
+   * entry. Without a branch the database files it under the creator's own. */
   const create = useCallback(async (name: string, categories: EnquiryCategory[]) => {
     const clean = normalizeListName(name);
     const { error } = await supabase.from(table).insert(categories.map((category) => ({
+      ...(branch ? { branch_code: branch } : {}),
       category,
       name: clean,
       sort_order: Math.max(0, ...byCategory[category].rows.map((r) => r.sort_order)) + 10,
     })));
     if (!error) await load();
     return error;
-  }, [table, byCategory, load]);
+  }, [table, branch, byCategory, load]);
 
   const rename = useCallback(async (id: string, name: string) => {
     const { error } = await supabase.from(table).update({ name: normalizeListName(name) }).eq('id', id);

@@ -24,6 +24,7 @@ import {
 } from '@/types';
 import { SourcePicker } from '@/components/ManagedListSelect';
 import { categoryOfDepartment } from '@/lib/sources';
+import { branchOfDepartment } from '@/lib/departments';
 import LeadLevelBadge from '@/components/LeadLevelBadge';
 import NameLink from '@/components/NameLink';
 import StorageImage from '@/components/StorageImage';
@@ -34,7 +35,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { enumLabel } from '@/lib/translations';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
-import { canEditLead, canAddFollowUp, canAssignLead, canIssueWarning, canMonitorLead, canDeleteLead } from '@/lib/permissions';
+import { canEditLead, canAddFollowUp, canReassignLead, canWarnOnLead, canViewLead, canDeleteLead, hasPermission } from '@/lib/permissions';
 import { supabase } from '@/db/supabase';
 import { toast } from 'sonner';
 import StatusBadge from '@/components/StatusBadge';
@@ -122,7 +123,7 @@ function EditField({ label, icon, children }: { label: string; icon?: React.Reac
 export default function LeadDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user, role, myTeamIds } = useAuth();
+  const { user, role, managedTeamIds } = useAuth();
   const { t, lang } = useTranslation();
   const stageLabel = (status: string) => enumLabel('stage', status, LEAD_STAGES.find((s) => s.value === status)?.label || status, lang);
   const [lead, setLead] = useState<Lead | null>(null);
@@ -157,7 +158,7 @@ export default function LeadDetail() {
   const appointmentPhotoInputRef = useRef<HTMLInputElement>(null);
   const [viewingPhoto, setViewingPhoto] = useState<{ url: string; label: string } | null>(null);
 
-  const currentUser = user ? { id: user.id, role, department: user.department, managedTeamIds: myTeamIds } : null;
+  const currentUser = user ? { id: user.id, role, department: user.department, managedTeamIds } : null;
 
   const loadAll = useCallback(async () => {
     if (!id) return;
@@ -176,8 +177,8 @@ export default function LeadDetail() {
 
   const teamStaff = lead?.team_id ? membersOf(lead.team_id) : null;
   const departmentStaff = teamStaff
-    ? profiles.filter((p) => teamStaff.includes(p.id) && p.role === 'sale')
-    : profiles.filter((p) => p.department_code === lead?.department_code && p.role === 'sale');
+    ? profiles.filter((p) => teamStaff.includes(p.id) && hasPermission(p.role, 'teams.join'))
+    : profiles.filter((p) => p.department_code === lead?.department_code && hasPermission(p.role, 'teams.join'));
 
   usePageHeader(t('leadDetail.pageTitle'), lead ? `${lead.name} — ${lead.phone}` : undefined);
 
@@ -203,10 +204,10 @@ export default function LeadDetail() {
 
   const editable = canEditLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
   const canFollowUp = canAddFollowUp(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
-  const canWarn = canIssueWarning(currentUser) && canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
-  const canReassign = canAssignLead(currentUser) && canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
+  const canWarn = canWarnOnLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
+  const canReassign = canReassignLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
   const canDelete = canDeleteLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
-  const canManagePhotos = canMonitorLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id }) || lead.created_by === user?.id;
+  const canManagePhotos = canViewLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id }) || lead.created_by === user?.id;
 
   // Converted from an enquiry: the database keeps lead_source equal to the
   // enquiry's source (guard_lead_source), so the field is read-only here.
@@ -660,7 +661,7 @@ export default function LeadDetail() {
                       </Select>
                     </EditField>
                     <EditField label={t('addLead.preferredProject')} icon={<Building2 className="w-4 h-4" />}>
-                      <ProjectNameInput value={editForm.preferred_project} onChange={(v) => setEditForm((f) => ({ ...f, preferred_project: v }))} category={categoryOfDepartment(lead.department_code)} placeholder={t('addLead.enterProjectName')} className="h-10" />
+                      <ProjectNameInput value={editForm.preferred_project} onChange={(v) => setEditForm((f) => ({ ...f, preferred_project: v }))} category={categoryOfDepartment(lead.department_code)} branch={branchOfDepartment(lead.department_code)} placeholder={t('addLead.enterProjectName')} className="h-10" />
                     </EditField>
                     <EditField label={t('addLead.budget')} icon={<DollarSign className="w-4 h-4" />}>
                       <Input value={editForm.budget_range} onChange={(e) => setEditForm((f) => ({ ...f, budget_range: e.target.value }))} className="h-10" />
@@ -674,7 +675,7 @@ export default function LeadDetail() {
                     <EditField label={t('leadDetail.source')} icon={<TrendingUp className="w-4 h-4" />}>
                       <SourcePicker
                         value={editForm.lead_source} onChange={(v) => setEditForm((f) => ({ ...f, lead_source: v }))}
-                        category={categoryOfDepartment(lead.department_code)} disabled={sourceLocked} className="h-10"
+                        category={categoryOfDepartment(lead.department_code)} branch={branchOfDepartment(lead.department_code)} disabled={sourceLocked} className="h-10"
                       />
                       {sourceLocked && <p className="text-[11px] text-muted-foreground mt-1">{t('leadDetail.sourceLocked')}</p>}
                     </EditField>

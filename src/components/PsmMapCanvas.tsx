@@ -14,7 +14,7 @@ import { supabase } from '@/db/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { isExec } from '@/lib/permissions';
+import { hasPermission } from '@/lib/permissions';
 import { fetchStaticPsmParcels, type PsmParcel } from '@/lib/psmMapApi';
 
 // Per the request: fixed starting view, not "fit to all parcels" like
@@ -627,7 +627,7 @@ export default function PsmMapCanvas() {
     }
   };
 
-  const canManagePin = (pin: MapPinRow) => !!user && (pin.created_by === user.id || isExec(role));
+  const canManagePin = (pin: MapPinRow) => !!user && (pin.created_by === user.id || hasPermission(role, 'map.manage'));
 
   const handleDeletePin = async (pin: MapPinRow) => {
     setDeletingPin(true);

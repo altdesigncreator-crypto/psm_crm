@@ -27,7 +27,8 @@ import { useTranslation } from '@/contexts/TranslationContext';
 import { enumLabel, type Lang } from '@/lib/translations';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useDebounce } from '@/hooks/use-debounce';
-import { isManagerOrAbove, isDepartmentScoped, getDepartmentLabel, canDeleteLead } from '@/lib/permissions';
+import { hasPermission, scopeOf, seesAllBranches, seesAllDepartments, getDepartmentLabel, canDeleteLead } from '@/lib/permissions';
+import { branchOfDepartment } from '@/lib/departments';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -302,7 +303,7 @@ export default function Leads() {
     : undefined;
   const { t, lang } = useTranslation();
   usePageHeader(t('leads.title'), t('leads.subtitle'));
-  const { user, role, department, myTeamIds } = useAuth();
+  const { user, role, department, managedTeamIds } = useAuth();
   const { colors: statusColors } = useStatusColors();
   const { nameOf, profiles } = useProfiles();
   const { departments } = useDepartments();
@@ -318,9 +319,9 @@ export default function Leads() {
   const [deleting, setDeleting] = useState(false);
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
 
-  const currentUser = user ? { id: user.id, role, department, managedTeamIds: myTeamIds } : null;
+  const currentUser = user ? { id: user.id, role, department, managedTeamIds } : null;
   const canDeleteRow = (lead: Lead) => canDeleteLead(currentUser, { ownerId: lead.owner_id, departmentCode: lead.department_code, teamId: lead.team_id });
-  const showDeptFilter = !isDepartmentScoped(role);
+  const showDeptFilter = seesAllDepartments(role);
 
   const importFileRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
@@ -342,7 +343,7 @@ export default function Leads() {
     period, setPeriod, selectedMonth, selectedYear, isCurrentPeriod, shiftPeriod, periodLabel, periodRange,
   } = usePeriodFilter(linkedPeriod ?? (restoredState ? { period: restoredState.period, selectedMonth: restoredState.selectedMonth, selectedYear: restoredState.selectedYear } : undefined));
 
-  const isSuperAdmin = role === 'super_admin';
+  const canBulkDelete = hasPermission(role, 'leads.bulk_delete');
   // Individually-checked rows keep the full Lead object (not just its id) —
   // selection can span multiple pages, and once you've paged away a row's
   // data is no longer sitting in pagedLeads, so the object has to be kept
@@ -381,7 +382,10 @@ export default function Leads() {
   // Lead sources). Groups follow the department in view; "Other" holds
   // values on older leads that aren't in the managed list. Counts come from
   // the server (lead_source_counts, RLS-scoped) and refresh with the list.
-  const { byCategory: managedSources } = useEnquirySources();
+  // Filter by the sources of the branch in view: the filtered department's,
+  // else your own; across every branch only for those who see them all.
+  const sourceBranch = deptFilter !== 'all' ? branchOfDepartment(deptFilter) : seesAllBranches(role) ? null : branchOfDepartment(department);
+  const { byCategory: managedSources } = useEnquirySources(sourceBranch);
   const [sourceCounts, setSourceCounts] = useState<Map<string, number>>(new Map());
   const loadSourceCounts = useCallback(async () => {
     const { data, error } = await supabase.rpc('lead_source_counts');
@@ -389,7 +393,7 @@ export default function Leads() {
     setSourceCounts(new Map((data as { source: string | null; leads: number }[]).map((r) => [r.source ?? NO_SOURCE, Number(r.leads)])));
   }, []);
   useEffect(() => { if (user) loadSourceCounts(); }, [user?.id, loadSourceCounts]);
-  const sourceCategory = categoryOfDepartment(deptFilter !== 'all' ? deptFilter : isDepartmentScoped(role) ? department : null);
+  const sourceCategory = categoryOfDepartment(deptFilter !== 'all' ? deptFilter : !seesAllDepartments(role) ? department : null);
   const sourceGroups = useMemo(() => buildSourceGroups(
     managedSources,
     Array.from(sourceCounts.keys()).filter((s) => s !== NO_SOURCE),
@@ -782,7 +786,7 @@ export default function Leads() {
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
           <input ref={importFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile} className="hidden" />
-          {isSuperAdmin && visibleTotalCount > 0 && (
+          {canBulkDelete && visibleTotalCount > 0 && (
             <>
               <Button
                 variant="outline"
@@ -804,7 +808,7 @@ export default function Leads() {
               )}
             </>
           )}
-          {isManagerOrAbove(role) && (
+          {hasPermission(role, 'leads.import') && (
             <Button variant="outline" disabled={importing} onClick={() => importFileRef.current?.click()} className="h-11 md:h-12 gap-2 active:scale-[0.98] transition-transform">
               {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
               <span className="hidden sm:inline">{importing ? t('leads.importing') : t('common.import')}</span>
@@ -867,7 +871,7 @@ export default function Leads() {
                   filter panel and hunting for their own name in the agent
                   list. Reuses the existing agentFilter/owner_name filtering
                   rather than adding a parallel filter path. */}
-              {role === 'manager' && user?.name && (
+              {scopeOf(role, 'leads.view') === 'team' && user?.name && (
                 <button
                   type="button"
                   onClick={() => setAgentFilter((prev) => (prev === user.name ? 'all' : user.name))}
@@ -1089,12 +1093,12 @@ export default function Leads() {
                   <Table>
                     <TableHeader>
                       <TableRow className="hover:bg-transparent bg-muted/30">
-                        {isSuperAdmin && (
+                        {canBulkDelete && (
                           <TableHead className={`${TH_STYLE} pl-5 w-10`}>
                             <Checkbox checked={selectAllMatchingActive} onCheckedChange={toggleSelectAll} aria-label={t('leads.selectAll')} />
                           </TableHead>
                         )}
-                        <TableHead className={`${TH_STYLE} ${isSuperAdmin ? 'pl-3' : 'pl-5'}`}>{t('leads.customer')}</TableHead>
+                        <TableHead className={`${TH_STYLE} ${canBulkDelete ? 'pl-3' : 'pl-5'}`}>{t('leads.customer')}</TableHead>
                         <TableHead className={TH_STYLE}>{t('leads.projectBudget')}</TableHead>
                         <TableHead className={TH_STYLE}>{t('addLead.grade')}</TableHead>
                         <TableHead className={TH_STYLE}>{t('common.status')}</TableHead>
@@ -1106,7 +1110,7 @@ export default function Leads() {
                     <TableBody>
                       {visibleLeads.map((lead) => (
                         <TableRow key={lead.id} className="cursor-pointer table-row-interactive table-row-zebra border-border/40" onClick={() => navigate(`/lead/${lead.id}`)}>
-                          {isSuperAdmin && (
+                          {canBulkDelete && (
                             <TableCell className="pl-5 pr-0 py-2.5" onClick={(e) => e.stopPropagation()}>
                               <Checkbox
                                 checked={selectAllMatchingActive || selectedLeads.has(lead.id)}
@@ -1116,7 +1120,7 @@ export default function Leads() {
                               />
                             </TableCell>
                           )}
-                          <TableCell className={`${isSuperAdmin ? 'pl-3' : 'pl-5'} pr-4 py-2.5`}>
+                          <TableCell className={`${canBulkDelete ? 'pl-3' : 'pl-5'} pr-4 py-2.5`}>
                             <div className="flex items-center gap-3">
                               <div className="flex items-center justify-center text-xs font-semibold rounded-full w-9 h-9 bg-primary/10 text-primary shrink-0">
                                 {initialsOf(lead.name)}
@@ -1188,7 +1192,7 @@ export default function Leads() {
                         className="flex items-center gap-1 pl-1 pr-2 transition-colors active:bg-muted/50"
                         style={{ borderLeft: `4px solid ${statusColor}` }}
                       >
-                        {isSuperAdmin && (
+                        {canBulkDelete && (
                           <div className="shrink-0 pl-1.5" onClick={(e) => e.stopPropagation()}>
                             <Checkbox
                               checked={selectAllMatchingActive || selectedLeads.has(lead.id)}
@@ -1512,7 +1516,7 @@ function FilterFields({ statusFilter, setStatusFilter, gradeFilter, setGradeFilt
             <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectDepartment')} /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">{t('leads.filter.allDepartments')}</SelectItem>
-              {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+              {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{getDepartmentLabel(d.code)}</SelectItem>))}
             </SelectContent>
           </Select>
         </div>

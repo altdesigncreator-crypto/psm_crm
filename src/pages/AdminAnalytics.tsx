@@ -8,7 +8,7 @@ import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useStatusColors } from '@/hooks/useStatusColors';
-import { isExec } from '@/lib/permissions';
+import { hasPermission } from '@/lib/permissions';
 import {
   ArrowLeft, BarChart3, TrendingUp, TrendingDown, Users, DollarSign, Target, Activity,
   FileSpreadsheet, FileText, File as FilePdf, Flame, Sparkles, Building2, Wifi,
@@ -102,7 +102,7 @@ export default function AdminAnalytics() {
   const { period, setPeriod, isCurrentPeriod, shiftPeriod, periodLabel, matchesPeriod } = usePeriodFilter();
 
   useEffect(() => {
-    if (!isExec(role)) { setLoading(false); return; }
+    if (!hasPermission(role, 'reports.kpi')) { setLoading(false); return; }
     let active = true;
     const load = async () => {
       try {
@@ -136,7 +136,7 @@ export default function AdminAnalytics() {
     return () => { active = false; supabase.removeChannel(channel); };
   }, [role]);
 
-  if (!isExec(role)) {
+  if (!hasPermission(role, 'reports.kpi')) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-muted-foreground animate-fade-in-up">
         <Target className="w-10 h-10 mb-3 opacity-40" />

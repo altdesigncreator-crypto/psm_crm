@@ -8,7 +8,7 @@ import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { useDepartments } from '@/hooks/useDepartments';
 import { useTeams } from '@/hooks/useTeams';
-import { canAddFollowUp, isAdminOrAbove, isDepartmentScoped, getDepartmentLabel } from '@/lib/permissions';
+import { canAddFollowUp, hasPermission, seesAllDepartments, getDepartmentLabel } from '@/lib/permissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -437,7 +437,7 @@ export default function FollowUps() {
         followStatus: findColumn(headers, ['follow']),
       };
 
-      const canAssignOthers = isAdminOrAbove(role);
+      const canAssignOthers = hasPermission(role, 'leads.reassign', 'department');
       const defaultDept = department || departments[0]?.code || '';
 
       const leadPayloads: any[] = [];
@@ -752,7 +752,7 @@ export default function FollowUps() {
                       dateFilter={dateFilter} setDateFilter={setDateFilter}
                       sortBy={sortBy} setSortBy={setSortBy}
                       uniqueAgents={uniqueAgents} projectGroups={projectIndex.groups} departments={departments} teamOptions={teamOptions}
-                      showDept={!isDepartmentScoped(role)} showSortDate={false}
+                      showDept={seesAllDepartments(role)} showSortDate={false}
                     />
                   </PopoverContent>
                 </Popover>
@@ -790,7 +790,7 @@ export default function FollowUps() {
                       dateFilter={dateFilter} setDateFilter={setDateFilter}
                       sortBy={sortBy} setSortBy={setSortBy}
                       uniqueAgents={uniqueAgents} projectGroups={projectIndex.groups} departments={departments} teamOptions={teamOptions}
-                      showDept={!isDepartmentScoped(role)}
+                      showDept={seesAllDepartments(role)}
                     />
                     <SheetClose asChild>
                       <button type="button" className="w-full h-12 text-sm font-medium transition-colors rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80">
@@ -1110,7 +1110,7 @@ function FollowUpFilterFields({
             <SelectTrigger className="w-full h-12"><SelectValue placeholder={t('leads.filter.selectDepartment')} /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">{t('leads.filter.allDepartments')}</SelectItem>
-              {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}
+              {departments.map((d: { code: string; name: string }) => (<SelectItem key={d.code} value={d.code}>{getDepartmentLabel(d.code)}</SelectItem>))}
             </SelectContent>
           </Select>
         </div>

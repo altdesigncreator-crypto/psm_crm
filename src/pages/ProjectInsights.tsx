@@ -24,7 +24,7 @@ import { useProfiles } from '@/hooks/useProfiles';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { usePeriodFilter, type Period } from '@/hooks/usePeriodFilter';
-import { canAccessRoute, isAdminOrAbove } from '@/lib/permissions';
+import { canAccessRoute, scopeOf } from '@/lib/permissions';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { enumLabel } from '@/lib/translations';
 import { LEAD_STAGES } from '@/types';
@@ -150,9 +150,9 @@ export default function ProjectInsights() {
   );
   const { totals } = insights;
   const hasPrev = period !== 'overall';
-  // Below admin, RLS shows a manager their teams' leads but only their own
-  // enquiries — so "added directly" overstates, and the panel says why.
-  const enquiriesScopedToSelf = !isAdminOrAbove(role);
+  // A role can see more leads (e.g. a whole team's) than enquiries (only its
+  // own) — then "added directly" overstates, and the panel says why.
+  const enquiriesScopedToSelf = scopeOf(role, 'enquiries.view') === 'own';
 
   const labelOf = useCallback((label: string) => (label === UNSPECIFIED ? t('projects.unspecified') : label), [t]);
   const sourceLabel = useCallback((s: string) => (s === NO_SOURCE ? t('projects.noSource') : s), [t]);

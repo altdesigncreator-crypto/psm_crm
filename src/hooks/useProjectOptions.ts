@@ -18,7 +18,7 @@ const PROJECTS: ManagedListConfig = {
   fallback: { condo: FALLBACK_CONDO, house_land: FALLBACK_HOUSE_LAND },
 };
 
-/** The projects offered as an enquiry's Preferred project, per category. */
-export function useProjectOptions() {
-  return useManagedList(PROJECTS);
+/** The projects offered as a Preferred project, per branch and category. */
+export function useProjectOptions(branch?: string | null) {
+  return useManagedList(PROJECTS, branch);
 }

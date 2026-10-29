@@ -6,7 +6,7 @@ import { useTranslation } from '@/contexts/TranslationContext';
 import { useDepartments } from '@/hooks/useDepartments';
 import { useTeams } from '@/hooks/useTeams';
 import { useProfiles } from '@/hooks/useProfiles';
-import { isExec, getDepartmentLabel } from '@/lib/permissions';
+import { hasPermission, getDepartmentLabel } from '@/lib/permissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,7 +28,7 @@ export default function TeamManagement() {
   const { t, lang } = useTranslation();
   usePageHeader(t('teamManagement.pageTitle'), t('teamManagement.subtitle'));
 
-  const isBoss = isExec(role);
+  const isBoss = hasPermission(role, 'teams.manage', 'all');
   const [selectedDept, setSelectedDept] = useState('');
 
   useEffect(() => {
@@ -51,11 +51,11 @@ export default function TeamManagement() {
   const [deleting, setDeleting] = useState(false);
 
   const managersInDept = useMemo(
-    () => profiles.filter((p) => p.role === 'manager' && p.department_code === selectedDept),
+    () => profiles.filter((p) => hasPermission(p.role, 'teams.lead') && p.department_code === selectedDept),
     [profiles, selectedDept]
   );
   const salesInDept = useMemo(
-    () => profiles.filter((p) => p.role === 'sale' && p.department_code === selectedDept),
+    () => profiles.filter((p) => hasPermission(p.role, 'teams.join') && p.department_code === selectedDept),
     [profiles, selectedDept]
   );
   const teamsInDept = useMemo(
@@ -143,7 +143,7 @@ export default function TeamManagement() {
             <Label className="text-xs font-medium text-muted-foreground">{t('leads.filter.department')}</Label>
             <Select value={selectedDept} onValueChange={setSelectedDept}>
               <SelectTrigger className="h-11 mt-1.5"><SelectValue /></SelectTrigger>
-              <SelectContent>{departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}</SelectContent>
+              <SelectContent>{departments.map((d) => (<SelectItem key={d.code} value={d.code}>{getDepartmentLabel(d.code)}</SelectItem>))}</SelectContent>
             </Select>
           </CardContent>
         </Card>

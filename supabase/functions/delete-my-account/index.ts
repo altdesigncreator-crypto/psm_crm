@@ -1,5 +1,5 @@
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -14,11 +14,20 @@ function json(body: unknown, status = 200) {
   });
 }
 
+/** Does the user hold `permission` at `minScope` or wider (own < team <
+ * department < branch < all)? Resolved by public.user_has_permission from
+ * their role's grants — no scope arithmetic here. */
+async function hasPermission(admin: SupabaseClient, userId: string, permission: string, minScope = 'own'): Promise<boolean> {
+  const { data, error } = await admin.rpc('user_has_permission', { p_user: userId, p_permission: permission, p_min_scope: minScope });
+  if (error) throw error;
+  return data === true;
+}
+
 /**
  * A staff member permanently deletes their OWN account (self-service, from
- * Settings). The Boss account cannot self-delete, and a Super Admin can
- * only self-delete while at least one other active executive remains —
- * the system must never lose its last global account.
+ * Settings). The owner role (Boss) cannot self-delete, and someone who can
+ * manage roles can only self-delete while another active account still can
+ * — the system must never lose its last administrator.
  *
  * The client verifies the password (signInWithPassword) before calling;
  * this function only ever deletes the authenticated caller, so a stolen
@@ -57,20 +66,26 @@ serve(async (req) => {
       .single();
 
     if (meErr || !me) return json({ error: 'Profile not found.' }, 404);
-    if (me.role === 'boss') {
-      return json({ error: 'The Boss account cannot be self-deleted.' }, 403);
+    const { data: myRole } = await admin.from('roles').select('name, is_owner').eq('key', me.role).single();
+    if (myRole?.is_owner) {
+      return json({ error: `The ${myRole.name} account cannot be self-deleted.` }, 403);
     }
-    if (me.role === 'super_admin') {
-      // A Super Admin may delete their own account, but never the system's
-      // last executive — that would lock everyone out of administration.
-      const { count: otherExecs } = await admin
+    if (await hasPermission(admin, id, 'roles.manage')) {
+      // Never delete the last account that can manage roles — that would
+      // lock everyone out of administration.
+      const [{ data: grants }, { data: owners }] = await Promise.all([
+        admin.from('role_permissions').select('role_key').eq('permission_key', 'roles.manage'),
+        admin.from('roles').select('key').eq('is_owner', true),
+      ]);
+      const adminRoles = [...(grants ?? []).map((g) => g.role_key), ...(owners ?? []).map((o) => o.key)];
+      const { count: others } = await admin
         .from('profiles')
         .select('id', { count: 'exact', head: true })
-        .in('role', ['boss', 'super_admin'])
+        .in('role', adminRoles)
         .eq('status', 'active')
         .neq('id', id);
-      if ((otherExecs ?? 0) === 0) {
-        return json({ error: 'You are the last executive account. Create another Boss/Super Admin before deleting this one.' }, 409);
+      if ((others ?? 0) === 0) {
+        return json({ error: 'You are the last account that can manage roles. Give someone else that access before deleting this one.' }, 409);
       }
     }
 

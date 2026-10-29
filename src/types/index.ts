@@ -1,4 +1,4 @@
-import type { Department, RoleTier } from '@/lib/permissions';
+import type { Department, RoleKey } from '@/lib/permissions';
 
 export type LeadStage = 'new' | 'contacted' | 'qualified' | 'appointment' | 'site_visit' | 'negotiation' | 'booking' | 'sold' | 'lost';
 export type FollowUpState = 'active' | 'cold';
@@ -38,7 +38,7 @@ export interface Profile {
   email: string;
   name: string;
   phone?: string | null;
-  role: RoleTier;
+  role: RoleKey;
   department_code: Department | null;
   status: 'active' | 'inactive';
   avatar_url?: string | null;

@@ -1,5 +1,5 @@
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -14,14 +14,23 @@ function json(body: unknown, status = 200) {
   });
 }
 
+/** Does the user hold `permission` at `minScope` or wider (own < team <
+ * department < branch < all)? Resolved by public.user_has_permission from
+ * their role's grants — no scope arithmetic here. */
+async function hasPermission(admin: SupabaseClient, userId: string, permission: string, minScope = 'own'): Promise<boolean> {
+  const { data, error } = await admin.rpc('user_has_permission', { p_user: userId, p_permission: permission, p_min_scope: minScope });
+  if (error) throw error;
+  return data === true;
+}
+
 interface DeleteStaffPayload {
   userId: string;
 }
 
 /**
- * Boss/Super Admin permanently delete a staff account (Admin / Manager /
- * Sales only — exec accounts can't be deleted here, and you can't delete
- * yourself). Runs on the service-role key because deleting the auth user is
+ * Callers with staff.manage permanently delete a staff account whose role
+ * is within their own access. Accounts that can themselves manage staff
+ * can't be deleted here, and you can't delete yourself. Runs on the service-role key because deleting the auth user is
  * an admin-API operation.
  *
  * Business data referencing the profile has RESTRICT foreign keys, so this
@@ -54,14 +63,8 @@ serve(async (req) => {
     const { data: callerAuth, error: callerErr } = await admin.auth.getUser(jwt);
     if (callerErr || !callerAuth.user) return json({ error: 'Invalid session' }, 401);
 
-    const { data: callerProfile, error: profileErr } = await admin
-      .from('profiles')
-      .select('role')
-      .eq('id', callerAuth.user.id)
-      .single();
-
-    if (profileErr || !callerProfile || !['boss', 'super_admin'].includes(callerProfile.role)) {
-      return json({ error: 'Only Boss/Super Admin can delete staff accounts.' }, 403);
+    if (!(await hasPermission(admin, callerAuth.user.id, 'staff.manage', 'all'))) {
+      return json({ error: "You don't have permission to delete staff accounts." }, 403);
     }
 
     const payload: DeleteStaffPayload = await req.json();
@@ -77,8 +80,12 @@ serve(async (req) => {
       .single();
 
     if (targetErr || !target) return json({ error: 'Staff member not found.' }, 404);
-    if (!['admin', 'manager', 'sale'].includes(target.role)) {
-      return json({ error: 'Boss/Super Admin accounts cannot be deleted here.' }, 403);
+    const { data: withinMine, error: withinErr } = await admin.rpc('user_can_assign_role', {
+      p_user: callerAuth.user.id, p_role: target.role,
+    });
+    if (withinErr) throw withinErr;
+    if (!withinMine || (await hasPermission(admin, target.id, 'staff.manage'))) {
+      return json({ error: 'Accounts that can manage staff cannot be deleted here.' }, 403);
     }
 
     // Leads are business data — they must be reassigned, never lost.

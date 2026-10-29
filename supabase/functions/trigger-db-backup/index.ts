@@ -1,5 +1,5 @@
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -12,6 +12,15 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
   });
+}
+
+/** Does the user hold `permission` at `minScope` or wider (own < team <
+ * department < branch < all)? Resolved by public.user_has_permission from
+ * their role's grants — no scope arithmetic here. */
+async function hasPermission(admin: SupabaseClient, userId: string, permission: string, minScope = 'own'): Promise<boolean> {
+  const { data, error } = await admin.rpc('user_has_permission', { p_user: userId, p_permission: permission, p_min_scope: minScope });
+  if (error) throw error;
+  return data === true;
 }
 
 function sleep(ms: number) {
@@ -78,14 +87,8 @@ serve(async (req) => {
     const { data: callerAuth, error: callerErr } = await admin.auth.getUser(jwt);
     if (callerErr || !callerAuth.user) return json({ error: 'Invalid session' }, 401);
 
-    const { data: callerProfile, error: profileErr } = await admin
-      .from('profiles')
-      .select('role')
-      .eq('id', callerAuth.user.id)
-      .single();
-
-    if (profileErr || !callerProfile || !['boss', 'super_admin'].includes(callerProfile.role)) {
-      return json({ error: 'Only Boss/Super Admin can download a database backup.' }, 403);
+    if (!(await hasPermission(admin, callerAuth.user.id, 'system.configure', 'all'))) {
+      return json({ error: "You don't have permission to download a database backup." }, 403);
     }
 
     const startedAt = Date.now();

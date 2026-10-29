@@ -15,7 +15,7 @@ import StorageImage from '@/components/StorageImage';
 import { processCapturedImage } from '@/lib/cameraUtils';
 import {
   User as UserIcon, Search, Filter, SlidersHorizontal, Download, FileSpreadsheet, FileText,
-  Briefcase, Phone, Mail, ShieldAlert, UserPlus, Loader2, Edit2, AlertTriangle, KeyRound, Trash2, Camera,
+  Briefcase, Phone, Mail, ShieldAlert, UserPlus, Loader2, Edit2, AlertTriangle, KeyRound, Trash2, Camera, ArrowRight,
 } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -26,7 +26,8 @@ import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { exportAsExcel, exportAsCSV } from '@/lib/exportUtils';
 import { getEdgeFunctionErrorMessage } from '@/lib/edgeFunctionError';
-import { ROLE_TIERS, isExec, isAdminOrAbove, canWarnStaff, getDepartmentLabel, getRoleLabel, type RoleTier, type Department } from '@/lib/permissions';
+import { canAccessRoute, canAssignRole, canWarnStaff, diffGrants, getDepartmentLabel, getRole, getRoleLabel, hasPermission, roleGrants, type RoleKey, type Department } from '@/lib/permissions';
+import AccessChangeList from '@/components/AccessChangeList';
 import { useDepartments } from '@/hooks/useDepartments';
 import { useTeams } from '@/hooks/useTeams';
 import { WARNING_REASONS, type WarningReason } from '@/types';
@@ -38,7 +39,7 @@ const STAFF_CACHE_TTL_MS = 5 * 60 * 1000;
 const staffCacheKey = (userId: string) => `staff-directory:${userId}`;
 
 export default function UserManagement() {
-  const { user, role } = useAuth();
+  const { user, role, rbac } = useAuth();
   const { departments } = useDepartments();
   const { teams, teamsOf, teamsManagedBy, membersOf } = useTeams();
   const { t, lang } = useTranslation();
@@ -57,7 +58,7 @@ export default function UserManagement() {
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
-  const [newRole, setNewRole] = useState<RoleTier>('sale');
+  const [newRole, setNewRole] = useState<RoleKey>('sale');
   const [newDept, setNewDept] = useState<Department>('');
   const [newPassword, setNewPassword] = useState('');
 
@@ -66,7 +67,7 @@ export default function UserManagement() {
   const [selectedStaffId, setSelectedStaffId] = useState('');
   const [editName, setEditName] = useState('');
   const [editPhone, setEditPhone] = useState('');
-  const [editRole, setEditRole] = useState<RoleTier>('sale');
+  const [editRole, setEditRole] = useState<RoleKey>('sale');
   const [editDept, setEditDept] = useState<Department>('');
   const [editStatus, setEditStatus] = useState<'active' | 'inactive'>('active');
   const [editAvatarUrl, setEditAvatarUrl] = useState<string | null>(null);
@@ -83,16 +84,21 @@ export default function UserManagement() {
   const [warningMessage, setWarningMessage] = useState('');
   const [savingWarning, setSavingWarning] = useState(false);
 
-  const canManageStaff = isExec(role);
-  const canView = isAdminOrAbove(role);
+  const canManageStaff = hasPermission(role, 'staff.manage');
+  const canView = canAccessRoute(role, 'user-management');
+  // Only roles within your own access can be handed out (enforced by the
+  // database too) — and only people holding such a role can be edited.
+  const assignableRoles = rbac.roles.filter((r) => canAssignRole(role, r.key));
+  const canManageTarget = (s: Profile) => canManageStaff && canAssignRole(role, s.role);
+  const roleNeedsDepartment = (r: RoleKey) => getRole(r)?.requires_department !== false;
 
   const managedPersonIds = useMemo(() => {
-    if (role !== 'manager' || !user) return [];
+    if (!user) return [];
     return teamsManagedBy(user.id).flatMap((t) => membersOf(t.id));
-  }, [role, user, teamsManagedBy, membersOf]);
+  }, [user, teamsManagedBy, membersOf]);
 
   const teamNamesFor = (s: Profile): string[] => {
-    const ids = s.role === 'manager' ? teamsManagedBy(s.id).map((t) => t.id) : teamsOf(s.id);
+    const ids = hasPermission(s.role, 'teams.lead') ? teamsManagedBy(s.id).map((t) => t.id) : teamsOf(s.id);
     return ids.map((id) => teams.find((t) => t.id === id)?.name).filter(Boolean) as string[];
   };
 
@@ -181,7 +187,7 @@ export default function UserManagement() {
       const { data, error } = await supabase.functions.invoke('create-staff-user', {
         body: {
           name: newName.trim(), email: newEmail.trim().toLowerCase(), phone: newPhone.trim() || undefined,
-          password: newPassword, role: newRole, department: newRole === 'boss' || newRole === 'super_admin' ? null : newDept,
+          password: newPassword, role: newRole, department: roleNeedsDepartment(newRole) ? newDept : null,
         },
         headers: { Authorization: `Bearer ${sessionData.session?.access_token}` },
       });
@@ -199,7 +205,7 @@ export default function UserManagement() {
   };
 
   const handleRowClick = (s: Profile) => {
-    if (!canManageStaff) return;
+    if (!canManageTarget(s)) return;
     setSelectedStaffId(s.id);
     setEditName(s.name);
     setEditPhone(s.phone || '');
@@ -307,19 +313,41 @@ export default function UserManagement() {
     }
   };
 
-  const handleUpdateStaff = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editName.trim()) { toast.error(t('userManagement.nameRequired')); return; }
+  // Role, department and status changes have side effects (access, leads,
+  // teams, sign-in), so they're reviewed in a confirmation step first.
+  const editingStaff = staff.find((s) => s.id === selectedStaffId);
+  const nextDept = roleNeedsDepartment(editRole) ? editDept : null;
+  const roleChanged = !!editingStaff && editingStaff.role !== editRole;
+  const deptChanged = !!editingStaff && (editingStaff.department_code ?? null) !== nextDept;
+  const statusChanged = !!editingStaff && editingStaff.status !== editStatus;
+  const [confirmEditOpen, setConfirmEditOpen] = useState(false);
+
+  // Mirrors public.enforce_team_eligibility: the teams this edit takes them off.
+  const teamsLeaving = editingStaff ? teams.filter((tm) => teamsOf(editingStaff.id).includes(tm.id)
+    && (tm.department_code !== nextDept || !hasPermission(editRole, 'teams.join'))) : [];
+  const teamsNoLongerManaged = editingStaff ? teamsManagedBy(editingStaff.id).filter((tm) => tm.department_code !== nextDept
+    || !hasPermission(editRole, 'teams.lead')) : [];
+  const roleAccessChanges = roleChanged && editingStaff ? diffGrants(roleGrants(editingStaff.role), roleGrants(editRole)) : [];
+
+  const persistStaffEdit = async () => {
     setIsUpdating(true);
     const { error } = await supabase.from('profiles').update({
       name: editName.trim(), phone: editPhone.trim() || null, role: editRole,
-      department_code: editRole === 'boss' || editRole === 'super_admin' ? null : editDept,
+      department_code: nextDept,
       status: editStatus,
     }).eq('id', selectedStaffId);
     setIsUpdating(false);
+    setConfirmEditOpen(false);
     if (error) { toast.error(error.message); return; }
     toast.success(t('userManagement.staffUpdatedToast'));
     setIsEditOpen(false);
+  };
+
+  const handleUpdateStaff = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editName.trim()) { toast.error(t('userManagement.nameRequired')); return; }
+    if (roleChanged || deptChanged || statusChanged) { setConfirmEditOpen(true); return; }
+    await persistStaffEdit();
   };
 
   return (
@@ -360,18 +388,17 @@ export default function UserManagement() {
                 <div className="grid grid-cols-2 gap-3.5">
                   <div className="space-y-1.5">
                     <Label className="text-xs font-medium text-muted-foreground">{t('userManagement.role')}</Label>
-                    <Select value={newRole} onValueChange={(v) => setNewRole(v as RoleTier)}>
+                    <Select value={newRole} onValueChange={(v) => setNewRole(v)}>
                       <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                      <SelectContent>{ROLE_TIERS.map((r) => (<SelectItem key={r} value={r}>{getRoleLabel(r, lang)}</SelectItem>))}</SelectContent>
+                      <SelectContent>{assignableRoles.map((r) => (<SelectItem key={r.key} value={r.key}>{getRoleLabel(r.key, lang)}</SelectItem>))}</SelectContent>
                     </Select>
                   </div>
-                  {/* Admin is department-scoped like Manager — department required */}
-                  {newRole !== 'boss' && newRole !== 'super_admin' && (
+                  {roleNeedsDepartment(newRole) && (
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium text-muted-foreground">{t('userManagement.department')}</Label>
                       <Select value={newDept} onValueChange={(v) => setNewDept(v)}>
                         <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                        <SelectContent>{departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}</SelectContent>
+                        <SelectContent>{departments.map((d) => (<SelectItem key={d.code} value={d.code}>{getDepartmentLabel(d.code)}</SelectItem>))}</SelectContent>
                       </Select>
                     </div>
                   )}
@@ -423,17 +450,17 @@ export default function UserManagement() {
             <div className="grid grid-cols-2 gap-3.5">
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium text-muted-foreground">{t('userManagement.role')}</Label>
-                <Select value={editRole} onValueChange={(v) => setEditRole(v as RoleTier)}>
+                <Select value={editRole} onValueChange={(v) => setEditRole(v)}>
                   <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                  <SelectContent>{ROLE_TIERS.map((r) => (<SelectItem key={r} value={r}>{getRoleLabel(r, lang)}</SelectItem>))}</SelectContent>
+                  <SelectContent>{assignableRoles.map((r) => (<SelectItem key={r.key} value={r.key}>{getRoleLabel(r.key, lang)}</SelectItem>))}</SelectContent>
                 </Select>
               </div>
-              {editRole !== 'boss' && editRole !== 'super_admin' && (
+              {roleNeedsDepartment(editRole) && (
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium text-muted-foreground">{t('userManagement.department')}</Label>
                   <Select value={editDept} onValueChange={(v) => setEditDept(v)}>
                     <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                    <SelectContent>{departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}</SelectContent>
+                    <SelectContent>{departments.map((d) => (<SelectItem key={d.code} value={d.code}>{getDepartmentLabel(d.code)}</SelectItem>))}</SelectContent>
                   </Select>
                 </div>
               )}
@@ -475,9 +502,9 @@ export default function UserManagement() {
               </div>
             </div>
 
-            {/* Danger zone — same target rule as password reset: only
-                Admin/Manager/Sales accounts, enforced server-side too. */}
-            {(editRole === 'admin' || editRole === 'manager' || editRole === 'sale') && (
+            {/* Danger zone — accounts that can themselves manage staff
+                can't be deleted from here (enforced server-side too). */}
+            {!hasPermission(editRole, 'staff.manage') && (
               <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3.5">
                 <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                   <Trash2 className="w-3.5 h-3.5 text-destructive" /> {t('userManagement.deleteAccount')}
@@ -551,8 +578,8 @@ export default function UserManagement() {
                 <SheetContent side="bottom" className="rounded-t-2xl border-t border-border px-6 pt-5 pb-8 max-h-[85dvh] overflow-y-auto">
                   <SheetHeader className="pb-4 border-b border-border/40"><SheetTitle className="text-base font-semibold flex items-center gap-2"><Filter className="w-4 h-4 text-primary" /> {t('leads.filters')}</SheetTitle></SheetHeader>
                   <div className="space-y-4 mt-4">
-                    <FilterSelect label={t('userManagement.department')} value={deptFilter} onChange={setDeptFilter} options={[['all', t('userManagement.allDepartments')], ...departments.map((d) => [d.code, d.name] as [string, string])]} />
-                    <FilterSelect label={t('userManagement.role')} value={roleFilter} onChange={setRoleFilter} options={[['all', t('userManagement.allRoles')], ...ROLE_TIERS.map((r) => [r, getRoleLabel(r, lang)] as [string, string])]} />
+                    <FilterSelect label={t('userManagement.department')} value={deptFilter} onChange={setDeptFilter} options={[['all', t('userManagement.allDepartments')], ...departments.map((d) => [d.code, getDepartmentLabel(d.code)] as [string, string])]} />
+                    <FilterSelect label={t('userManagement.role')} value={roleFilter} onChange={setRoleFilter} options={[['all', t('userManagement.allRoles')], ...rbac.roles.map((r) => [r.key, getRoleLabel(r.key, lang)] as [string, string])]} />
                     <FilterSelect label={t('userManagement.status')} value={statusFilter} onChange={setStatusFilter} options={[['all', t('userManagement.allStatuses')], ['active', t('profile.active')], ['inactive', t('profile.inactive')]]} />
                     <SheetClose asChild><Button className="w-full h-11 font-medium mt-3">{t('common.done')}</Button></SheetClose>
                   </div>
@@ -561,11 +588,11 @@ export default function UserManagement() {
               <div className="hidden md:flex gap-2">
                 <Select value={deptFilter} onValueChange={setDeptFilter}>
                   <SelectTrigger className="w-[145px] h-11 bg-card"><Filter className="w-3.5 h-3.5 mr-1.5 text-muted-foreground/70" /><SelectValue placeholder={t('userManagement.department')} /></SelectTrigger>
-                  <SelectContent><SelectItem value="all">{t('userManagement.allDepartments')}</SelectItem>{departments.map((d) => (<SelectItem key={d.code} value={d.code}>{d.name}</SelectItem>))}</SelectContent>
+                  <SelectContent><SelectItem value="all">{t('userManagement.allDepartments')}</SelectItem>{departments.map((d) => (<SelectItem key={d.code} value={d.code}>{getDepartmentLabel(d.code)}</SelectItem>))}</SelectContent>
                 </Select>
                 <Select value={roleFilter} onValueChange={setRoleFilter}>
                   <SelectTrigger className="w-[145px] h-11 bg-card"><UserIcon className="w-3.5 h-3.5 mr-1.5 text-muted-foreground/70" /><SelectValue placeholder={t('userManagement.role')} /></SelectTrigger>
-                  <SelectContent><SelectItem value="all">{t('userManagement.allRoles')}</SelectItem>{ROLE_TIERS.map((r) => (<SelectItem key={r} value={r}>{getRoleLabel(r, lang)}</SelectItem>))}</SelectContent>
+                  <SelectContent><SelectItem value="all">{t('userManagement.allRoles')}</SelectItem>{rbac.roles.map((r) => (<SelectItem key={r.key} value={r.key}>{getRoleLabel(r.key, lang)}</SelectItem>))}</SelectContent>
                 </Select>
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
                   <SelectTrigger className="w-[145px] h-11 bg-card"><Briefcase className="w-3.5 h-3.5 mr-1.5 text-muted-foreground/70" /><SelectValue placeholder={t('userManagement.status')} /></SelectTrigger>
@@ -606,7 +633,7 @@ export default function UserManagement() {
                 </TableHeader>
                 <TableBody>
                   {filteredStaff.map((s) => (
-                    <TableRow key={s.id} className={`table-row-zebra border-b border-border/40 transition-colors duration-150 hover:bg-primary/5 ${canManageStaff ? 'cursor-pointer' : ''}`} onClick={() => handleRowClick(s)}>
+                    <TableRow key={s.id} className={`table-row-zebra border-b border-border/40 transition-colors duration-150 hover:bg-primary/5 ${canManageTarget(s) ? 'cursor-pointer' : ''}`} onClick={() => handleRowClick(s)}>
                       <TableCell className="whitespace-nowrap px-6 py-2.5 text-sm font-medium text-foreground"><NameLink id={s.id} name={s.name} avatarUrl={s.avatar_url} /></TableCell>
                       <TableCell className="whitespace-nowrap px-6 py-2.5 text-sm text-muted-foreground tabular-nums"><Phone className="w-3.5 h-3.5 inline mr-1.5 opacity-60" />{s.phone || '—'}</TableCell>
                       <TableCell className="whitespace-nowrap px-6 py-2.5 text-sm text-muted-foreground"><Mail className="w-3.5 h-3.5 inline mr-1.5 opacity-60" />{s.email}</TableCell>
@@ -683,6 +710,75 @@ export default function UserManagement() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={confirmEditOpen} onOpenChange={(o) => !isUpdating && setConfirmEditOpen(o)}>
+        <AlertDialogContent className="max-w-[calc(100%-2rem)] md:max-w-lg rounded-xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('userManagement.confirmChangesTitle')} {editingStaff?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>{t('userManagement.confirmChangesDesc')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          {editingStaff && (
+            <div className="max-h-[50dvh] space-y-3 overflow-y-auto">
+              <ul className="divide-y divide-border/60 rounded-xl border border-border">
+                {roleChanged && (
+                  <li className="flex items-center gap-2 px-3 py-2 text-sm">
+                    <span className="min-w-0 flex-1 text-muted-foreground">{t('userManagement.role')}</span>
+                    <span className="text-xs text-muted-foreground">{getRoleLabel(editingStaff.role, lang)}</span>
+                    <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    <span className="text-xs font-medium text-foreground">{getRoleLabel(editRole, lang)}</span>
+                  </li>
+                )}
+                {deptChanged && (
+                  <li className="flex items-center gap-2 px-3 py-2 text-sm">
+                    <span className="min-w-0 flex-1 text-muted-foreground">{t('userManagement.department')}</span>
+                    <span className="text-xs text-muted-foreground">{getDepartmentLabel(editingStaff.department_code)}</span>
+                    <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    <span className="text-xs font-medium text-foreground">{getDepartmentLabel(nextDept)}</span>
+                  </li>
+                )}
+                {statusChanged && (
+                  <li className="flex items-center gap-2 px-3 py-2 text-sm">
+                    <span className="min-w-0 flex-1 text-muted-foreground">{t('userManagement.status')}</span>
+                    <span className="text-xs text-muted-foreground">{editingStaff.status === 'active' ? t('profile.active') : t('profile.inactive')}</span>
+                    <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    <span className="text-xs font-medium text-foreground">{editStatus === 'active' ? t('profile.active') : t('profile.inactive')}</span>
+                  </li>
+                )}
+              </ul>
+
+              {(deptChanged && nextDept) || teamsLeaving.length > 0 || teamsNoLongerManaged.length > 0 || (statusChanged && editStatus === 'inactive') ? (
+                <ul className="space-y-1.5 rounded-xl border border-warning/30 bg-warning/[0.07] p-3 text-xs leading-relaxed text-foreground">
+                  {deptChanged && nextDept && (
+                    <li className="flex gap-2"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />{t('userManagement.confirmLeadsMovePrefix')} {getDepartmentLabel(nextDept)} {t('userManagement.confirmLeadsMoveSuffix')}</li>
+                  )}
+                  {teamsLeaving.length > 0 && (
+                    <li className="flex gap-2"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />{t('userManagement.confirmLeavesTeams')} {teamsLeaving.map((tm) => tm.name).join(', ')}</li>
+                  )}
+                  {teamsNoLongerManaged.length > 0 && (
+                    <li className="flex gap-2"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />{t('userManagement.confirmStopsManaging')} {teamsNoLongerManaged.map((tm) => tm.name).join(', ')}</li>
+                  )}
+                  {statusChanged && editStatus === 'inactive' && (
+                    <li className="flex gap-2"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />{t('userManagement.confirmDeactivate')}</li>
+                  )}
+                </ul>
+              ) : null}
+
+              {roleAccessChanges.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">{t('userManagement.confirmAccessChanges')}</p>
+                  <AccessChangeList changes={roleAccessChanges} />
+                </div>
+              )}
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isUpdating}>{t('common.cancel')}</AlertDialogCancel>
+            <Button disabled={isUpdating} onClick={persistStaffEdit} className="gap-1.5">
+              {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : null} {t('userManagement.confirmApply')}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

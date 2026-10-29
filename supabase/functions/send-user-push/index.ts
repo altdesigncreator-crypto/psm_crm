@@ -1,5 +1,5 @@
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
 import webpush from 'npm:web-push@3.6.7';
 
 const CORS_HEADERS = {
@@ -13,6 +13,15 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
   });
+}
+
+/** Does the user hold `permission` at `minScope` or wider (own < team <
+ * department < branch < all)? Resolved by public.user_has_permission from
+ * their role's grants — no scope arithmetic here. */
+async function hasPermission(admin: SupabaseClient, userId: string, permission: string, minScope = 'own'): Promise<boolean> {
+  const { data, error } = await admin.rpc('user_has_permission', { p_user: userId, p_permission: permission, p_min_scope: minScope });
+  if (error) throw error;
+  return data === true;
 }
 
 interface Payload {
@@ -64,15 +73,8 @@ serve(async (req) => {
     return json({ error: 'user_id, title, and body are required.' }, 400);
   }
 
-  if (payload.user_id !== callerAuth.user.id) {
-    const { data: callerProfile, error: profileErr } = await admin
-      .from('profiles')
-      .select('role')
-      .eq('id', callerAuth.user.id)
-      .single();
-    if (profileErr || !callerProfile || !['boss', 'super_admin', 'admin'].includes(callerProfile.role)) {
-      return json({ error: 'Not authorized' }, 403);
-    }
+  if (payload.user_id !== callerAuth.user.id && !(await hasPermission(admin, callerAuth.user.id, 'staff.notify', 'all'))) {
+    return json({ error: 'Not authorized' }, 403);
   }
 
   const vapidPublicKey = Deno.env.get('VAPID_PUBLIC_KEY');

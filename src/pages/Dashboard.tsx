@@ -19,7 +19,7 @@ import { useTeams } from '@/hooks/useTeams';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { enumLabel } from '@/lib/translations';
-import { canAssignEnquiry, isExec, type CurrentUser } from '@/lib/permissions';
+import { canAssignEnquiry, hasPermission, type CurrentUser } from '@/lib/permissions';
 import { relativePeriodMatcher, type RelativePeriod } from '@/lib/kpi';
 import { soldDateOf, soldIn } from '@/lib/soldDate';
 import AgentKpiCard from '@/components/AgentKpiCard';
@@ -555,7 +555,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-        <AgentKpiCard leads={rawLeads} showKpiBoardLink={isExec(role)} />
+        <AgentKpiCard leads={rawLeads} showKpiBoardLink={hasPermission(role, 'reports.kpi')} />
 
         <Card className="shadow-card rounded-xl border-0">
           <CardContent className="p-5 md:p-6">

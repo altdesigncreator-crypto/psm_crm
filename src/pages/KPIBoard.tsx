@@ -3,7 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useProfiles } from '@/hooks/useProfiles';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useTranslation } from '@/contexts/TranslationContext';
-import { isExec, getDepartmentLabel } from '@/lib/permissions';
+import { hasPermission, getDepartmentLabel } from '@/lib/permissions';
 import { exportKPIAsExcel, exportKPIAsPDF, type KpiExportReport } from '@/lib/exportUtils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -64,7 +64,7 @@ export default function KPIBoard() {
   usePageHeader(t('kpiBoard.pageTitle'), t('kpiBoard.subtitle'));
 
   const { period, setPeriod, isCurrentPeriod, shiftPeriod, periodLabel, matchesPeriod } = usePeriodFilter();
-  const allowed = isExec(role);
+  const allowed = hasPermission(role, 'reports.kpi');
 
   useEffect(() => {
     if (!allowed) return;

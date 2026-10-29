@@ -4,7 +4,7 @@ import { supabase } from '@/db/supabase';
 import { usePageHeader } from '@/contexts/PageHeaderContext';
 import { useTranslation } from '@/contexts/TranslationContext';
 import { enumLabel } from '@/lib/translations';
-import { getRoleLabel, getDepartmentLabel, isExec } from '@/lib/permissions';
+import { getRoleLabel, getDepartmentLabel, hasPermission, seesAllDepartments } from '@/lib/permissions';
 import { useTeams } from '@/hooks/useTeams';
 import { useProfiles } from '@/hooks/useProfiles';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -99,13 +99,13 @@ export default function Profile() {
   const dayFollowUps = useMemo(() => followUps.filter((f) => localDateStr(f.created_at) === day), [followUps, day]);
 
   const mySalesTeams = useMemo(() => {
-    if (!profile || profile.role !== 'sale') return [];
+    if (!profile || !hasPermission(profile.role, 'teams.join')) return [];
     const ids = teamsOf(profile.id);
     return teams.filter((t) => ids.includes(t.id));
   }, [profile, teams, teamsOf]);
 
   const myManagedTeams = useMemo(() => {
-    if (!profile || profile.role !== 'manager') return [];
+    if (!profile || !hasPermission(profile.role, 'teams.lead')) return [];
     return teamsManagedBy(profile.id);
   }, [profile, teamsManagedBy]);
 
@@ -166,7 +166,7 @@ export default function Profile() {
       </Card>
 
       {/* Teams & reporting */}
-      {profile.role === 'sale' && (
+      {hasPermission(profile.role, 'teams.join') && (
         <Card className="shadow-card rounded-xl border-0">
           <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><Users className="w-4 h-4 text-primary" /></div>{t('profile.teamsAndManager')}</CardTitle></CardHeader>
           <CardContent className="pt-0">
@@ -193,7 +193,7 @@ export default function Profile() {
         </Card>
       )}
 
-      {profile.role === 'manager' && (
+      {hasPermission(profile.role, 'teams.lead') && (
         <Card className="shadow-card rounded-xl border-0">
           <CardHeader className="pb-3"><CardTitle className="text-base font-semibold flex items-center gap-2"><div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><UserCog className="w-4 h-4 text-primary" /></div>{t('profile.teamsManaged')}</CardTitle></CardHeader>
           <CardContent className="pt-0">
@@ -216,12 +216,12 @@ export default function Profile() {
         </Card>
       )}
 
-      {(profile.role === 'admin' || isExec(profile.role)) && (
+      {hasPermission(profile.role, 'leads.view', 'department') && (
         <Card className="shadow-card rounded-xl border-0">
           <CardContent className="p-4 flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0"><Globe className="w-4 h-4 text-primary" /></div>
             <p className="text-sm text-muted-foreground">
-              {isExec(profile.role)
+              {seesAllDepartments(profile.role)
                 ? t('profile.globalAccess')
                 : `${t('profile.departmentWideAccessPrefix')} ${profile.department_code ? getDepartmentLabel(profile.department_code) : t('profile.theirDepartment')}.`}
             </p>

@@ -282,12 +282,13 @@ export default function ManagedListManager({ list: managed, copy }: { list: Mana
   );
 }
 
-/** Settings → Lead sources: the one list behind both the Enquiry and the Lead source fields. */
-export function SourcesManager() {
-  return <ManagedListManager list={useEnquirySources()} copy={{ title: 'enquirySources.title', desc: 'enquirySources.desc', addPlaceholder: 'enquirySources.addPlaceholder' }} />;
+/** Settings → Lead sources: the list behind both the Enquiry and the Lead
+ * source fields, for one branch. */
+export function SourcesManager({ branch }: { branch: string | null }) {
+  return <ManagedListManager list={useEnquirySources(branch)} copy={{ title: 'enquirySources.title', desc: 'enquirySources.desc', addPlaceholder: 'enquirySources.addPlaceholder' }} />;
 }
 
-/** Settings → Projects: the Preferred project options on enquiries. */
-export function ProjectsManager() {
-  return <ManagedListManager list={useProjectOptions()} copy={{ title: 'projectOptions.title', desc: 'projectOptions.desc', addPlaceholder: 'projectOptions.addPlaceholder' }} />;
+/** Settings → Projects: the Preferred project options, for one branch. */
+export function ProjectsManager({ branch }: { branch: string | null }) {
+  return <ManagedListManager list={useProjectOptions(branch)} copy={{ title: 'projectOptions.title', desc: 'projectOptions.desc', addPlaceholder: 'projectOptions.addPlaceholder' }} />;
 }

@@ -13,6 +13,8 @@ interface PickerProps {
   value: string;
   onChange: (v: string) => void;
   category: EnquiryCategory | null;
+  /** The branch whose list to offer; omit for every branch. */
+  branch?: string | null;
   disabled?: boolean;
   className?: string;
 }
@@ -68,7 +70,7 @@ function ListPicker({ list, value, onChange, category, disabled, className, plac
  * suggestions instead — see ProjectNameInput.) */
 export function SourcePicker(props: PickerProps) {
   const { t } = useTranslation();
-  return <ListPicker {...props} list={useEnquirySources()} placeholder={t('addLead.selectSource')} />;
+  return <ListPicker {...props} list={useEnquirySources(props.branch)} placeholder={t('addLead.selectSource')} />;
 }
 
 /** The source filter on the Enquiries and Leads lists: the same groups

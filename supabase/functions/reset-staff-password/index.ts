@@ -1,5 +1,5 @@
 import { serve } from 'https://deno.land/std@0.192.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.103.1';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -14,14 +14,24 @@ function json(body: unknown, status = 200) {
   });
 }
 
+/** Does the user hold `permission` at `minScope` or wider (own < team <
+ * department < branch < all)? Resolved by public.user_has_permission from
+ * their role's grants — no scope arithmetic here. */
+async function hasPermission(admin: SupabaseClient, userId: string, permission: string, minScope = 'own'): Promise<boolean> {
+  const { data, error } = await admin.rpc('user_has_permission', { p_user: userId, p_permission: permission, p_min_scope: minScope });
+  if (error) throw error;
+  return data === true;
+}
+
 interface ResetPasswordPayload {
   userId: string;
   newPassword: string;
 }
 
 /**
- * Boss/Super Admin reset any staff member's password, including other
- * Boss/Super Admin accounts. Uses the service-role key because
+ * Callers with staff.manage reset the password of anyone whose role is
+ * within their own access — never someone with more access (e.g. a Super
+ * Admin can't take over the Boss account). Uses the service-role key because
  * auth.admin.updateUserById is not callable from the client.
  */
 serve(async (req) => {
@@ -40,19 +50,13 @@ serve(async (req) => {
   const admin = createClient(supabaseUrl, serviceRoleKey);
 
   try {
-    // Identify the caller and confirm they're Boss/Super Admin.
+    // Identify the caller and confirm they can manage staff.
     const jwt = authHeader.replace('Bearer ', '');
     const { data: callerAuth, error: callerErr } = await admin.auth.getUser(jwt);
     if (callerErr || !callerAuth.user) return json({ error: 'Invalid session' }, 401);
 
-    const { data: callerProfile, error: profileErr } = await admin
-      .from('profiles')
-      .select('role')
-      .eq('id', callerAuth.user.id)
-      .single();
-
-    if (profileErr || !callerProfile || !['boss', 'super_admin'].includes(callerProfile.role)) {
-      return json({ error: 'Only Boss/Super Admin can reset staff passwords.' }, 403);
+    if (!(await hasPermission(admin, callerAuth.user.id, 'staff.manage', 'all'))) {
+      return json({ error: "You don't have permission to reset staff passwords." }, 403);
     }
 
     const payload: ResetPasswordPayload = await req.json();
@@ -70,6 +74,14 @@ serve(async (req) => {
       .single();
 
     if (targetErr || !target) return json({ error: 'Staff member not found.' }, 404);
+
+    const { data: withinMine, error: withinErr } = await admin.rpc('user_can_assign_role', {
+      p_user: callerAuth.user.id, p_role: target.role,
+    });
+    if (withinErr) throw withinErr;
+    if (!withinMine) {
+      return json({ error: "You can't reset the password of someone with more access than you." }, 403);
+    }
 
     const { error: updateErr } = await admin.auth.admin.updateUserById(payload.userId, {
       password: payload.newPassword,
